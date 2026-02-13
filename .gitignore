@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# DB and Logs
+index.db
+app.log
+.alsi_busqueda/
+
+# IDE
+.vscode/
+.idea/
+
+# Local backups (already have their own folder)
+# BACKUPS/  <-- Don't ignore backups for now, or maybe yes since we have git?
+# Actually, better keep Git clean.
+BACKUPS/
