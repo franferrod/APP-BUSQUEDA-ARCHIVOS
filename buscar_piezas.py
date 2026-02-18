@@ -1381,7 +1381,7 @@ class BuscadorPiezas(QMainWindow):
 
     def extraer_miniatura(self, ruta, size=256):
         """
-        Extrae la miniatura básica (V1.0.0 simplified)
+        Extrae miniatura con IShellItemImageFactory (calidad Explorador Windows) V1.0.0 R6
         """
         try:
             if not ruta or not os.path.exists(ruta):
@@ -1396,20 +1396,45 @@ class BuscadorPiezas(QMainWindow):
             ext = Path(ruta).suffix.lower()
             pixmap = None
 
-            # 1. SolidWorks OLE
+            # 1. SolidWorks OLE (PreviewPNG stream directo — máxima calidad)
             if ext in ('.sldprt', '.sldasm', '.slddrw'):
                 try:
                     import olefile
                     if olefile.isOleFile(ruta):
                         with olefile.OleFileIO(ruta) as ole:
                             if ole.exists('PreviewPNG'):
-                                stream = ole.openstream('PreviewPNG')
-                                image = QImage.fromData(stream.read())
+                                data = ole.openstream('PreviewPNG').read()
+                                image = QImage.fromData(data)
                                 if not image.isNull():
                                     pixmap = QPixmap.fromImage(image)
-                except: pass
+                except Exception:
+                    logger.debug(f"OLE fallback para: {ruta}")
 
-            # 2. Fallback Shell
+            # 2. PDF — Renderizado directo con PyMuPDF (primera página)
+            if not pixmap and ext == '.pdf':
+                try:
+                    import fitz  # PyMuPDF
+                    doc = fitz.open(ruta)
+                    if doc.page_count > 0:
+                        page = doc[0]
+                        # Renderizar a 2x zoom para buena calidad en el panel preview
+                        mat = fitz.Matrix(2, 2)
+                        pix = page.get_pixmap(matrix=mat, alpha=False)
+                        image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
+                        if not image.isNull():
+                            pixmap = QPixmap.fromImage(image)
+                    doc.close()
+                except Exception as e:
+                    logger.debug(f"PyMuPDF falló para PDF: {e}")
+
+            # 3. IShellItemImageFactory (thumbnails reales - calidad Explorador)
+            if not pixmap:
+                try:
+                    pixmap = self._thumbnail_via_shell_factory(ruta, size)
+                except Exception as e:
+                    logger.debug(f"IShellItemImageFactory falló: {e}")
+
+            # 3. Fallback: icono del sistema (SHGetFileInfo)
             if not pixmap:
                 try:
                     pythoncom.CoInitialize()
@@ -1419,18 +1444,10 @@ class BuscadorPiezas(QMainWindow):
                         pixmap = QtWin.fromHICON(hicon)
                         import ctypes
                         ctypes.windll.user32.DestroyIcon(hicon)
-                except: pass
+                except Exception:
+                    pass
                 finally:
                     pythoncom.CoUninitialize()
-
-            # 3. Fallback QFileIconProvider (Robustez extra)
-            if not pixmap:
-                try:
-                    from PyQt5.QtWidgets import QFileIconProvider
-                    provider = QFileIconProvider()
-                    icon = provider.icon(Path(ruta))
-                    pixmap = icon.pixmap(size, size)
-                except: pass
 
             if pixmap and not pixmap.isNull():
                 self.cache_miniaturas[ruta] = pixmap
@@ -1438,6 +1455,73 @@ class BuscadorPiezas(QMainWindow):
             
         except Exception as e:
             logger.debug(f"Error en extraer_miniatura: {e}")
+        return None
+
+    def _thumbnail_via_shell_factory(self, ruta, size=256):
+        """Usa IShellItemImageFactory via COM para thumbnails de calidad Explorador"""
+        import ctypes
+        from ctypes import POINTER, byref, c_void_p, c_int, c_long, c_ulong
+        
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ('Data1', c_ulong),
+                ('Data2', ctypes.c_ushort),
+                ('Data3', ctypes.c_ushort),
+                ('Data4', ctypes.c_ubyte * 8),
+            ]
+        
+        class SIZE(ctypes.Structure):
+            _fields_ = [('cx', c_long), ('cy', c_long)]
+        
+        # IID de IShellItemImageFactory: {bcc18b79-ba16-442f-80c4-8a59c30c463b}
+        IID = GUID(0xbcc18b79, 0xba16, 0x442f,
+                   (ctypes.c_ubyte * 8)(0x80, 0xc4, 0x8a, 0x59, 0xc3, 0x0c, 0x46, 0x3b))
+        
+        pythoncom.CoInitialize()
+        try:
+            ppv = c_void_p()
+            hr = ctypes.windll.shell32.SHCreateItemFromParsingName(
+                ctypes.c_wchar_p(ruta), None, byref(IID), byref(ppv))
+            
+            if hr != 0 or not ppv.value:
+                logger.debug(f"SHCreateItemFromParsingName falló: hr=0x{hr & 0xFFFFFFFF:08X}")
+                return None
+            
+            try:
+                # Acceder a vtable COM: IUnknown(0,1,2) + GetImage(3)
+                vtable_pp = ctypes.cast(ppv, POINTER(POINTER(c_void_p)))
+                vtable = vtable_pp[0]
+                
+                # GetImage(this, SIZE size, SIIGBF flags, HBITMAP* phbm)
+                GetImageFunc = ctypes.WINFUNCTYPE(c_long, c_void_p, SIZE, c_int, POINTER(c_void_p))
+                get_image = GetImageFunc(vtable[3])
+                
+                sz = SIZE(size, size)
+                SIIGBF_BIGGERSIZEOK = 0x01
+                hbitmap = c_void_p()
+                
+                hr = get_image(ppv, sz, SIIGBF_BIGGERSIZEOK, byref(hbitmap))
+                
+                if hr == 0 and hbitmap.value:
+                    # Convertir HBITMAP a QPixmap (premultiplied alpha es lo estándar de Windows)
+                    pixmap = QtWin.fromHBITMAP(int(hbitmap.value), QtWin.HBitmapPremultipliedAlpha)
+                    if pixmap.isNull():
+                        pixmap = QtWin.fromHBITMAP(int(hbitmap.value), QtWin.HBitmapNoAlpha)
+                    ctypes.windll.gdi32.DeleteObject(hbitmap)
+                    if not pixmap.isNull():
+                        return pixmap
+                else:
+                    logger.debug(f"GetImage falló: hr=0x{hr & 0xFFFFFFFF:08X}")
+            finally:
+                # Release COM (índice 2 del vtable)
+                vtable_pp2 = ctypes.cast(ppv, POINTER(POINTER(c_void_p)))
+                vtable2 = vtable_pp2[0]
+                ReleaseFunc = ctypes.WINFUNCTYPE(c_ulong, c_void_p)
+                release = ReleaseFunc(vtable2[2])
+                release(ppv)
+        finally:
+            pythoncom.CoUninitialize()
+        
         return None
 
     def actualizar_preview(self, current, previous=None):
