@@ -40,7 +40,7 @@ class IndexadorThread(QThread):
                         self.status.emit("⏹ Indexación cancelada")
                         break
                     
-                    # Normalizar ruta_val a lista (soporte para múltiples rutas V1.3.5)
+                    # Normalizar ruta_val a lista (soporte para múltiples rutas V1.0.0)
                     rutas_lista = ruta_val if isinstance(ruta_val, list) else [ruta_val]
                     
                     # Limpiar datos previos antes de empezar con todas las rutas de este compañero
@@ -65,13 +65,13 @@ class IndexadorThread(QThread):
                         logger.info(f"Escaneando {comp} en {ruta_base}")
                         self.status.emit(f"Escaneando {comp}...")
                         
-                        # Traversal optimizado (V1.3.4.3)
+                        # Traversal optimizado (V1.0.0)
                         for root, dirs, files in os.walk(ruta_base):
                             if self._cancelar: break
                             
                             # Pruning de directorios: Si estamos en la raíz o nivel superior,
                             # solo entramos en carpetas "ANO 20XX" si están en años_sel
-                            # EXCEPCIÓN V1.3.6: No filtramos por año en BIBLIOTECA/ESTANDAR
+                            # NOTA: No filtramos por año en BIBLIOTECA/ESTANDAR (V1.0.0)
                             if self.años_sel and not is_commercial:
                                 # Verificamos si estamos en un nivel donde el nombre del directorio
                                 # indica el año (Formato: ANO 20XX)
@@ -170,7 +170,7 @@ class IndexadorThread(QThread):
     def extraer_metadata(self, nombre_archivo, ruta_carpeta):
         """
         Extrae información jerárquica: AÑO > CLIENTE > PROYECTO > ORDEN
-        V1.3.0 - Parsing posicional robusto.
+        # V1.0.0 - Parsing posicional robusto.
         """
         metadata = {
             'año': 0,
@@ -255,7 +255,7 @@ class SearchController:
         return self.db.obtener_preferencia(key, default)
 
     def get_all_clients(self, companions=None, years=None):
-        # V1.3.3: Excluir clientes que empiezan por número (ej: "0. ALSI", "01 ENVIADOS")
+        # V1.0.0: Excluir clientes que empiezan por número (ej: "0. ALSI", "01 ENVIADOS")
         todos = self.db.obtener_clientes(companions, years)
         return [c for c in todos if c and not c[0].isdigit()]
 

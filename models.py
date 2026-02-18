@@ -53,12 +53,12 @@ class IndexManager:
                 )
             ''')
             
-            # Migración: Añadir columnas si no existen (V1.2.1+)
+            # Migración: Añadir columnas si no existen (V1.0.0)
             cols_to_add = [
                 ("extension", "TEXT"),
                 ("ultima_modificacion", "INTEGER"),
                 ("tamaño_bytes", "INTEGER"),
-                # V1.3.0 - Estructura Jerárquica
+                # V1.0.0 - Estructura Jerárquica
                 ("codigo_proyecto", "TEXT"),
                 ("nombre_proyecto", "TEXT"),
                 ("codigo_orden", "TEXT"),
@@ -96,7 +96,7 @@ class IndexManager:
             # Índices compuestos (@performance-optimization, @database-optimization)
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_comp_año ON archivos(compañero, año)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_nombre_comp ON archivos(nombre_archivo, compañero)')
-            # V1.3.4.2 - Índices de Jerarquía (@performance-optimization)
+            # V1.0.0 - Índices de Jerarquía (@performance-optimization)
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_cliente ON archivos(cliente)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_cod_proy ON archivos(codigo_proyecto)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_cod_ord ON archivos(codigo_orden)')
@@ -117,8 +117,8 @@ class IndexManager:
 
     def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False):
         """
-        Búsqueda multi-keyword con scoring y filtros múltiples (V1.3.0).
-        V1.3.6 - Soporte para búsqueda híbrida (Contexto OR Biblioteca).
+        # Búsqueda multi-keyword con scoring y filtros múltiples (V1.0.0).
+        # V1.0.0 - Soporte para búsqueda híbrida (Contexto OR Biblioteca).
         """
         logger.info(f"Buscando: '{termino}' | Siddex: {incluir_siddex}, Estandar: {incluir_estandar}")
         
@@ -173,7 +173,7 @@ class IndexManager:
             base_where += f" AND extension IN ({placeholders})"
             params.extend(extensiones)
 
-        # Filtro Carpeta (V1.3.14 - Movido a contexto para no bloquear comerciales)
+        # Filtro Carpeta (V1.0.0 - Movido a contexto para no bloquear comerciales)
         if carpetas and len(carpetas) > 0 and "TODOS" not in carpetas:
             placeholders = ','.join(['?' for _ in carpetas])
             context_clauses.append(f"tipo_carpeta IN ({placeholders})")
@@ -190,7 +190,7 @@ class IndexManager:
             context_clauses.append(f"codigo_proyecto IN ({placeholders})")
             context_params.extend(proyectos)
 
-        # 3. Lógica Híbrida (V1.3.15)
+        # 3. Lógica Híbrida (V1.0.0)
         query = f"{query_select} WHERE {base_where}"
         
         lib_comps = []

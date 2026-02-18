@@ -8,7 +8,7 @@ set DESKTOP_PATH=%USERPROFILE%\Desktop
 
 echo.
 echo  ======================================================
-echo     INSTALANDO BUSCADOR DE PIEZAS ALSI (V1.3.5)
+echo     INSTALANDO BUSCADOR DE PIEZAS ALSI (V1.0.0)
 echo  ======================================================
 echo.
 

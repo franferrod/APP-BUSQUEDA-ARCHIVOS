@@ -1,18 +1,19 @@
 # Changelog - Buscador de Piezas ALSI
 
 ## [1.0.0] - 2026-02-18 (Lanzamiento Oficial)
-¡Primera versión oficial de producción! Tras una fase beta intensiva, lanzamos la aplicación estable y optimizada.
+¡Primera versión oficial de producción! Esta entrega marca el fin de la fase de desarrollo y el inicio del despliegue oficial en la Oficina Técnica.
 
-### 🌟 Novedades Principales
-- **Ayuda Integrada**: Nuevo botón `❓` con una Guía Rápida de uso y botón `ℹ️` con información de versión.
-- **Rendimiento Optimizado**: Navegación ultra-fluida con sistema de "debouncing" (carga diferida de miniaturas - 150ms).
-- **Estabilidad Total**: Motor de búsqueda robusto con recuperación automática de conexiones.
+### 🌟 Novedades V1.0.0 (Final)
+- **Ayuda e Info**: Botones premium `❓` y `ℹ️` reubicados en la barra inferior para mayor comodidad.
+- **Identidad Corporativa**: Inclusión de logotipo, créditos del desarrollador y manuales integrados.
+- **Rendimiento Pulido**: Navegación fluida por teclado y mouse con carga de recursos diferida.
+- **Estabilidad Total**: Resolución de errores de rutas de red y normalización de accesos UNC.
 
 ### 🛠 Características Consolidadas
 - **Búsqueda Avanzada**: Filtros en cascada por Compañero, Año, Cliente y Proyecto.
-- **Previsualización**: Panel lateral inteligente con vista previa instantánea de metadatos y carga optimizada de miniaturas.
-- **Acciones Rápidas**: Doble clic para abrir carpeta contenedora, menú contextual para copiar rutas.
-- **Indexación Inteligente**: Actualización selectiva de bases de datos.
+- **Filtros de Tipo**: Búsqueda por extensión (.sldprt, .pdf, .dwg, etc.).
+- **Previsualización**: Panel lateral inteligente con metadatos y miniaturas automáticas.
+- **Indexación Selectiva**: Actualización rápida de bases de datos por compañero o año.
 
 ---
 

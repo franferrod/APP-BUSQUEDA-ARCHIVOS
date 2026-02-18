@@ -1,4 +1,4 @@
-# 🔍 Manual de Usuario: Buscador de Piezas ALSI (V1.3.4.5)
+# 🔍 Manual de Usuario: Buscador de Piezas ALSI (V1.0.0)
 
 Este manual está diseñado para ayudarte a encontrar archivos de diseño (SolidWorks, PDF, DWG, etc.) de manera rápida y sencilla, sin necesidad de ser un experto en informática.
 

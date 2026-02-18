@@ -50,7 +50,15 @@ def resource_path(relative_path):
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
+    
+    # Intentar encontrar el archivo en la ruta base
+    full_path = os.path.join(base_path, relative_path)
+    if not os.path.exists(full_path):
+        # Fallback para desarrollo: buscar relativo al script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        full_path = os.path.join(script_dir, relative_path)
+        
+    return full_path
 
 # Importaciones locales (MVC Architecture)
 from models import IndexManager
@@ -65,7 +73,7 @@ RAL_2010_NARANJA = "#E15B1E"  # Naranja corporativo
 RAL_7000_GRIS = "#78858B"     # Gris corporativo
 WHITE = "#FFFFFF"
 
-# Logos y Recursos (V1.3.2)
+# Logos y Recursos (V1.0.0)
 LOGO_ISOTIPO = resource_path("ALSI_ISOTIPO_naranja.png")
 LOGO_IMAGOTIPO = resource_path("ALSI_IMAGOTIPO_naranja.png")
 APP_ICON = resource_path("ALSI_BUSCADOR.ico")
@@ -85,7 +93,7 @@ RUTAS_RED = {
     'DAVID BARÓN': r'Z:\ALSI INTERCAMBIO\ALSI LEGENDS\DAVID B',
 }
 
-# Rutas especiales para V1.3.6
+# Rutas especiales para V1.0.0
 RUTA_BIBLIOTECA = r'Z:\ALSI INTERCAMBIO\BIBLIOTECA SIDDEX'
 RUTA_ESTANDAR = r'Z:\ALSI INTERCAMBIO\ALSI ESTANDAR'
 
@@ -313,14 +321,14 @@ class BuscadorPiezas(QMainWindow):
         self.controller = SearchController(self.db)
         self.thread = None  # Referencia al thread de indexación activo
         self.bloqueo_filtros = False 
-        self.cache_miniaturas = {} # V1.3.2 Caché de miniaturas (LRU simple)
+        self.cache_miniaturas = {} # V1.0.0 Caché de miniaturas (LRU simple)
         
-        # Debouncing para filtros (Evitar bloqueos) V1.3.4.2
+        # Debouncing para filtros (Evitar bloqueos) V1.0.0.2
         self.timer_filtros = QTimer()
         self.timer_filtros.setSingleShot(True)
         self.timer_filtros.timeout.connect(self._refrescar_real_jerarquico)
 
-        # Debouncing para Previsualización (Optimización V1.3.25)
+        # Debouncing para Previsualización (Optimización V1.0.05)
         self.timer_preview = QTimer()
         self.timer_preview.setSingleShot(True)
         self.timer_preview.timeout.connect(self._actualizar_preview_recursos_pesados)
@@ -398,7 +406,7 @@ class BuscadorPiezas(QMainWindow):
         return self.get_selected_items(self.list_años)
 
     def get_selected_tipos(self):
-        """Devuelve lista de tipos seleccionados desde el nuevo menú superior (V1.3.4)"""
+        """Devuelve lista de tipos seleccionados desde el nuevo menú superior (V1.0.0)"""
         sel = []
         for tipo, action in self.tipos_actions.items():
             if action.isChecked():
@@ -432,7 +440,7 @@ class BuscadorPiezas(QMainWindow):
         self.setWindowTitle("🔍 Buscador de Piezas SolidWorks - ALSI")
         self.resize(1500, 850)
         
-        # Cargar Icono de Aplicación Profesional (V1.3.2)
+        # Cargar Icono de Aplicación Profesional (V1.0.0)
         if os.path.exists(APP_ICON):
             self.setWindowIcon(QIcon(APP_ICON))
         elif os.path.exists(LOGO_ISOTIPO):
@@ -469,7 +477,7 @@ class BuscadorPiezas(QMainWindow):
         self.input_buscar.returnPressed.connect(self.ejecutar_busqueda)
         header_layout.addWidget(self.input_buscar, stretch=1)
 
-        # 4. TIPOS DE ARCHIVO (V1.3.4 - Reubicado a Barra Superior)
+        # 4. TIPOS DE ARCHIVO (V1.0.0 - Reubicado a Barra Superior)
         self.btn_tipos = QPushButton("📁 Tipos: TODOS")
         self.btn_tipos.setMinimumHeight(40)
         self.btn_tipos.setCursor(Qt.PointingHandCursor)
@@ -627,7 +635,7 @@ class BuscadorPiezas(QMainWindow):
         izq_layout.addWidget(self.list_proyectos)
         self.add_toggle_buttons(izq_layout, self.list_proyectos)
         
-        # Conectar señales para Cascada (V1.3.4 - Completo)
+        # Conectar señales para Cascada (V1.0.0 - Completo)
         self.list_companeros.itemChanged.connect(self.on_filtro_jerarquico_changed)
         self.list_años.itemChanged.connect(self.on_filtro_jerarquico_changed)
         self.list_clientes.itemChanged.connect(self.on_filtro_jerarquico_changed)
@@ -769,7 +777,7 @@ class BuscadorPiezas(QMainWindow):
         footer_layout = QHBoxLayout()
         footer_layout.setSpacing(10)
         
-        # Botones de Acción Rápida (V1.3.2)
+        # Botones de Acción Rápida (V1.0.0)
         self.btn_abrir_carpeta = QPushButton("📁 Abrir Carpeta")
         self.btn_abrir_carpeta.setToolTip("Abre la carpeta que contiene el archivo")
         self.btn_abrir_carpeta.clicked.connect(self.abrir_carpeta_seleccionada)
@@ -796,7 +804,7 @@ class BuscadorPiezas(QMainWindow):
         line_sep.setFrameShape(QFrame.VLine)
         line_sep.setFrameShadow(QFrame.Sunken)
         footer_layout.addWidget(line_sep)
-        # Botón Indexar Compañeros (Renombrado V1.3.6)
+        # Botón Indexar Compañeros (Renombrado V1.0.0)
         self.btn_indexar = QPushButton("Indexar Compañeros")
         self.btn_indexar.setToolTip("Abre el diálogo para elegir qué compañeros indexar")
         self.btn_indexar.setIcon(QIcon(LOGO_ISOTIPO)) # Usar el isotipo naranja
@@ -816,7 +824,7 @@ class BuscadorPiezas(QMainWindow):
         self.btn_indexar.clicked.connect(self.confirmar_indexacion)
         footer_layout.addWidget(self.btn_indexar)
 
-        # Botón Indexar Comerciales (Nuevo V1.3.6)
+        # Botón Indexar Comerciales (Nuevo V1.0.0)
         self.btn_indexar_comerciales = QPushButton("Indexar Comerciales")
         self.btn_indexar_comerciales.setToolTip("Indexar Biblioteca Siddex y Alsi Estándar")
         # self.btn_indexar_comerciales.setIcon(QIcon("ruta_icono.png")) # Opcional
@@ -856,34 +864,58 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_status = QLabel("Listo")
         footer_layout.addWidget(self.lbl_status, stretch=1)
 
-        # Botones de Ayuda e Info (V1.0 - Reubicados a la derecha)
+        # Botones de Ayuda e Info (V1.0.0 - Diseño Premium y Responsive)
         self.btn_ayuda = QPushButton("❓")
-        self.btn_ayuda.setToolTip("Guía Rápida de Uso")
+        self.btn_ayuda.setToolTip("Guía de uso rápida") # Tooltip solicitado
+        self.btn_ayuda.setStatusTip("Botón de ayuda") # Mensaje adicional
         self.btn_ayuda.setCursor(Qt.PointingHandCursor)
-        self.btn_ayuda.setFixedSize(35, 35)
+        self.btn_ayuda.setFixedSize(38, 38)
         self.btn_ayuda.clicked.connect(self.mostrar_ayuda)
         self.btn_ayuda.setStyleSheet("""
             QPushButton { 
                 background-color: #3498db; 
-                font-size: 16px; 
-                border-radius: 4px;
+                color: white;
+                font-size: 18px; 
+                border-radius: 8px;
+                border: 1px solid #2980b9;
+                transition: all 0.3s ease;
             }
-            QPushButton:hover { background-color: #2980b9; }
+            QPushButton:hover { 
+                background-color: #2980b9; 
+                border: 1px solid #1c5980;
+                margin-top: -2px;
+            }
+            QPushButton:pressed { 
+                background-color: #1c5980; 
+                margin-top: 0px;
+            }
         """)
         footer_layout.addWidget(self.btn_ayuda)
 
         self.btn_info = QPushButton("ℹ️")
-        self.btn_info.setToolTip("Acerca de / Versión")
+        self.btn_info.setToolTip("Acerca de / Desarrollador")
+        self.btn_info.setStatusTip("Información de la aplicación")
         self.btn_info.setCursor(Qt.PointingHandCursor)
-        self.btn_info.setFixedSize(35, 35)
+        self.btn_info.setFixedSize(38, 38)
         self.btn_info.clicked.connect(self.mostrar_info)
         self.btn_info.setStyleSheet("""
             QPushButton { 
                 background-color: #95a5a6; 
-                font-size: 16px; 
-                border-radius: 4px;
+                color: white;
+                font-size: 18px; 
+                border-radius: 8px;
+                border: 1px solid #7f8c8d;
+                transition: all 0.3s ease;
             }
-            QPushButton:hover { background-color: #7f8c8d; }
+            QPushButton:hover { 
+                background-color: #7f8c8d; 
+                border: 1px solid #6c7a7d;
+                margin-top: -2px;
+            }
+            QPushButton:pressed { 
+                background-color: #6c7a7d; 
+                margin-top: 0px;
+            }
         """)
         footer_layout.addWidget(self.btn_info)
         
@@ -1024,7 +1056,7 @@ class BuscadorPiezas(QMainWindow):
                 item = self.list_carpetas.item(i)
                 item.setCheckState(Qt.Checked if item.text() in c_list else Qt.Unchecked)
 
-        # Restaurar Tipos (V1.3.4 - Desde Botón Superior)
+        # Restaurar Tipos (V1.0.0 - Desde Botón Superior)
         tipos_guardados = self.controller.load_preference("tipos_checked", "")
         if tipos_guardados:
             t_list = tipos_guardados.split(',')
@@ -1080,7 +1112,7 @@ class BuscadorPiezas(QMainWindow):
         super().closeEvent(event)
 
     def on_filtro_jerarquico_changed(self, item):
-        """Manejador con debouncing para la cascada de filtros (V1.3.4.2)"""
+        """Manejador con debouncing para la cascada de filtros (V1.0.0.2)"""
         if self.bloqueo_filtros:
             return
         
@@ -1093,7 +1125,7 @@ class BuscadorPiezas(QMainWindow):
         self.refrescar_filtros_jerarquicos()
 
     def refrescar_filtros_jerarquicos(self, solo_proyectos=False, solo_ordenes=False):
-        """Puebla las listas de Clientes, Proyectos y Órdenes con lógica de cascada total (V1.3.4)"""
+        """Puebla las listas de Clientes, Proyectos y Órdenes con lógica de cascada total (V1.0.0)"""
         if self.bloqueo_filtros:
             return
             
@@ -1245,7 +1277,7 @@ class BuscadorPiezas(QMainWindow):
                 QMessageBox.warning(self, "Atención", "No has seleccionado ningún compañero.")
 
     def abrir_dialogo_indexacion_comerciales(self):
-        # Nuevo Diálogo para Biblioteca y Estándar (V1.3.6)
+        # Nuevo Diálogo para Biblioteca y Estándar (V1.0.0)
         dialog = QDialog(self)
         dialog.setWindowTitle("Indexar Comerciales")
         dialog.setMinimumWidth(350)
@@ -1290,7 +1322,7 @@ class BuscadorPiezas(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminado
         
-        # Determinar qué diccionario de rutas usar (V1.3.6)
+        # Determinar qué diccionario de rutas usar (V1.0.0)
         rutas_dict = rutas_custom if rutas_custom else RUTAS_RED
         
         # Si usamos rutas custom, companeros_sel debe ser la lista de claves de ese dict
@@ -1335,7 +1367,7 @@ class BuscadorPiezas(QMainWindow):
 
     def extraer_miniatura(self, ruta, size=256):
         """
-        Extrae la miniatura básica (V1.3.6 simplified)
+        Extrae la miniatura básica (V1.0.0 simplified)
         """
         try:
             if not ruta or not os.path.exists(ruta):
@@ -1396,7 +1428,7 @@ class BuscadorPiezas(QMainWindow):
 
     def actualizar_preview(self, current, previous=None):
         """
-        Actualiza inmediatamente el texto (feedback instantáneo) y lanza timer para recursos pesados (V1.3.25)
+        Actualiza inmediatamente el texto (feedback instantáneo) y lanza timer para recursos pesados (V1.0.05)
         """
         try:
             if not current or not hasattr(current, 'row'):
@@ -1466,7 +1498,7 @@ class BuscadorPiezas(QMainWindow):
             logger.error(f"Error en feedback preview: {e}")
 
     def _actualizar_preview_recursos_pesados(self):
-        """Carga miniatura y tamaño de archivo tras debounce (V1.3.25)"""
+        """Carga miniatura y tamaño de archivo tras debounce (V1.0.05)"""
         try:
             data = self.current_preview_data
             ruta = data.get('ruta')

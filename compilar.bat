@@ -11,13 +11,7 @@ python generar_icono.py
 
 echo.
 echo === Generando ejecutable FINAL (Limpio y con Icono) ===
-python -m PyInstaller --noconfirm --onefile --windowed ^
-    --name "BuscadorPiezas" ^
-    --icon "ALSI_BUSCADOR.ico" ^
-    --add-data "ALSI_BUSCADOR.ico;." ^
-    --add-data "ALSI_ISOTIPO_naranja.png;." ^
-    --add-data "ALSI_IMAGOTIPO_naranja.png;." ^
-    "buscar_piezas.py"
+python -m PyInstaller --noconfirm "BuscadorPiezas.spec"
 
 echo.
 echo === Copiando recursos a dist/ ===
