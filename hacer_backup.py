@@ -4,7 +4,7 @@ from datetime import datetime
 
 def make_snapshot():
     # Versión actual sugerida
-    version_base = "v1.3.13" 
+    version_base = "v1.0.0" 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     folder_name = f"SNAPSHOT_{version_base}_{timestamp}"
     

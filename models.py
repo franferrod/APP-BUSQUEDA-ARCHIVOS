@@ -219,7 +219,7 @@ class IndexManager:
              query += f" AND ({context_sql})"
              params.extend(context_params)
 
-        query += " ORDER BY score DESC, ultima_modificacion DESC LIMIT 2000"
+        query += " ORDER BY score DESC, ultima_modificacion DESC LIMIT 5000"
         
         try:
             with self.get_connection() as conn:

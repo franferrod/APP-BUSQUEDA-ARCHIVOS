@@ -23,4 +23,4 @@
 - Optimización de UI con `QTimer` para evitar bloqueos en navegación rápida.
 
 ### [Beta 1.3.24] - 2026-02-17
-- Rollback a lógica de miniaturas estable (V1.3.6) y limpieza de código.
+- Limpieza de código y optimización de base de datos.

@@ -18,6 +18,7 @@ echo === Copiando recursos a dist/ ===
 copy "ALSI_ISOTIPO_naranja.png" "dist\"
 copy "ALSI_IMAGOTIPO_naranja.png" "dist\"
 copy "ALSI_BUSCADOR.ico" "dist\"
+copy "INSTALAR_LOCAL.bat" "dist\"
 
 echo.
 echo === Desplegando en Unidad Z: ===
