@@ -10,12 +10,15 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QHeaderView, QStatusBar, QProgressBar, QLabel, QMessageBox, 
                              QMenu, QAction, QAbstractItemView, QListWidget, QListWidgetItem,
                              QDialog, QDialogButtonBox, QSplitter, QGroupBox, QFrame, QScrollArea,
-                             QCheckBox, QSizePolicy)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer
+                             QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage
+from PyQt5.QtWidgets import QFileIconProvider
 import pythoncom
 import logging
+import uuid
 from win32com.shell import shell, shellcon
+from PyQt5.QtWinExtras import QtWin
 
 # Configuración de directorios y Logging profesional
 LOG_DIR = os.path.expanduser("~/.alsi_busqueda")
@@ -71,14 +74,13 @@ RUTAS_RED = {
     'EMRAH': r'\\OFITEC-7\alsi proyectos aprobados (emrah)',
     'DANI': r'\\OFITEC-5\alsi - proyectos aprobados (dani)',
     'EMILIA': r'\\OFITEC-3\alsi proyectos aprobados (emilia)',
-    'EMILIA': r'\\OFITEC-1\alsi-proyectos aprobados emilia',
     'MACIEK': r'\\PABLO-OT\alsi - proyectos aprobados (maciek)',
     'MARCOS': r'\\OFITEC-2\alsi proyectos aprobados (marcos)',
     'JESUS': r'\\OFITEC-1\alsi proyectos aprobados (jesus)',
     'PACO': r'\\OFITEC-4\alsi proyectos aprobados (paco)',
     'ALVARO': r'\\Ofitec-3\alsi proyectos aprobados (álvaro)',
     'MICHO': r'\\Ofitec-3\alsi proyectos aprobados (antonio)',
-    'JAVI GARCÍA': r'D:\ALSI PROYECTOS APROBADOS',
+    'JAVI GARCÍA': r'\\OFITEC-4\ALSI PROYECTOS APROBADOS',
     'JAVI ALONSO': r'\\OFITEC-5\alsi-proyectos aprobados javier',
     'DAVID BARÓN': r'Z:\ALSI INTERCAMBIO\ALSI LEGENDS\DAVID B',
 }
@@ -310,17 +312,41 @@ class BuscadorPiezas(QMainWindow):
         self.db = IndexManager()
         self.controller = SearchController(self.db)
         self.thread = None  # Referencia al thread de indexación activo
-        self.bloqueo_filtros = False # Flag para evitar recursión en filtros
+        self.bloqueo_filtros = False 
         self.cache_miniaturas = {} # V1.3.2 Caché de miniaturas (LRU simple)
         
-        # V1.3.4.2 Debouncing para filtros (Evitar bloqueos)
+        # Debouncing para filtros (Evitar bloqueos) V1.3.4.2
         self.timer_filtros = QTimer()
         self.timer_filtros.setSingleShot(True)
         self.timer_filtros.timeout.connect(self._refrescar_real_jerarquico)
+
+        # Debouncing para Previsualización (Optimización V1.3.25)
+        self.timer_preview = QTimer()
+        self.timer_preview.setSingleShot(True)
+        self.timer_preview.timeout.connect(self._actualizar_preview_recursos_pesados)
+        self.current_preview_data = {} # Almacena datos para la carga diferida
         
         self.init_ui()
         self.refrescar_filtros_jerarquicos()  # Carga inicial V1.3.1
         self.cargar_preferencias()
+        
+        # Diagnóstico de red (V1.3.14)
+        QTimer.singleShot(1000, self.verificar_rutas_red)
+
+    def verificar_rutas_red(self):
+        """Comprueba si las rutas críticas de la biblioteca son accesibles (V1.3.14)"""
+        error_msg = ""
+        if not os.path.exists(RUTA_BIBLIOTECA):
+            error_msg += f"• No se detecta: {RUTA_BIBLIOTECA}\n"
+        if not os.path.exists(RUTA_ESTANDAR):
+            error_msg += f"• No se detecta: {RUTA_ESTANDAR}\n"
+            
+        if error_msg:
+            QMessageBox.warning(self, "Problema de Red", 
+                                "Atención: No se puede acceder a las librerías comerciales.\n\n" + 
+                                error_msg + 
+                                "\nPor favor, asegúrate de que la unidad Z: está correctamente conectada.")
+            logger.error(f"Rutas de red no accesibles: {error_msg}")
 
     def toggle_checkboxes(self, list_widget, state):
         """Activa o desactiva todos los checkboxes en un QListWidget"""
@@ -343,11 +369,11 @@ class BuscadorPiezas(QMainWindow):
         btn_layout.setContentsMargins(0, 0, 0, 0)
         
         # Estilo para permitir encogimiento máximo (V1.3.13)
-        btn_style = "QPushButton { padding: 2px 4px; font-size: 11px; }"
+        btn_style = "QPushButton { padding: 4px 6px; font-size: 11px; }"
         
         btn_todos = QPushButton("Todos")
         btn_todos.setCursor(Qt.PointingHandCursor)
-        btn_todos.setMinimumHeight(24)
+        btn_todos.setMinimumHeight(28)
         btn_todos.setMinimumWidth(30)
         btn_todos.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         btn_todos.setStyleSheet(btn_style)
@@ -355,7 +381,7 @@ class BuscadorPiezas(QMainWindow):
         
         btn_ninguno = QPushButton("Ninguno")
         btn_ninguno.setCursor(Qt.PointingHandCursor)
-        btn_ninguno.setMinimumHeight(24)
+        btn_ninguno.setMinimumHeight(28)
         btn_ninguno.setMinimumWidth(30)
         btn_ninguno.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         btn_ninguno.setStyleSheet(btn_style)
@@ -522,11 +548,16 @@ class BuscadorPiezas(QMainWindow):
         lbl_comp.setStyleSheet("font-weight: bold; color: #555;")
         izq_layout.addWidget(lbl_comp)
 
-        # Checkbox para Biblioteca y Estándar (V1.3.6)
-        self.chk_biblioteca = QCheckBox("Incluir piezas de biblioteca siddex + alsi estándar")
-        self.chk_biblioteca.setToolTip("Buscar también en las carpetas comunes del servidor sin filtrar por año")
-        self.chk_biblioteca.setStyleSheet("color: #d35400; font-weight: bold;") 
-        izq_layout.addWidget(self.chk_biblioteca)
+        # Checkbox para Biblioteca y Estándar (V1.3.15 - Separadas)
+        self.chk_siddex = QCheckBox("Incluir biblioteca Siddex")
+        self.chk_siddex.setToolTip("Buscar también en la biblioteca Siddex")
+        self.chk_siddex.setStyleSheet("color: #d35400; font-weight: bold;")
+        izq_layout.addWidget(self.chk_siddex)
+
+        self.chk_estandar = QCheckBox("Incluir ALSI Estándar")
+        self.chk_estandar.setToolTip("Buscar también en las piezas estándar de ALSI")
+        self.chk_estandar.setStyleSheet("color: #d35400; font-weight: bold;")
+        izq_layout.addWidget(self.chk_estandar)
 
         self.list_companeros = QListWidget()
         self.list_companeros.setMaximumHeight(200)
@@ -668,6 +699,13 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_preview_icon.setAlignment(Qt.AlignCenter)
         self.lbl_preview_icon.setStyleSheet("font-size: 64px;")
         self.lbl_preview_icon.setMinimumHeight(100)
+        
+        # Efecto de opacidad para animaciones (V1.3.16)
+        self.preview_opacity = QGraphicsOpacityEffect()
+        self.lbl_preview_icon.setGraphicsEffect(self.preview_opacity)
+        self.anim_opacity = QPropertyAnimation(self.preview_opacity, b"opacity")
+        self.anim_opacity.setDuration(400)
+        
         preview_layout.addWidget(self.lbl_preview_icon)
         
         self.lbl_preview_nombre = QLabel("Seleccione un archivo")
@@ -817,6 +855,37 @@ class BuscadorPiezas(QMainWindow):
 
         self.lbl_status = QLabel("Listo")
         footer_layout.addWidget(self.lbl_status, stretch=1)
+
+        # Botones de Ayuda e Info (V1.0 - Reubicados a la derecha)
+        self.btn_ayuda = QPushButton("❓")
+        self.btn_ayuda.setToolTip("Guía Rápida de Uso")
+        self.btn_ayuda.setCursor(Qt.PointingHandCursor)
+        self.btn_ayuda.setFixedSize(35, 35)
+        self.btn_ayuda.clicked.connect(self.mostrar_ayuda)
+        self.btn_ayuda.setStyleSheet("""
+            QPushButton { 
+                background-color: #3498db; 
+                font-size: 16px; 
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #2980b9; }
+        """)
+        footer_layout.addWidget(self.btn_ayuda)
+
+        self.btn_info = QPushButton("ℹ️")
+        self.btn_info.setToolTip("Acerca de / Versión")
+        self.btn_info.setCursor(Qt.PointingHandCursor)
+        self.btn_info.setFixedSize(35, 35)
+        self.btn_info.clicked.connect(self.mostrar_info)
+        self.btn_info.setStyleSheet("""
+            QPushButton { 
+                background-color: #95a5a6; 
+                font-size: 16px; 
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #7f8c8d; }
+        """)
+        footer_layout.addWidget(self.btn_info)
         
         self.lbl_count = QLabel("0 resultados")
         footer_layout.addWidget(self.lbl_count)
@@ -926,6 +995,12 @@ class BuscadorPiezas(QMainWindow):
     def cargar_preferencias(self):
         self.input_buscar.setText(self.controller.load_preference("ultimo_termino", ""))
         
+        # Restaurar Checkbox Biblioteca (V1.3.15)
+        sid_status = self.controller.load_preference("incluir_siddex", "0")
+        self.chk_siddex.setChecked(sid_status == "1")
+        est_status = self.controller.load_preference("incluir_estandar", "0")
+        self.chk_estandar.setChecked(est_status == "1")
+        
         comp_guardados = self.controller.load_preference("companeros_checked", "")
         if comp_guardados:
             comp_list = comp_guardados.split(',')
@@ -978,6 +1053,11 @@ class BuscadorPiezas(QMainWindow):
         val = f"{rect.x()},{rect.y()},{rect.width()},{rect.height()}"
         self.controller.save_preference("geometria", val)
         self.controller.save_preference("ultimo_termino", self.input_buscar.text())
+        
+        # Guardar Checkbox Biblioteca (V1.3.15)
+        self.controller.save_preference("incluir_siddex", "1" if self.chk_siddex.isChecked() else "0")
+        self.controller.save_preference("incluir_estandar", "1" if self.chk_estandar.isChecked() else "0")
+        
 
         comp_checked = ','.join(self.get_selected_items(self.list_companeros))
         self.controller.save_preference("companeros_checked", comp_checked)
@@ -1076,10 +1156,11 @@ class BuscadorPiezas(QMainWindow):
             comp_sel = self.get_selected_items(self.list_companeros)
             años_sel = self.get_selected_items(self.list_años)
 
-            # Validación: al menos un compañero y un año, A MENOS QUE se busque en biblioteca (V1.3.6)
-            buscar_en_biblioteca = self.chk_biblioteca.isChecked()
-            if not comp_sel and not años_sel and not buscar_en_biblioteca:
-                QMessageBox.warning(self, "Atención", "Selecciona al menos un compañero y un año, o marca la casilla de Biblioteca.")
+            # Validación: al menos un compañero y un año, A MENOS QUE se busque en biblioteca (V1.3.15)
+            buscar_siddex = self.chk_siddex.isChecked()
+            buscar_estandar = self.chk_estandar.isChecked()
+            if not comp_sel and not años_sel and not buscar_siddex and not buscar_estandar:
+                QMessageBox.warning(self, "Atención", "Selecciona al menos un compañero y un año, o marca una casilla de Biblioteca.")
                 return
             
             if not termino:
@@ -1116,7 +1197,8 @@ class BuscadorPiezas(QMainWindow):
                 carpetas_sel,
                 clientes_sel,
                 proyectos_sel,
-                incluir_biblioteca=buscar_en_biblioteca # Nuevo parámetro V1.3.6
+                incluir_siddex=buscar_siddex,
+                incluir_estandar=buscar_estandar
             )
             
             self.tabla.setRowCount(0)
@@ -1136,7 +1218,10 @@ class BuscadorPiezas(QMainWindow):
                 
             self.lbl_count.setText(f"{len(resultados)} resultados")
             if not resultados and termino:
-                self.lbl_status.setText(f"No se encontraron resultados para '{termino}'")
+                txt = f"No se encontraron resultados para '{termino}'"
+                if buscar_siddex or buscar_estandar:
+                    txt += "\n(Pista: Asegúrate de haber usado el botón 'Indexar Comerciales' al menos una vez)"
+                self.lbl_status.setText(txt)
                 
         except Exception as e:
             self.lbl_status.setText("❌ Error en la búsqueda")
@@ -1246,88 +1331,73 @@ class BuscadorPiezas(QMainWindow):
     # ═══════════════════════════════════════════
     # PREVISUALIZACIÓN (Cambio 4)
     # ═══════════════════════════════════════════
-    # ═══════════════════════════════════════════
-    # EXTRACCIÓN DE MINIATURAS (V1.2.3)
-    # ═══════════════════════════════════════════
+
+
     def extraer_miniatura(self, ruta, size=256):
         """
-        Extrae la miniatura del archivo usando olefile (SW) o Windows Shell API (Otros)
+        Extrae la miniatura básica (V1.3.6 simplified)
         """
         try:
             if not ruta or not os.path.exists(ruta):
                 return None
             
-            # Revisar caché
             if ruta in self.cache_miniaturas:
                 return self.cache_miniaturas[ruta]
             
-            # Limpieza simple de caché
             if len(self.cache_miniaturas) > 100:
                 self.cache_miniaturas.clear()
 
             ext = Path(ruta).suffix.lower()
             pixmap = None
 
-            # 1. Intentar método directo OLE para SolidWorks (Más fiable que Shell)
+            # 1. SolidWorks OLE
             if ext in ('.sldprt', '.sldasm', '.slddrw'):
                 try:
                     import olefile
                     if olefile.isOleFile(ruta):
                         with olefile.OleFileIO(ruta) as ole:
-                            # Stream habitual en SW 2015+
                             if ole.exists('PreviewPNG'):
                                 stream = ole.openstream('PreviewPNG')
-                                data = stream.read()
-                                image = QImage.fromData(data)
+                                image = QImage.fromData(stream.read())
                                 if not image.isNull():
                                     pixmap = QPixmap.fromImage(image)
-                            # Fallback para versiones antiguas
-                            elif ole.exists('Preview'):
-                                # El stream Preview suele ser BMP pero puede tener headers raros
-                                # Si falla, caerá al Shell API
-                                pass
-                except Exception as e:
-                    # Si falla olefile, continuamos con Shell
-                    logger.debug(f"Fallo OLE para {ruta}: {e}")
+                except: pass
 
-            # 2. Si no hay pixmap, usar Windows Shell API (Standard)
+            # 2. Fallback Shell
             if not pixmap:
-                pythoncom.CoInitialize()
                 try:
-                    ruta_norm = os.path.normpath(ruta)
-                    item = shell.SHCreateItemFromParsingName(ruta_norm, None, shell.IID_IShellItem)
-                    factory = item.QueryInterface(shell.IID_IShellItemImageFactory)
-                    
-                    # SIIGBF_RESIZETOFIT = 0x0
-                    # SIIGBF_BIGGERSIZEOK = 0x1
-                    # SIIGBF_MEMORYONLY = 0x2
-                    # SIIGBF_ICONONLY = 0x4
-                    # SIIGBF_THUMBNAILONLY = 0x8
-                    # Probamos THUMBNAILONLY con fallback a 0x0 para asegurar imagen
-                    try:
-                        hbmp = factory.GetImage((size, size), 0x8) # Thumbnail only
-                    except:
-                        hbmp = factory.GetImage((size, size), 0x0) # Icon fallback
-                    
-                    image = QImage.fromWinHBITMAP(hbmp)
-                    if not image.isNull():
-                        pixmap = QPixmap.fromImage(image)
+                    pythoncom.CoInitialize()
+                    res = shell.SHGetFileInfo(ruta, 0, shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON)
+                    hicon = res[0]
+                    if hicon:
+                        pixmap = QtWin.fromHICON(hicon)
+                        import ctypes
+                        ctypes.windll.user32.DestroyIcon(hicon)
+                except: pass
                 finally:
                     pythoncom.CoUninitialize()
-            
-            # Guardar en caché si obtuvimos algo
-            if pixmap:
+
+            # 3. Fallback QFileIconProvider (Robustez extra)
+            if not pixmap:
+                try:
+                    from PyQt5.QtWidgets import QFileIconProvider
+                    provider = QFileIconProvider()
+                    icon = provider.icon(Path(ruta))
+                    pixmap = icon.pixmap(size, size)
+                except: pass
+
+            if pixmap and not pixmap.isNull():
                 self.cache_miniaturas[ruta] = pixmap
                 return pixmap
             
-            return None
-
         except Exception as e:
-            # Fallar silenciosamente
-            return None
+            logger.debug(f"Error en extraer_miniatura: {e}")
+        return None
 
     def actualizar_preview(self, current, previous=None):
-        """Actualiza el panel de previsualización al seleccionar una fila"""
+        """
+        Actualiza inmediatamente el texto (feedback instantáneo) y lanza timer para recursos pesados (V1.3.25)
+        """
         try:
             if not current or not hasattr(current, 'row'):
                 return
@@ -1336,77 +1406,101 @@ class BuscadorPiezas(QMainWindow):
             if row < 0 or row >= self.tabla.rowCount():
                 return
                 
-            # Obtener items de la fila seleccionada de forma segura
             def get_text(col):
                 try:
                     item = self.tabla.item(row, col)
                     return item.text() if item else ""
-                except Exception:
-                    return ""
+                except: return ""
 
-            nombre_texto = get_text(0)
-            comp_texto = get_text(1)
-            año_texto = get_text(2)
-            cliente_texto = get_text(3)
-            proyecto_texto = get_text(4)
-            tipo_texto = get_text(5)
-            # V1.3.0 Nuevos campos
+            nombre = get_text(0)
+            comp = get_text(1)
+            año = get_text(2)
+            cliente = get_text(3)
+            proyecto = get_text(4)
+            tipo = get_text(5)
             cod_proy = get_text(6)
             nom_proy = get_text(7)
             cod_ord = get_text(8)
             nom_ord = get_text(9)
-            ruta_texto = get_text(10)
+            ruta = get_text(10)
             
-            if not nombre_texto or not ruta_texto:
-                # Deshabilitar botones si no hay selección válida
+            if not nombre or not ruta:
                 self.btn_abrir_carpeta.setEnabled(False)
                 self.btn_copiar_ruta.setEnabled(False)
                 self.btn_copiar_nombre.setEnabled(False)
                 return
-            
-            # Habilitar botones de acción (V1.3.2)
+
             self.btn_abrir_carpeta.setEnabled(True)
             self.btn_copiar_ruta.setEnabled(True)
             self.btn_copiar_nombre.setEnabled(True)
-                
-            ext = Path(nombre_texto).suffix.lower()
-            
-            # Intentar extraer miniatura real
-            pixmap = self.extraer_miniatura(ruta_texto)
-            
-            if pixmap and not pixmap.isNull():
-                self.lbl_preview_icon.setPixmap(pixmap.scaled(200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                self.lbl_preview_icon.setText("")
-            else:
-                # Icono grande por defecto si falla la miniatura
-                icono = ICONOS_EXTENSION.get(ext, '📁')
-                self.lbl_preview_icon.setPixmap(QPixmap()) 
-                self.lbl_preview_icon.setText(icono)
-            
-            # UI Updates (V1.3.0)
-            self.lbl_preview_nombre.setText(nombre_texto)
+
+            # 1. ACTUALIZACIÓN INSTANTÁNEA (Solo Texto)
+            self.lbl_preview_nombre.setText(nombre)
+            ext = Path(nombre).suffix.lower()
             tipo_desc = DESCRIPCIONES_EXTENSION.get(ext, 'Archivo')
-            self.lbl_preview_tipo.setText(f"📎 Tipo: {tipo_desc} ({tipo_texto})")
-            self.lbl_preview_comp.setText(f"👤 Compañero: {comp_texto} | AÑO {año_texto}")
+            self.lbl_preview_tipo.setText(f"📎 Tipo: {tipo_desc} ({tipo})")
+            self.lbl_preview_comp.setText(f"👤 Compañero: {comp} | AÑO {año}")
             
-            proy_str = f"{cod_proy} {nom_proy}" if cod_proy else (nom_proy if nom_proy else proyecto_texto)
+            proy_str = f"{cod_proy} {nom_proy}" if cod_proy else (nom_proy if nom_proy else proyecto)
             ord_str = f"Orden: {cod_ord} {nom_ord}" if cod_ord else ""
+            self.lbl_preview_proyecto.setText(f"🏢 Cliente: {cliente}\n🏗️ Proyecto: {proy_str}\n📄 {ord_str}")
+            self.lbl_preview_ruta.setText(f"📂 {ruta}")
+            self.lbl_preview_tamaño.setText("💾 Tamaño: Cargando...")
             
-            self.lbl_preview_proyecto.setText(f"🏢 Cliente: {cliente_texto}\n🏗️ Proyecto: {proy_str}\n📄 {ord_str}")
-            self.lbl_preview_ruta.setText(f"📂 {ruta_texto}")
+            # Limpiar icono previo o poner temporal
+            if ruta not in self.cache_miniaturas:
+                icono = ICONOS_EXTENSION.get(ext, '🔍')
+                self.lbl_preview_icon.setPixmap(QPixmap())
+                self.lbl_preview_icon.setText(icono)
+                self.preview_opacity.setOpacity(0.5)
             
-            if ruta_texto and os.path.exists(ruta_texto):
-                size = os.path.getsize(ruta_texto)
-                if size < 1024:
-                    self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size} B")
-                elif size < 1024 * 1024:
-                    self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size/1024:.1f} KB")
-                else:
-                    self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size/(1024*1024):.1f} MB")
-            else:
-                self.lbl_preview_tamaño.setText("💾 Tamaño: Desconocido")
+            # 2. DIFERIR RECURSOS PESADOS (Miniatura, os.path.exists, etc.)
+            self.current_preview_data = {
+                'ruta': ruta,
+                'nombre': nombre,
+                'ext': ext
+            }
+            self.timer_preview.start(150) # Esperar 150ms de calma (ideal para flechas teclado)
+
         except Exception as e:
-            logger.error(f"Error en actualizar_preview: {e}")
+            logger.error(f"Error en feedback preview: {e}")
+
+    def _actualizar_preview_recursos_pesados(self):
+        """Carga miniatura y tamaño de archivo tras debounce (V1.3.25)"""
+        try:
+            data = self.current_preview_data
+            ruta = data.get('ruta')
+            if not ruta: return
+
+            # Verificar existencia (IO Pesado en red)
+            if not os.path.exists(ruta):
+                 self.lbl_preview_tamaño.setText("💾 Tamaño: No accesible")
+                 return
+
+            # Tamaño
+            size = os.path.getsize(ruta)
+            if size < 1024:
+                self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size} B")
+            elif size < 1024 * 1024:
+                self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size / 1024:.1f} KB")
+            else:
+                self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size / (1024 * 1024):.1f} MB")
+
+            # Miniatura (Heavy IO)
+            pixmap = self.extraer_miniatura(ruta)
+            if pixmap and not pixmap.isNull():
+                self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.lbl_preview_icon.setText("")
+                self.anim_opacity.stop()
+                self.preview_opacity.setOpacity(0.0)
+                self.anim_opacity.setStartValue(0.0)
+                self.anim_opacity.setEndValue(1.0)
+                self.anim_opacity.start()
+            else:
+                self.preview_opacity.setOpacity(1.0)
+
+        except Exception as e:
+            logger.debug(f"Error en recursos diferidos: {e}")
 
     # ═══════════════════════════════════════════
     # ACCIONES
@@ -1454,6 +1548,110 @@ class BuscadorPiezas(QMainWindow):
             nombre = self.tabla.item(row, 0).text()
             QApplication.clipboard().setText(nombre)
             self.lbl_status.setText(f"✅ Nombre copiado: {nombre}")
+
+    # ═══════════════════════════════════════════
+    # AYUDA E INFORMACIÓN (V1.0)
+    # ═══════════════════════════════════════════
+    def mostrar_ayuda(self):
+        """Muestra la Guía Rápida en un diálogo"""
+        try:
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Guía Rápida - Buscador ALSI")
+            dialog.resize(800, 600)
+            layout = QVBoxLayout(dialog)
+            
+            browser = QTextBrowser()
+            browser.setOpenExternalLinks(True)
+            
+            # Cargar contenido MD
+            path_md = resource_path(os.path.join("docs", "GUIA_RAPIDA.md"))
+            if os.path.exists(path_md):
+                with open(path_md, "r", encoding="utf-8") as f:
+                    text = f.read()
+                    # Convertir MD básico a HTML simple para QTextBrowser
+                    html = text.replace("# 🚀", "<h1>🚀").replace("# ", "<h1>").replace("## ", "<h2>").replace("\n*   ", "<li>").replace("\n", "<br>")
+                    html = html.replace("</h1>", "</h1><br>").replace("</h2>", "</h2><br>")
+                    html = html.replace("```markdown", "<pre style='background:#eee; padding:10px;'>").replace("```", "</pre>")
+                    html = html.replace("**", "<b>").replace("__", "<b>") # Bold basic
+                    
+                    # Estilo base
+                    style = """
+                    <style>
+                        h1 { color: #d35400; font-family: Segoe UI, sans-serif; }
+                        h2 { color: #2c3e50; font-family: Segoe UI, sans-serif; margin-top: 20px; }
+                        li { margin-bottom: 5px; }
+                        body { font-family: Segoe UI, sans-serif; font-size: 14px; line-height: 1.6; }
+                    </style>
+                    """
+                    browser.setHtml(style + html)
+            else:
+                browser.setText("No se encontró el archivo de ayuda.")
+                
+            layout.addWidget(browser)
+            
+            btn_close = QPushButton("Cerrar")
+            btn_close.clicked.connect(dialog.accept)
+            layout.addWidget(btn_close, alignment=Qt.AlignCenter)
+            
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"Error mostrando ayuda: {e}")
+
+    def mostrar_info(self):
+        """Muestra créditos y versión"""
+        try:
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Acerca de - Buscador ALSI")
+            dialog.resize(600, 500)
+            layout = QVBoxLayout(dialog)
+            
+            # Cabecera
+            lbl_title = QLabel("Buscador de Piezas ALSI")
+            lbl_title.setStyleSheet("font-size: 20px; font-weight: bold; color: #d35400;")
+            lbl_title.setAlignment(Qt.AlignCenter)
+            layout.addWidget(lbl_title)
+            
+            lbl_ver = QLabel("Versión 1.0.0 (Estable)")
+            lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; margin-bottom: 10px;")
+            lbl_ver.setAlignment(Qt.AlignCenter)
+            layout.addWidget(lbl_ver)
+            
+            # Créditos
+            group = QGroupBox("Créditos")
+            g_layout = QVBoxLayout()
+            lbl_author = QLabel("Desarrollado por: <b>Francisco Fernández Rodríguez</b>")
+            lbl_author.setAlignment(Qt.AlignCenter)
+            lbl_author.setStyleSheet("font-size: 13px;")
+            g_layout.addWidget(lbl_author)
+            
+            lbl_desc = QLabel("Para el Departamento de Oficina Técnica de ALSI.\nHecho con Python, PyQt5 y SQLite.")
+            lbl_desc.setAlignment(Qt.AlignCenter)
+            lbl_desc.setStyleSheet("color: #555;")
+            g_layout.addWidget(lbl_desc)
+            group.setLayout(g_layout)
+            layout.addWidget(group)
+            
+            # Changelog reciente
+            lbl_log = QLabel("Novedades V1.0:")
+            lbl_log.setStyleSheet("font-weight: bold; margin-top: 10px;")
+            layout.addWidget(lbl_log)
+            
+            browser = QTextBrowser()
+            path_log = resource_path("CHANGELOG.md")
+            if os.path.exists(path_log):
+                with open(path_log, "r", encoding="utf-8") as f:
+                    browser.setText(f.read())
+            else:
+                browser.setText("Registro de cambios no disponible.")
+            layout.addWidget(browser)
+
+            btn_close = QPushButton("Cerrar")
+            btn_close.clicked.connect(dialog.accept)
+            layout.addWidget(btn_close, alignment=Qt.AlignCenter)
+            
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"Error mostrando info: {e}")
 
     # ═══════════════════════════════════════════
     # UTILIDADES

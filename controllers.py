@@ -245,8 +245,8 @@ class SearchController:
         self.db = db
 
     def perform_search(self, term, companions, years, extensiones=None, folder_type="TODOS", 
-                      clientes=None, proyectos=None, ordenes=None, incluir_biblioteca=False):
-        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes, incluir_biblioteca)
+                      clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False):
+        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes, incluir_siddex, incluir_estandar)
 
     def save_preference(self, key, value):
         self.db.guardar_preferencia(key, value)

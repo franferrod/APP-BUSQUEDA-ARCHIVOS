@@ -115,12 +115,12 @@ class IndexManager:
             res = conn.execute('SELECT valor FROM preferencias WHERE clave = ?', (clave,)).fetchone()
             return res[0] if res else default
 
-    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, incluir_biblioteca=False):
+    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False):
         """
         Búsqueda multi-keyword con scoring y filtros múltiples (V1.3.0).
         V1.3.6 - Soporte para búsqueda híbrida (Contexto OR Biblioteca).
         """
-        logger.info(f"Buscando: '{termino}' | Biblio: {incluir_biblioteca}")
+        logger.info(f"Buscando: '{termino}' | Siddex: {incluir_siddex}, Estandar: {incluir_estandar}")
         
         if ',' in termino:
             keywords = [k.strip() for k in termino.split(',') if k.strip()]
@@ -173,11 +173,11 @@ class IndexManager:
             base_where += f" AND extension IN ({placeholders})"
             params.extend(extensiones)
 
-        # Filtro Carpeta (Siempre aplica)
+        # Filtro Carpeta (V1.3.14 - Movido a contexto para no bloquear comerciales)
         if carpetas and len(carpetas) > 0 and "TODOS" not in carpetas:
             placeholders = ','.join(['?' for _ in carpetas])
-            base_where += f" AND tipo_carpeta IN ({placeholders})"
-            params.extend(carpetas)
+            context_clauses.append(f"tipo_carpeta IN ({placeholders})")
+            context_params.extend(carpetas)
             
         # Filtros Jerárquicos (Contexto)
         if clientes and len(clientes) > 0:
@@ -190,21 +190,28 @@ class IndexManager:
             context_clauses.append(f"codigo_proyecto IN ({placeholders})")
             context_params.extend(proyectos)
 
-        # 3. Lógica Híbrida (V1.3.6)
+        # 3. Lógica Híbrida (V1.3.15)
         query = f"{query_select} WHERE {base_where}"
         
-        if incluir_biblioteca:
+        lib_comps = []
+        if incluir_siddex: lib_comps.append('BIBLIOTECA')
+        if incluir_estandar: lib_comps.append('ESTANDAR')
+
+        if lib_comps:
             # Cláusula para Biblioteca/Estándar
-            lib_clause = "compañero IN ('BIBLIOTECA', 'ESTANDAR')"
+            placeholders = ','.join(['?' for _ in lib_comps])
+            lib_clause = f"compañero IN ({placeholders})"
             
             if context_clauses:
-                # Si hay filtros de contexto: (Contexto) OR (Biblioteca)
+                # Si hay filtros de contexto: (Contexto Por Compañero) OR (Biblioteca Sin Filtros)
                 context_sql = " AND ".join(context_clauses)
                 query += f" AND ( ({context_sql}) OR ({lib_clause}) )"
                 params.extend(context_params)
+                params.extend(lib_comps)
             else:
-                # Si NO hay filtros de contexto (solo checkbox marcado): Solo Biblioteca
+                # Si NO hay filtros de contexto: Solo buscar en las seleccionadas (Biblioteca y/o Estándar)
                 query += f" AND ({lib_clause})"
+                params.extend(lib_comps)
         
         elif context_clauses:
              # Lógica Standard: Solo Contexto
