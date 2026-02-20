@@ -1795,7 +1795,7 @@ class BuscadorPiezas(QMainWindow):
             lbl_title.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_title)
             
-            lbl_ver = QLabel("Versión 1.0.1 (Estable)")
+            lbl_ver = QLabel("Versión 1.0.2 (Estable)")
             lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; font-weight: 500;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_ver)
@@ -1826,6 +1826,8 @@ class BuscadorPiezas(QMainWindow):
             
             browser = QTextBrowser()
             browser.setHtml("""
+                <b>v1.0.2:</b><br>
+                • Búsqueda insensible a acentos (tildes).<br><br>
                 <b>v1.0.1:</b><br>
                 • Búsqueda automática al cambiar filtros.<br>
                 • Mejoras en el instalador para redes locales (UNC).<br><br>

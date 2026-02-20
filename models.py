@@ -1,6 +1,6 @@
-import sqlite3
 import os
 import logging
+import unicodedata
 from pathlib import Path
 
 CONFIG_DIR = Path(os.path.expanduser("~")) / ".alsi_busqueda"
@@ -27,7 +27,19 @@ class IndexManager:
         self.init_db()
 
     def get_connection(self):
-        return sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(DB_PATH))
+        # Registrar función personalizada para normalizar texto (quitar acentos)
+        conn.create_function("NORMALIZAR", 1, self.normalizar_texto)
+        return conn
+
+    def normalizar_texto(self, texto):
+        """Convierte a mayúsculas y quita acentos/tildes"""
+        if texto is None: return ""
+        # Normalizar a NFKD para separar caracteres de acentos
+        texto = unicodedata.normalize('NFKD', str(texto))
+        # Filtrar solo caracteres que no sean marcas de acento (Mn)
+        texto = "".join([c for c in texto if not unicodedata.combining(c)])
+        return texto.upper()
 
     def init_db(self):
         with self.get_connection() as conn:
@@ -138,11 +150,11 @@ class IndexManager:
             score_cases = []
             for i, kw in enumerate(keywords):
                 peso_posicion = len(keywords) - i
-                score_cases.append(f"CASE WHEN nombre_archivo LIKE ? THEN {peso_posicion * 100} ELSE 0 END")
+                score_cases.append(f"CASE WHEN NORMALIZAR(nombre_archivo) LIKE NORMALIZAR(?) THEN {peso_posicion * 100} ELSE 0 END")
                 params.append(f"%{kw}%")
 
             score_sql = " + ".join(score_cases)
-            where_clause = " OR ".join(["nombre_archivo LIKE ?" for _ in keywords])
+            where_clause = " OR ".join(["NORMALIZAR(nombre_archivo) LIKE NORMALIZAR(?)" for _ in keywords])
             params.extend([f"%{k}%" for k in keywords])
             
             query_select = f"SELECT {base_cols}, ({score_sql}) as score FROM archivos"

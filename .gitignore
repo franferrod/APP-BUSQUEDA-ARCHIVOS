@@ -24,3 +24,4 @@ app.log
 # BACKUPS/  <-- Don't ignore backups for now, or maybe yes since we have git?
 # Actually, better keep Git clean.
 BACKUPS/
+releases/
