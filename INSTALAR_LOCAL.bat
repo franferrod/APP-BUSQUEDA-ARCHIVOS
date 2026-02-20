@@ -12,10 +12,14 @@ echo     INSTALANDO BUSCADOR DE PIEZAS ALSI (V1.0.0)
 echo  ======================================================
 echo.
 
+REM Soporte para rutas UNC (V1.0.1)
+pushd "%~dp0"
+
 REM Verificación de archivos fuente
-if not exist "%APP_EXE%" (
-    echo [ERROR] No se encuentra %APP_EXE% en esta carpeta.
+if not exist "%~dp0%APP_EXE%" (
+    echo [ERROR] No se encuentra %APP_EXE% en %~dp0
     echo Por favor, ejecuta este script desde la carpeta de red.
+    popd
     pause
     exit /b
 )
@@ -43,4 +47,5 @@ echo     INSTALACION COMPLETADA CON EXITO
 echo  ======================================================
 echo  Puedes cerrar esta ventana y usar el acceso directo.
 echo.
+popd
 pause

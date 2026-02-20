@@ -512,6 +512,7 @@ class BuscadorPiezas(QMainWindow):
             action.setCheckable(True)
             action.setChecked(True)
             action.triggered.connect(self.on_tipos_menu_changed)
+            action.triggered.connect(lambda: self.on_filtro_jerarquico_changed(None))
             self.tipos_actions[tipo] = action
             
         self.btn_tipos.setMenu(self.menu_tipos)
@@ -586,6 +587,10 @@ class BuscadorPiezas(QMainWindow):
         izq_layout.addWidget(self.list_companeros)
         self.add_toggle_buttons(izq_layout, self.list_companeros)
 
+        # Conectar checkboxes de biblioteca (V1.0.1 Auto-update)
+        self.chk_siddex.stateChanged.connect(self.on_filtro_jerarquico_changed)
+        self.chk_estandar.stateChanged.connect(self.on_filtro_jerarquico_changed)
+
         izq_layout.addSpacing(10)
 
         # 2. AÑOS
@@ -619,6 +624,7 @@ class BuscadorPiezas(QMainWindow):
             self.list_carpetas.addItem(item)
         izq_layout.addWidget(self.list_carpetas)
         self.add_toggle_buttons(izq_layout, self.list_carpetas)
+        self.list_carpetas.itemChanged.connect(self.on_filtro_jerarquico_changed)
 
         izq_layout.addSpacing(10)
 
@@ -1137,6 +1143,8 @@ class BuscadorPiezas(QMainWindow):
     def _refrescar_real_jerarquico(self):
         """Ejecución real de la cascada tras el debouncing"""
         self.refrescar_filtros_jerarquicos()
+        # V1.0.1: Disparar búsqueda automática (silenciosa)
+        self.ejecutar_busqueda(auto=True)
 
     def refrescar_filtros_jerarquicos(self, solo_proyectos=False, solo_ordenes=False):
         """Puebla las listas de Clientes, Proyectos y Órdenes con lógica de cascada total (V1.0.0)"""
@@ -1183,8 +1191,9 @@ class BuscadorPiezas(QMainWindow):
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                     item.setCheckState(Qt.Checked if str(cod) in proyectos_sel else Qt.Unchecked)
                     self.list_proyectos.addItem(item)
-                self.list_proyectos.addItem(item)
-                proyectos_sel = [item.split(' - ')[0] for item in self.get_selected_items(self.list_proyectos)]
+                
+                # V1.0.1: Eliminado duplicado y añadido proyectos_sel final
+                proyectos_sel = [item.text().split(' - ')[0] for item in self.get_selected_items(self.list_proyectos)]
                 
         except Exception as e:
             logger.error(f"Error refrescando filtros jerárquicos: {e}")
@@ -1196,7 +1205,7 @@ class BuscadorPiezas(QMainWindow):
     # ═══════════════════════════════════════════
     # BÚSQUEDA (Cambio 3: filtro por extensión)
     # ═══════════════════════════════════════════
-    def ejecutar_busqueda(self):
+    def ejecutar_busqueda(self, auto=False):
         try:
             termino = self.input_buscar.text().strip()
             comp_sel = self.get_selected_items(self.list_companeros)
@@ -1205,14 +1214,18 @@ class BuscadorPiezas(QMainWindow):
             # Validación: al menos un compañero y un año, A MENOS QUE se busque en biblioteca (V1.0.0)
             buscar_siddex = self.chk_siddex.isChecked()
             buscar_estandar = self.chk_estandar.isChecked()
+            
             if not comp_sel and not años_sel and not buscar_siddex and not buscar_estandar:
-                QMessageBox.warning(self, "Atención", "Selecciona al menos un compañero y un año, o marca una casilla de Biblioteca.")
+                if not auto:
+                    QMessageBox.warning(self, "Atención", "Selecciona al menos un compañero y un año, o marca una casilla de Biblioteca.")
                 return
             
             if not termino:
-                QMessageBox.warning(self, "Atención", "Introduce un término de búsqueda.")
+                if not auto:
+                    QMessageBox.warning(self, "Atención", "Introduce un término de búsqueda.")
                 return
                 
+            logger.info(f"Ejecutando búsqueda auto={auto} | Term: {termino} | Comp: {len(comp_sel)} | Años: {len(años_sel)}")
             self.lbl_status.setText("Buscando...")
             QApplication.processEvents()
             
@@ -1782,7 +1795,7 @@ class BuscadorPiezas(QMainWindow):
             lbl_title.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_title)
             
-            lbl_ver = QLabel("Versión 1.0.0 (Estable)")
+            lbl_ver = QLabel("Versión 1.0.1 (Estable)")
             lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; font-weight: 500;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_ver)
@@ -1812,7 +1825,13 @@ class BuscadorPiezas(QMainWindow):
             layout.addWidget(lbl_updates)
             
             browser = QTextBrowser()
-            browser.setPlaceholderText("No hay cambios registrados para esta versión todavía.")
+            browser.setHtml("""
+                <b>v1.0.1:</b><br>
+                • Búsqueda automática al cambiar filtros.<br>
+                • Mejoras en el instalador para redes locales (UNC).<br><br>
+                <b>v1.0.0:</b><br>
+                • Lanzamiento oficial.
+            """)
             browser.setStyleSheet("background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;")
             browser.setMaximumHeight(120)
             layout.addWidget(browser)
