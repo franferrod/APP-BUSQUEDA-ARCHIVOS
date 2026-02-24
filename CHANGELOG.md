@@ -1,5 +1,15 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [1.1.0] - 2026-02-20 (Win7 Compatibility)
+Versión especial para asegurar el funcionamiento en equipos antiguos con Windows 7 (Rubén Edition).
+
+### 🛠 Mejoras de Compatibilidad
+- **Python 3.8.10**: Downgrade controlado del motor de Python para soporte oficial de Windows 7.
+- **Fix DLLs**: Integración de `api-ms-win-core-path-l1-1-0.dll` para resolver errores de arranque.
+- **Entorno Embebido**: Preparación de un entorno Python autocontenido para evitar conflictos de sistema.
+- **Fix Onefile (2026-02-24)**: Recompilación en modo onefile para evitar `WinError 127` causado por `os.add_dll_directory()` (no disponible en Win7). Elimina la necesidad de la carpeta `pywin32_system32`.
+- **INSTALAR_LOCAL.bat**: Añadido instalador local específico para v1.1.0.
+
 ## [1.0.0] - 2026-02-18 (Lanzamiento Oficial)
 ¡Primera versión oficial de producción! Esta entrega marca el fin de la fase de desarrollo y el inicio del despliegue oficial en la Oficina Técnica.
 
