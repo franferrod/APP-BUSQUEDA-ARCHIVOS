@@ -1,6 +1,7 @@
 import os
 import logging
 import unicodedata
+import sqlite3
 from pathlib import Path
 
 CONFIG_DIR = Path(os.path.expanduser("~")) / ".alsi_busqueda"
@@ -150,12 +151,13 @@ class IndexManager:
             score_cases = []
             for i, kw in enumerate(keywords):
                 peso_posicion = len(keywords) - i
-                score_cases.append(f"CASE WHEN NORMALIZAR(nombre_archivo) LIKE NORMALIZAR(?) THEN {peso_posicion * 100} ELSE 0 END")
-                params.append(f"%{kw}%")
+                kw_norm = self.normalizar_texto(kw)
+                score_cases.append(f"CASE WHEN NORMALIZAR(nombre_archivo) LIKE ? THEN {peso_posicion * 100} ELSE 0 END")
+                params.append(f"%{kw_norm}%")
 
             score_sql = " + ".join(score_cases)
-            where_clause = " OR ".join(["NORMALIZAR(nombre_archivo) LIKE NORMALIZAR(?)" for _ in keywords])
-            params.extend([f"%{k}%" for k in keywords])
+            where_clause = " OR ".join(["NORMALIZAR(nombre_archivo) LIKE ?" for _ in keywords])
+            params.extend([f"%{self.normalizar_texto(k)}%" for k in keywords])
             
             query_select = f"SELECT {base_cols}, ({score_sql}) as score FROM archivos"
             base_where = f"({where_clause})"

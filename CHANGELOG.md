@@ -1,5 +1,9 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [1.0.3] - 2026-02-26 (Thumbnails y Sin Acentos)
+- **Búsqueda Inteligente**: Las búsquedas ahora ignoran los acentos/tildes, tratando (por ejemplo) "telescópico" y "telescopico" como equivalentes.
+- **Columna de Miniaturas**: Se ha incorporado una nueva columna "Vista" al inicio de la tabla. Las previsualizaciones se extraen de forma asíncrona (como en el explorador de Windows) logrando cargar miles de pequeñas fotos al instante sin congelar la app.
+
 ## [1.1.0] - 2026-02-20 (Win7 Compatibility)
 Versión especial para asegurar el funcionamiento en equipos antiguos con Windows 7 (Rubén Edition).
 

@@ -304,8 +304,8 @@ class TablaArrastrable(QTableWidget):
             rows.add(item.row())
         
         for row in rows:
-            # Columna 10 = ruta completa (V1.0.0: se movió de col 6 a col 10)
-            ruta_item = self.item(row, 10)
+            # Columna 11 = ruta completa (V1.0.3: se movió de col 10 a col 11)
+            ruta_item = self.item(row, 11)
             if ruta_item:
                 ruta = ruta_item.text()
                 if ruta:
@@ -319,6 +319,38 @@ class TablaArrastrable(QTableWidget):
             mime.setText('\n'.join(u.toLocalFile() for u in urls))
         
         return mime
+        
+# -----------------------------------------------------------------------------
+# THUMBNAIL WORKER (V1.0.3 - Extracción asíncrona)
+# -----------------------------------------------------------------------------
+class ThumbnailWorker(QThread):
+    # row, ruta, image (QImage), hbitmap (int)
+    thumbnail_ready = pyqtSignal(int, str, object, int)
+    
+    def __init__(self, vistas_pendientes, method_extractor):
+        super().__init__()
+        self.vistas_pendientes = vistas_pendientes # list of (row, ruta)
+        self.method_extractor = method_extractor
+        self._cancelar = False
+        
+    def cancelar(self):
+        self._cancelar = True
+        
+    def run(self):
+        # Inicializa COM en este hilo para IShellItemImageFactory
+        pythoncom.CoInitialize()
+        try:
+            for row, ruta in self.vistas_pendientes:
+                if self._cancelar:
+                    break
+                try:
+                    image, hbitmap = self.method_extractor(ruta, size=64)
+                    if image is not None or hbitmap != 0:
+                        self.thumbnail_ready.emit(row, ruta, image, hbitmap)
+                except Exception as e:
+                    logger.debug(f"Error procesando miniatura en hilo para {ruta}: {e}")
+        finally:
+            pythoncom.CoUninitialize()
 
 
 # -----------------------------------------------------------------------------
@@ -667,11 +699,11 @@ class BuscadorPiezas(QMainWindow):
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setHandleWidth(3)
         
-        # Tabla (V1.3.0: 11 columnas)
+        # Tabla (V1.0.3: 12 columnas)
         self.tabla = TablaArrastrable()
-        self.tabla.setColumnCount(11)
+        self.tabla.setColumnCount(12)
         self.tabla.setHorizontalHeaderLabels([
-            "Nombre", "Compañero", "Año", "Cliente", "Proyecto", "Tipo", 
+            "Vista", "Nombre", "Compañero", "Año", "Cliente", "Proyecto", "Tipo", 
             "Cód. Proyecto", "Nombre Proyecto", "Cód. Orden", "Nombre Orden",
             "Ruta Completa"
         ])
@@ -680,6 +712,10 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setAlternatingRowColors(True)
         self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tabla.setSortingEnabled(True)  # <-- Ordenación por columnas activada
+        
+        # Ajuste de tamaño de filas e iconos para las miniaturas
+        self.tabla.setIconSize(QSize(60, 60))
+        self.tabla.verticalHeader().setDefaultSectionSize(64)
         
         header = self.tabla.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive) # Todas interactivas V1.3.11
@@ -695,13 +731,14 @@ class BuscadorPiezas(QMainWindow):
             }
         """)
         
-        self.tabla.setColumnWidth(0, 400) # Nombre
-        self.tabla.setColumnWidth(1, 95)  # Compañero
-        self.tabla.setColumnWidth(2, 55)  # Año
-        self.tabla.setColumnWidth(3, 120) # Cliente
-        self.tabla.setColumnWidth(4, 250) # Proyecto
-        self.tabla.setColumnWidth(5, 120) # Tipo
-        self.tabla.setColumnHidden(6, True)
+        self.tabla.setColumnWidth(0, 70)  # Vista
+        self.tabla.setColumnWidth(1, 400) # Nombre
+        self.tabla.setColumnWidth(2, 95)  # Compañero
+        self.tabla.setColumnWidth(3, 55)  # Año
+        self.tabla.setColumnWidth(4, 120) # Cliente
+        self.tabla.setColumnWidth(5, 250) # Proyecto
+        self.tabla.setColumnWidth(6, 120) # Tipo
+        self.tabla.setColumnHidden(7, True) # Cod. Proy
         
         self.tabla.doubleClicked.connect(self.abrir_carpeta_seleccionada)
         self.tabla.selectionModel().currentRowChanged.connect(self.actualizar_preview)
@@ -1262,10 +1299,29 @@ class BuscadorPiezas(QMainWindow):
             
             # Prealocar filas de golpe (mucho más rápido que insertRow en bucle)
             self.tabla.setRowCount(len(resultados))
+            vistas_pendientes = []
+            
             for row, data in enumerate(resultados):
+                # data[10] es la ruta completa
+                ruta = data[10]
+                vistas_pendientes.append((row, ruta))
+                
+                # Columna de miniatura (vacía inicialmente)
+                item_vista = QTableWidgetItem()
+                self.tabla.setItem(row, 0, item_vista)
+                
                 for col, val in enumerate(data):
                     item = QTableWidgetItem(str(val) if val else "")
-                    self.tabla.setItem(row, col, item)
+                    self.tabla.setItem(row, col + 1, item)
+            
+            # Lanzamos hilo de miniaturas
+            if hasattr(self, 'thumb_worker') and self.thumb_worker and self.thumb_worker.isRunning():
+                self.thumb_worker.cancelar()
+                self.thumb_worker.wait(100)
+                
+            self.thumb_worker = ThumbnailWorker(vistas_pendientes, self.extraer_miniatura_raw)
+            self.thumb_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
+            self.thumb_worker.start()
             
             # Re-activar ordenación después de cargar datos
             self.tabla.setSortingEnabled(True)
@@ -1392,24 +1448,15 @@ class BuscadorPiezas(QMainWindow):
     # ═══════════════════════════════════════════
 
 
-    def extraer_miniatura(self, ruta, size=256):
-        """
-        Extrae miniatura con IShellItemImageFactory (calidad Explorador Windows) V1.0.0 R6
-        """
+    def extraer_miniatura_raw(self, ruta, size=256):
+        """Devuelve (QImage, hbitmap) permitiendo su uso seguro en QThreads (V1.0.3)"""
         try:
             if not ruta or not os.path.exists(ruta):
-                return None
+                return None, 0
             
-            if ruta in self.cache_miniaturas:
-                return self.cache_miniaturas[ruta]
-            
-            if len(self.cache_miniaturas) > 100:
-                self.cache_miniaturas.clear()
-
             ext = Path(ruta).suffix.lower()
-            pixmap = None
-
-            # 1. SolidWorks OLE (PreviewPNG stream directo — máxima calidad)
+            
+            # 1. SolidWorks OLE (PreviewPNG)
             if ext in ('.sldprt', '.sldasm', '.slddrw'):
                 try:
                     import olefile
@@ -1419,55 +1466,83 @@ class BuscadorPiezas(QMainWindow):
                                 data = ole.openstream('PreviewPNG').read()
                                 image = QImage.fromData(data)
                                 if not image.isNull():
-                                    pixmap = QPixmap.fromImage(image)
+                                    return image, 0
                 except Exception:
                     logger.debug(f"OLE fallback para: {ruta}")
 
-            # 2. PDF — Renderizado directo con PyMuPDF (primera página)
-            if not pixmap and ext == '.pdf':
+            # 2. PDF
+            if ext == '.pdf':
                 try:
-                    import fitz  # PyMuPDF
+                    import fitz
                     doc = fitz.open(ruta)
                     if doc.page_count > 0:
                         page = doc[0]
-                        # Renderizar a 2x zoom para buena calidad en el panel preview
                         mat = fitz.Matrix(2, 2)
                         pix = page.get_pixmap(matrix=mat, alpha=False)
                         image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
                         if not image.isNull():
-                            pixmap = QPixmap.fromImage(image)
+                            # Retornar una copia para evitar problemas de punteros al destruir 'pix'
+                            return image.copy(), 0
                     doc.close()
                 except Exception as e:
                     logger.debug(f"PyMuPDF falló para PDF: {e}")
 
-            # 3. IShellItemImageFactory (thumbnails reales - calidad Explorador)
-            if not pixmap:
-                try:
-                    pixmap = self._thumbnail_via_shell_factory(ruta, size)
-                except Exception as e:
-                    logger.debug(f"IShellItemImageFactory falló: {e}")
+            # 3. IShellItemImageFactory (hbitmap)
+            try:
+                hbitmap = self._thumbnail_via_shell_factory(ruta, size)
+                if hbitmap:
+                    return None, hbitmap
+            except Exception as e:
+                logger.debug(f"IShellItemImageFactory falló: {e}")
 
-            # 3. Fallback: icono del sistema (SHGetFileInfo)
-            if not pixmap:
-                try:
-                    pythoncom.CoInitialize()
-                    res = shell.SHGetFileInfo(ruta, 0, shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON)
-                    hicon = res[0]
-                    if hicon:
-                        pixmap = QtWin.fromHICON(hicon)
-                        import ctypes
-                        ctypes.windll.user32.DestroyIcon(hicon)
-                except Exception:
-                    pass
-                finally:
-                    pythoncom.CoUninitialize()
-
-            if pixmap and not pixmap.isNull():
-                self.cache_miniaturas[ruta] = pixmap
-                return pixmap
-            
         except Exception as e:
-            logger.debug(f"Error en extraer_miniatura: {e}")
+            logger.debug(f"Error en extraer_miniatura_raw: {e}")
+        
+        return None, 0
+
+    def extraer_miniatura(self, ruta, size=256):
+        """Extrae miniatura (QPixmap) para el hilo principal (Compatible hacia atrás)"""
+        if not ruta or not os.path.exists(ruta):
+            return None
+        
+        if ruta in self.cache_miniaturas:
+            return self.cache_miniaturas[ruta]
+            
+        if len(self.cache_miniaturas) > 100:
+            self.cache_miniaturas.clear()
+
+        image, hbitmap = self.extraer_miniatura_raw(ruta, size)
+        pixmap = None
+        
+        if hbitmap != 0:
+            pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapPremultipliedAlpha)
+            if pixmap.isNull():
+                pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapNoAlpha)
+            import ctypes
+            ctypes.windll.gdi32.DeleteObject(hbitmap)
+        elif image is not None and not image.isNull():
+            pixmap = QPixmap.fromImage(image)
+
+        ext = Path(ruta).suffix.lower()
+        if not pixmap and ext not in ('.sldprt', '.sldasm', '.slddrw', '.pdf'):
+            # 4. Fallback: icono del sistema (SHGetFileInfo)
+            try:
+                pythoncom.CoInitialize()
+                res = shell.SHGetFileInfo(ruta, 0, shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON)
+                hicon = res[0]
+                if hicon:
+                    pixmap = QtWin.fromHICON(hicon)
+                    import ctypes
+                    ctypes.windll.user32.DestroyIcon(hicon)
+            except Exception:
+                pass
+            finally:
+                pythoncom.CoUninitialize()
+
+        if pixmap and not pixmap.isNull():
+            self.cache_miniaturas[ruta] = pixmap
+            return pixmap
+            
         return None
 
     def _thumbnail_via_shell_factory(self, ruta, size=256):
@@ -1555,17 +1630,17 @@ class BuscadorPiezas(QMainWindow):
                     return item.text() if item else ""
                 except: return ""
 
-            nombre = get_text(0)
-            comp = get_text(1)
-            año = get_text(2)
-            cliente = get_text(3)
-            proyecto = get_text(4)
-            tipo = get_text(5)
-            cod_proy = get_text(6)
-            nom_proy = get_text(7)
-            cod_ord = get_text(8)
-            nom_ord = get_text(9)
-            ruta = get_text(10)
+            nombre = get_text(1)
+            comp = get_text(2)
+            año = get_text(3)
+            cliente = get_text(4)
+            proyecto = get_text(5)
+            tipo = get_text(6)
+            cod_proy = get_text(7)
+            nom_proy = get_text(8)
+            cod_ord = get_text(9)
+            nom_ord = get_text(10)
+            ruta = get_text(11)
             
             if not nombre or not ruta:
                 self.btn_abrir_carpeta.setEnabled(False)
@@ -1599,17 +1674,38 @@ class BuscadorPiezas(QMainWindow):
             
             # 2. DIFERIR RECURSOS PESADOS (Miniatura, os.path.exists, etc.)
             self.current_preview_data = {
-                'ruta': ruta,
-                'nombre': nombre,
-                'ext': ext
+                'ruta': ruta, 'tipo': tipo, 'ext': ext
             }
-            self.timer_preview.start(150) # Esperar 150ms de calma (ideal para flechas teclado)
+            self.timer_preview.start(100) # (V1.0.05) Esperar 100ms antes de cargar la ruta
 
         except Exception as e:
-            logger.error(f"Error en feedback preview: {e}")
+            logger.debug(f"Error actualizando preview inicial: {e}")
+
+    def on_thumbnail_ready(self, row, ruta, image, hbitmap):
+        """Callback ejecutado en el hilo UI cuando el ThumbnailWorker extrae una miniatura"""
+        try:
+            pixmap = None
+            if hbitmap != 0:
+                pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapPremultipliedAlpha)
+                if pixmap.isNull():
+                    pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapNoAlpha)
+                import ctypes
+                ctypes.windll.gdi32.DeleteObject(hbitmap)
+            elif image is not None and not image.isNull():
+                pixmap = QPixmap.fromImage(image)
+
+            if pixmap and not pixmap.isNull():
+                self.cache_miniaturas[ruta] = pixmap
+                item = self.tabla.item(row, 0)
+                if item:
+                    # Reducimos la escala de inmediato para liberar RAM de interfaz si era muy grande
+                    scaled = pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    item.setIcon(QIcon(scaled))
+        except Exception as e:
+            logger.debug(f"Error renderizando miniatura remota fila {row}: {e}")
 
     def _actualizar_preview_recursos_pesados(self):
-        """Carga miniatura y tamaño de archivo tras debounce (V1.0.05)"""
+        """Ejecutado por el timer_preview tras 100ms de inactividad (V1.0.05)"""
         try:
             data = self.current_preview_data
             ruta = data.get('ruta')
@@ -1795,7 +1891,7 @@ class BuscadorPiezas(QMainWindow):
             lbl_title.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_title)
             
-            lbl_ver = QLabel("Versión 1.1.0 (Win7 Compatibility)")
+            lbl_ver = QLabel("Versión 1.0.3 (Thumbnails y Sin Acentos)")
             lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; font-weight: 500;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_ver)
