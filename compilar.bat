@@ -1,6 +1,6 @@
 @echo off
 echo ======================================================
-echo COMPILANDO BUSCADOR DE PIEZAS SOLIDWORKS (ALSI)
+echo COMPILANDO BUSCADOR DE PIEZAS (ALSI) - V1.0.3 PATCH
 echo ======================================================
 echo Instalando dependencias necesarias...
 pip install -r requirements.txt
@@ -20,16 +20,16 @@ copy "ALSI_IMAGOTIPO_naranja.png" "dist\"
 copy "ALSI_BUSCADOR.ico" "dist\"
 copy "INSTALAR_LOCAL.bat" "dist\"
 
-echo.
-echo === Desplegando en Unidad Z: ===
-set RED_PATH="Z:\ALSI INTERCAMBIO\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS"
-if exist %RED_PATH% (
-    echo Copiando a %RED_PATH%...
-    xcopy /Y /S /I "dist\*" %RED_PATH%
-    echo Despliegue completado en red.
-) else (
-    echo [ERROR] No se pudo acceder a %RED_PATH%
-)
+REM echo.
+REM echo === Desplegando en Unidad Z: ===
+REM set RED_PATH="Z:\ALSI INTERCAMBIO\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS"
+REM if exist %RED_PATH% (
+REM     echo Copiando a %RED_PATH%...
+REM     xcopy /Y /S /I "dist\*" %RED_PATH%
+REM     echo Despliegue completado en red.
+REM ) else (
+REM     echo [ERROR] No se pudo acceder a %RED_PATH%
+REM )
 
 echo.
 echo Proceso finalizado. El ejecutable esta en 'dist/BuscadorPiezas.exe'

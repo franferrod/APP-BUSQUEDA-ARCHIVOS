@@ -106,6 +106,7 @@ RUTAS_RED = {
 # Rutas especiales para V1.0.0
 RUTA_BIBLIOTECA = r'Z:\ALSI INTERCAMBIO\BIBLIOTECA SIDDEX'
 RUTA_ESTANDAR = r'Z:\ALSI INTERCAMBIO\ALSI ESTANDAR'
+RUTA_DARKWEB_JA = r'\\Ofitec-5\javier alonso'
 
 EXTENSIONES = ('.sldprt', '.sldasm', '.slddrw', '.dwg', '.pdf', '.step', '.stp', '.iges', '.igs')
 
@@ -359,6 +360,10 @@ class ThumbnailWorker(QThread):
 class BuscadorPiezas(QMainWindow):
     def __init__(self):
         super().__init__()
+        try:
+            pythoncom.CoInitialize() # Inicialización COM Hilo Principal (V1.0.3)
+        except:
+            pass
         self.db = IndexManager()
         self.controller = SearchController(self.db)
         self.thread = None  # Referencia al thread de indexación activo
@@ -609,6 +614,11 @@ class BuscadorPiezas(QMainWindow):
         self.chk_estandar.setStyleSheet("color: #d35400; font-weight: bold;")
         izq_layout.addWidget(self.chk_estandar)
 
+        self.chk_darkweb_ja = QCheckBox("Incluir Dark Web J.A")
+        self.chk_darkweb_ja.setToolTip("Buscar también en \\\\Ofitec-5\\javier alonso")
+        self.chk_darkweb_ja.setStyleSheet("color: #8e44ad; font-weight: bold;")
+        izq_layout.addWidget(self.chk_darkweb_ja)
+
         self.list_companeros = QListWidget()
         self.list_companeros.setMaximumHeight(200)
         for comp in list(RUTAS_RED.keys()):
@@ -714,8 +724,8 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setSortingEnabled(True)  # <-- Ordenación por columnas activada
         
         # Ajuste de tamaño de filas e iconos para las miniaturas
-        self.tabla.setIconSize(QSize(60, 60))
-        self.tabla.verticalHeader().setDefaultSectionSize(64)
+        self.tabla.setIconSize(QSize(44, 44))
+        self.tabla.verticalHeader().setDefaultSectionSize(46)
         
         header = self.tabla.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive) # Todas interactivas V1.3.11
@@ -731,7 +741,7 @@ class BuscadorPiezas(QMainWindow):
             }
         """)
         
-        self.tabla.setColumnWidth(0, 70)  # Vista
+        self.tabla.setColumnWidth(0, 52)  # Vista
         self.tabla.setColumnWidth(1, 400) # Nombre
         self.tabla.setColumnWidth(2, 95)  # Compañero
         self.tabla.setColumnWidth(3, 55)  # Año
@@ -896,6 +906,25 @@ class BuscadorPiezas(QMainWindow):
         self.btn_indexar_comerciales.clicked.connect(self.abrir_dialogo_indexacion_comerciales)
         footer_layout.addWidget(self.btn_indexar_comerciales)
         
+        # Botón Indexar Otros (Nuevo V1.0.3)
+        self.btn_indexar_otros = QPushButton("Indexar Otros")
+        self.btn_indexar_otros.setToolTip("Indexar carpetas especiales (ej: Dark Web J.A)")
+        self.btn_indexar_otros.setStyleSheet("""
+            QPushButton {
+                background-color: #8e44ad; 
+                color: white; 
+                font-weight: bold; 
+                padding: 8px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #9b59b6;
+            }
+        """)
+        self.btn_indexar_otros.setFixedWidth(185)
+        self.btn_indexar_otros.clicked.connect(self.abrir_dialogo_indexacion_otros)
+        footer_layout.addWidget(self.btn_indexar_otros)
+        
         self.btn_cancelar = QPushButton("⏹ Cancelar")
         self.btn_cancelar.setToolTip("Detiene la indexación actual")
         self.btn_cancelar.setCursor(Qt.PointingHandCursor)
@@ -1038,7 +1067,11 @@ class BuscadorPiezas(QMainWindow):
                 background-color: {WHITE};
                 border: 1px solid {RAL_7000_GRIS};
                 border-radius: 4px;
-                gridline-color: #EEE;
+                gridline-color: #EEEEEE;
+            }}
+            QTableWidget::item {{
+                padding-top: 2px;
+                padding-bottom: 2px;
             }}
             QHeaderView::section {{
                 background-color: {RAL_7000_GRIS};
@@ -1251,8 +1284,9 @@ class BuscadorPiezas(QMainWindow):
             # Validación: al menos un compañero y un año, A MENOS QUE se busque en biblioteca (V1.0.0)
             buscar_siddex = self.chk_siddex.isChecked()
             buscar_estandar = self.chk_estandar.isChecked()
+            buscar_darkweb = self.chk_darkweb_ja.isChecked()
             
-            if not comp_sel and not años_sel and not buscar_siddex and not buscar_estandar:
+            if not comp_sel and not años_sel and not buscar_siddex and not buscar_estandar and not buscar_darkweb:
                 if not auto:
                     QMessageBox.warning(self, "Atención", "Selecciona al menos un compañero y un año, o marca una casilla de Biblioteca.")
                 return
@@ -1294,7 +1328,8 @@ class BuscadorPiezas(QMainWindow):
                 clientes_sel,
                 proyectos_sel,
                 incluir_siddex=buscar_siddex,
-                incluir_estandar=buscar_estandar
+                incluir_estandar=buscar_estandar,
+                incluir_darkweb_ja=buscar_darkweb
             )
             
             # Prealocar filas de golpe (mucho más rápido que insertRow en bucle)
@@ -1306,9 +1341,12 @@ class BuscadorPiezas(QMainWindow):
                 ruta = data[10]
                 vistas_pendientes.append((row, ruta))
                 
-                # Columna de miniatura (vacía inicialmente)
-                item_vista = QTableWidgetItem()
-                self.tabla.setItem(row, 0, item_vista)
+                # Columna de miniatura (Vista centrada V1.0.3)
+                lbl_img = QLabel()
+                lbl_img.setAlignment(Qt.AlignCenter)
+                lbl_img.setContentsMargins(0, 0, 0, 0)
+                lbl_img.setStyleSheet("background: transparent; border: none; padding: 0px; margin: 0px;")
+                self.tabla.setCellWidget(row, 0, lbl_img)
                 
                 for col, val in enumerate(data):
                     item = QTableWidgetItem(str(val) if val else "")
@@ -1317,7 +1355,16 @@ class BuscadorPiezas(QMainWindow):
             # Lanzamos hilo de miniaturas
             if hasattr(self, 'thumb_worker') and self.thumb_worker and self.thumb_worker.isRunning():
                 self.thumb_worker.cancelar()
-                self.thumb_worker.wait(100)
+                try:
+                    self.thumb_worker.thumbnail_ready.disconnect(self.on_thumbnail_ready)
+                except (TypeError, RuntimeError):
+                    pass
+                self.thumb_worker.wait(500)
+            elif hasattr(self, 'thumb_worker') and self.thumb_worker:
+                try:
+                    self.thumb_worker.thumbnail_ready.disconnect(self.on_thumbnail_ready)
+                except (TypeError, RuntimeError):
+                    pass
                 
             self.thumb_worker = ThumbnailWorker(vistas_pendientes, self.extraer_miniatura_raw)
             self.thumb_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
@@ -1392,6 +1439,40 @@ class BuscadorPiezas(QMainWindow):
                 rutas_a_indexar['BIBLIOTECA'] = RUTA_BIBLIOTECA
             if chk_estandar.isChecked():
                 rutas_a_indexar['ESTANDAR'] = RUTA_ESTANDAR
+            
+            if rutas_a_indexar:
+                # Iniciamos indexación SIN pasar años (lista vacía) para que no filtre por año
+                self.iniciar_indexacion(rutas_a_indexar, anos_sel=[], rutas_custom=rutas_a_indexar) 
+            else:
+                QMessageBox.warning(self, "Atención", "No has seleccionado ninguna carpeta.")
+
+    def abrir_dialogo_indexacion_otros(self):
+        # Nuevo Diálogo para Otras Carpetas (V1.0.3)
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Indexar Otras Carpetas")
+        dialog.setMinimumWidth(350)
+        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        layout = QVBoxLayout(dialog)
+
+        lbl_info = QLabel("Selecciona las carpetas adicionales a indexar:")
+        lbl_info.setStyleSheet("font-weight: bold; font-size: 12px;")
+        layout.addWidget(lbl_info)
+
+        # Checkboxes
+        chk_darkweb = QCheckBox("Dark Web J.A")
+        chk_darkweb.setChecked(True)
+        layout.addWidget(chk_darkweb)
+
+        # Botones
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(dialog.accept)
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+
+        if dialog.exec_() == QDialog.Accepted:
+            rutas_a_indexar = {}
+            if chk_darkweb.isChecked():
+                rutas_a_indexar['DARKWEB_JA'] = RUTA_DARKWEB_JA
             
             if rutas_a_indexar:
                 # Iniciamos indexación SIN pasar años (lista vacía) para que no filtre por año
@@ -1490,7 +1571,7 @@ class BuscadorPiezas(QMainWindow):
             # 3. IShellItemImageFactory (hbitmap)
             try:
                 hbitmap = self._thumbnail_via_shell_factory(ruta, size)
-                if hbitmap:
+                if hbitmap and hbitmap != 0:
                     return None, hbitmap
             except Exception as e:
                 logger.debug(f"IShellItemImageFactory falló: {e}")
@@ -1523,21 +1604,19 @@ class BuscadorPiezas(QMainWindow):
         elif image is not None and not image.isNull():
             pixmap = QPixmap.fromImage(image)
 
-        ext = Path(ruta).suffix.lower()
-        if not pixmap and ext not in ('.sldprt', '.sldasm', '.slddrw', '.pdf'):
+        if not pixmap:
             # 4. Fallback: icono del sistema (SHGetFileInfo)
             try:
-                pythoncom.CoInitialize()
                 res = shell.SHGetFileInfo(ruta, 0, shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON)
                 hicon = res[0]
                 if hicon:
                     pixmap = QtWin.fromHICON(hicon)
                     import ctypes
+                    from ctypes import c_void_p
+                    ctypes.windll.user32.DestroyIcon.argtypes = [c_void_p]
                     ctypes.windll.user32.DestroyIcon(hicon)
             except Exception:
                 pass
-            finally:
-                pythoncom.CoUninitialize()
 
         if pixmap and not pixmap.isNull():
             self.cache_miniaturas[ruta] = pixmap
@@ -1591,13 +1670,7 @@ class BuscadorPiezas(QMainWindow):
                 hr = get_image(ppv, sz, SIIGBF_BIGGERSIZEOK, byref(hbitmap))
                 
                 if hr == 0 and hbitmap.value:
-                    # Convertir HBITMAP a QPixmap (premultiplied alpha es lo estándar de Windows)
-                    pixmap = QtWin.fromHBITMAP(int(hbitmap.value), QtWin.HBitmapPremultipliedAlpha)
-                    if pixmap.isNull():
-                        pixmap = QtWin.fromHBITMAP(int(hbitmap.value), QtWin.HBitmapNoAlpha)
-                    ctypes.windll.gdi32.DeleteObject(hbitmap)
-                    if not pixmap.isNull():
-                        return pixmap
+                    return int(hbitmap.value)
                 else:
                     logger.debug(f"GetImage falló: hr=0x{hr & 0xFFFFFFFF:08X}")
             finally:
@@ -1681,26 +1754,54 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.debug(f"Error actualizando preview inicial: {e}")
 
+    def set_cell_thumbnail(self, row, pixmap):
+        """Helper para poner el pixmap en el QLabel de la celda (V1.0.3)"""
+        try:
+            widget = self.tabla.cellWidget(row, 0)
+            if isinstance(widget, QLabel):
+                scaled = pixmap.scaled(50, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                widget.setPixmap(scaled)
+        except Exception as e:
+            logger.debug(f"Error set_cell_thumbnail: {e}")
+
     def on_thumbnail_ready(self, row, ruta, image, hbitmap):
         """Callback ejecutado en el hilo UI cuando el ThumbnailWorker extrae una miniatura"""
         try:
+            # Guard: comprobar que la fila sigue existiendo en la tabla
+            if row < 0 or row >= self.tabla.rowCount():
+                if hbitmap and hbitmap != 0:
+                    import ctypes
+                    from ctypes import c_void_p
+                    ctypes.windll.gdi32.DeleteObject.argtypes = [c_void_p]
+                    ctypes.windll.gdi32.DeleteObject(hbitmap)
+                return
+            
             pixmap = None
-            if hbitmap != 0:
+            if hbitmap and hbitmap != 0:
                 pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapPremultipliedAlpha)
-                if pixmap.isNull():
+                if not pixmap or pixmap.isNull():
                     pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapNoAlpha)
+                
                 import ctypes
+                from ctypes import c_void_p
+                ctypes.windll.gdi32.DeleteObject.argtypes = [c_void_p]
                 ctypes.windll.gdi32.DeleteObject(hbitmap)
+                
             elif image is not None and not image.isNull():
                 pixmap = QPixmap.fromImage(image)
 
             if pixmap and not pixmap.isNull():
                 self.cache_miniaturas[ruta] = pixmap
-                item = self.tabla.item(row, 0)
-                if item:
-                    # Reducimos la escala de inmediato para liberar RAM de interfaz si era muy grande
-                    scaled = pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                    item.setIcon(QIcon(scaled))
+                self.set_cell_thumbnail(row, pixmap)
+                
+                # Si es la fila actualmente seleccionada, actualizar también el panel derecho
+                try:
+                    if row == self.tabla.currentRow():
+                        self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                        self.lbl_preview_icon.setText("")
+                except RuntimeError:
+                    pass  # Widget eliminado durante búsqueda rápida
+                    
         except Exception as e:
             logger.debug(f"Error renderizando miniatura remota fila {row}: {e}")
 
@@ -1747,8 +1848,8 @@ class BuscadorPiezas(QMainWindow):
     def abrir_carpeta_seleccionada(self):
         row = self.tabla.currentRow()
         if row >= 0:
-            ruta = self.tabla.item(row, 10).text()  # Columna 10 = Ruta Completa
-            if os.path.exists(ruta):
+            ruta = self.tabla.item(row, 11).text()  # Columna 11 = Ruta Completa
+            if ruta and os.path.exists(ruta):
                 subprocess.Popen(f'explorer /select,"{ruta}"')
             else:
                 QMessageBox.critical(self, "Error", "No se puede acceder a la ruta. Puede que el servidor no esté disponible.")
@@ -1756,7 +1857,7 @@ class BuscadorPiezas(QMainWindow):
     def copiar_ruta_seleccionada(self):
         row = self.tabla.currentRow()
         if row >= 0:
-            ruta = self.tabla.item(row, 10).text()  # Columna 10 = Ruta Completa
+            ruta = self.tabla.item(row, 11).text()  # Columna 11 = Ruta Completa
             QApplication.clipboard().setText(ruta)
             self.lbl_status.setText("✅ Ruta copiada al portapapeles")
 
@@ -1778,13 +1879,23 @@ class BuscadorPiezas(QMainWindow):
             menu.addAction(action_open)
             menu.addAction(action_copy)
             menu.addAction(action_copy_name)
+
+            # Columna 11 = Ruta Completa
+            item_ruta = self.tabla.item(self.tabla.currentRow(), 11)
+            ruta = item_ruta.text() if item_ruta else ""
+            if ruta and os.path.exists(ruta):
+                menu.addSeparator()
+                menu.addAction("🚀 Abrir/Insertar en SolidWorks").triggered.connect(
+                    lambda: os.startfile(ruta)
+                )
+
             menu.exec_(self.tabla.mapToGlobal(pos))
 
     def copiar_nombre_seleccionado(self):
         """Acción proactiva: copiar solo el nombre del archivo"""
         row = self.tabla.currentRow()
         if row >= 0:
-            nombre = self.tabla.item(row, 0).text()
+            nombre = self.tabla.item(row, 1).text() # Columna 1 = Nombre
             QApplication.clipboard().setText(nombre)
             self.lbl_status.setText(f"✅ Nombre copiado: {nombre}")
 

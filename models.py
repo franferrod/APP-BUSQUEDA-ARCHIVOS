@@ -128,12 +128,13 @@ class IndexManager:
             res = conn.execute('SELECT valor FROM preferencias WHERE clave = ?', (clave,)).fetchone()
             return res[0] if res else default
 
-    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False):
+    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False, incluir_darkweb_ja=False):
         """
         # Búsqueda multi-keyword con scoring y filtros múltiples (V1.0.0).
         # V1.0.0 - Soporte para búsqueda híbrida (Contexto OR Biblioteca).
+        # V1.0.3 - Soporte Dark Web J.A.
         """
-        logger.info(f"Buscando: '{termino}' | Siddex: {incluir_siddex}, Estandar: {incluir_estandar}")
+        logger.info(f"Buscando: '{termino}' | Siddex: {incluir_siddex}, Estandar: {incluir_estandar}, DarkWeb: {incluir_darkweb_ja}")
         
         if ',' in termino:
             keywords = [k.strip() for k in termino.split(',') if k.strip()]
@@ -210,6 +211,7 @@ class IndexManager:
         lib_comps = []
         if incluir_siddex: lib_comps.append('BIBLIOTECA')
         if incluir_estandar: lib_comps.append('ESTANDAR')
+        if incluir_darkweb_ja: lib_comps.append('DARKWEB_JA')
 
         if lib_comps:
             # Cláusula para Biblioteca/Estándar

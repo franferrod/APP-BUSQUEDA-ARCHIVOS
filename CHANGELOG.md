@@ -2,7 +2,10 @@
 
 ## [1.0.3] - 2026-02-26 (Thumbnails y Sin Acentos)
 - **Búsqueda Inteligente**: Las búsquedas ahora ignoran los acentos/tildes, tratando (por ejemplo) "telescópico" y "telescopico" como equivalentes.
-- **Columna de Miniaturas**: Se ha incorporado una nueva columna "Vista" al inicio de la tabla. Las previsualizaciones se extraen de forma asíncrona (como en el explorador de Windows) logrando cargar miles de pequeñas fotos al instante sin congelar la app.
+- **Columna de Miniaturas (Asíncrona)**: Se ha incorporado una nueva columna "Vista" al inicio de la tabla.
+- **Estabilidad 64-bits**: Corregido un error de desbordamiento (`OverflowError`) al manejar punteros de Windows en hilos secundarios, asegurando que las miniaturas se carguen correctamente en todos los sistemas.
+- **Corrección de Índices**: Reparados los accesos directos de "Abrir Carpeta" y "Copiar Ruta" que apuntaban a columnas incorrectas tras el rediseño.
+- **Filtro Dark Web J.A**: Nuevo filtro independiente para la carpeta `\\Ofitec-5\javier alonso`, que funciona igual que Siddex y Estándar (ignora filtros de compañeros, años, etc.).
 
 ## [1.1.0] - 2026-02-20 (Win7 Compatibility)
 Versión especial para asegurar el funcionamiento en equipos antiguos con Windows 7 (Rubén Edition).

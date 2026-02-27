@@ -52,7 +52,7 @@ class IndexadorThread(QThread):
                         conn.execute("DELETE FROM archivos WHERE compañero = ?", (comp,))
                     
                     count_comp = 0
-                    is_commercial = comp in ['BIBLIOTECA', 'ESTANDAR']
+                    is_commercial = comp in ['BIBLIOTECA', 'ESTANDAR', 'DARKWEB_JA']
 
                     for ruta_base in rutas_lista:
                         if self._cancelar: break
@@ -245,8 +245,8 @@ class SearchController:
         self.db = db
 
     def perform_search(self, term, companions, years, extensiones=None, folder_type="TODOS", 
-                      clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False):
-        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes, incluir_siddex, incluir_estandar)
+                      clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False, incluir_darkweb_ja=False):
+        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes, incluir_siddex, incluir_estandar, incluir_darkweb_ja)
 
     def save_preference(self, key, value):
         self.db.guardar_preferencia(key, value)
