@@ -1,7 +1,7 @@
 import sys
 import os
-import sqlite3
 import re
+import time
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QHeaderView, QStatusBar, QProgressBar, QLabel, QMessageBox, 
                              QMenu, QAction, QAbstractItemView, QListWidget, QListWidgetItem,
                              QDialog, QDialogButtonBox, QSplitter, QGroupBox, QFrame, QScrollArea,
-                             QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser)
+                             QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser, QGridLayout)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage
 from PyQt5.QtWidgets import QFileIconProvider
@@ -72,7 +72,7 @@ def resource_path(relative_path):
 
 # Importaciones locales (MVC Architecture)
 from models import IndexManager
-from controllers import SearchController, IndexadorThread
+from controllers import SearchController, IndexadorThread, SWPropertyExtractorThread, extraer_propiedades_ondemand
 
 # Configuración Global
 CONFIG_DIR = Path(os.path.expanduser("~")) / ".alsi_busqueda"
@@ -302,7 +302,8 @@ class TablaArrastrable(QTableWidget):
         # Obtener las filas seleccionadas (sin duplicados)
         rows = set()
         for item in items:
-            rows.add(item.row())
+            if item is not None:
+                rows.add(item.row())
         
         for row in rows:
             # Columna 11 = ruta completa (V1.0.3: se movió de col 10 a col 11)
@@ -345,7 +346,7 @@ class ThumbnailWorker(QThread):
                 if self._cancelar:
                     break
                 try:
-                    image, hbitmap = self.method_extractor(ruta, size=64)
+                    image, hbitmap = self.method_extractor(ruta, size=256)
                     if image is not None or hbitmap != 0:
                         self.thumbnail_ready.emit(row, ruta, image, hbitmap)
                 except Exception as e:
@@ -353,6 +354,19 @@ class ThumbnailWorker(QThread):
         finally:
             pythoncom.CoUninitialize()
 
+class ODSWExtractor(QThread):
+    """Hilo para extraer propiedades SW de 1 archivo sin bloquear la UI"""
+    extracted = pyqtSignal(str, dict)
+    
+    def __init__(self, db, ruta):
+        super().__init__()
+        self.db = db
+        self.ruta = ruta
+        
+    def run(self):
+        props = extraer_propiedades_ondemand(self.db, self.ruta)
+        if props:
+            self.extracted.emit(self.ruta, props)
 
 # -----------------------------------------------------------------------------
 # INTERFAZ PRINCIPAL
@@ -709,13 +723,14 @@ class BuscadorPiezas(QMainWindow):
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setHandleWidth(3)
         
-        # Tabla (V1.0.3: 12 columnas)
+        # Tabla (V1.0.4: 20 columnas incluyendo propiedades SW)
         self.tabla = TablaArrastrable()
-        self.tabla.setColumnCount(12)
+        self.tabla.setColumnCount(20)
         self.tabla.setHorizontalHeaderLabels([
             "Vista", "Nombre", "Compañero", "Año", "Cliente", "Proyecto", "Tipo", 
             "Cód. Proyecto", "Nombre Proyecto", "Cód. Orden", "Nombre Orden",
-            "Ruta Completa"
+            "Ruta Completa", "Soldadura", "Pintura", "Montaje", "Láser", "Torno", "Fresa",
+            "Tratamiento", "Material"
         ])
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -749,6 +764,9 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setColumnWidth(5, 250) # Proyecto
         self.tabla.setColumnWidth(6, 120) # Tipo
         self.tabla.setColumnHidden(7, True) # Cod. Proy
+        # Ocultar nuevas columnas de propiedades (V1.0.4)
+        for i in range(12, 20):
+            self.tabla.setColumnHidden(i, True)
         
         self.tabla.doubleClicked.connect(self.abrir_carpeta_seleccionada)
         self.tabla.selectionModel().currentRowChanged.connect(self.actualizar_preview)
@@ -804,11 +822,44 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_preview_ruta.setStyleSheet("font-size: 10px; color: #666;")
         self.lbl_preview_ruta.setTextInteractionFlags(Qt.TextSelectableByMouse)
         
+        # Propiedades SW (V1.0.4)
+        self.lbl_preview_props = QLabel("")
+        self.lbl_preview_props.setFont(QFont("Segoe UI", 9))
+        self.lbl_preview_props.setStyleSheet("color: #2c3e50; font-weight: bold;")
+        self.lbl_preview_sw_procesos = QLabel("")
+        self.lbl_preview_sw_procesos.setFont(QFont("Segoe UI", 8))
+        self.lbl_preview_sw_procesos.setWordWrap(True)
+
         preview_layout.addWidget(self.lbl_preview_tipo)
         preview_layout.addWidget(self.lbl_preview_comp)
         preview_layout.addWidget(self.lbl_preview_proyecto)
         preview_layout.addWidget(self.lbl_preview_tamaño)
+        preview_layout.addWidget(self.lbl_preview_props)
+        preview_layout.addWidget(self.lbl_preview_sw_procesos)
         preview_layout.addWidget(self.lbl_preview_ruta)
+        
+        preview_layout.addSpacing(15)
+        
+        # ═══════════════════════════════════════════
+        # FILTRAR POR PROPIEDADES (V1.0.4 - Debajo de preview)
+        # ═══════════════════════════════════════════
+        self.group_prop_filters = QGroupBox("🔧 Filtrar por Propiedades")
+        self.group_prop_filters.setStyleSheet(f"font-weight: bold; color: {RAL_7000_GRIS};")
+        prop_filter_layout = QVBoxLayout(self.group_prop_filters)
+        prop_grid = QGridLayout()
+        prop_grid.setSpacing(5)
+        
+        procesos = ["Soldadura", "Pintura", "Montaje", "Láser", "Torno", "Fresa"]
+        self.prop_checkboxes = {}
+        for i, proc in enumerate(procesos):
+            chk = QCheckBox(proc)
+            chk.setStyleSheet("font-weight: normal; color: #333;")
+            chk.stateChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
+            prop_grid.addWidget(chk, i // 2, i % 2)
+            self.prop_checkboxes[proc] = chk
+            
+        prop_filter_layout.addLayout(prop_grid)
+        preview_layout.addWidget(self.group_prop_filters)
         
         preview_layout.addStretch()
         
@@ -922,8 +973,28 @@ class BuscadorPiezas(QMainWindow):
             }
         """)
         self.btn_indexar_otros.setFixedWidth(185)
+        self.btn_indexar_otros.setFixedWidth(185)
         self.btn_indexar_otros.clicked.connect(self.abrir_dialogo_indexacion_otros)
         footer_layout.addWidget(self.btn_indexar_otros)
+        
+        # Botón Extraer Propiedades SW (Nuevo V1.0.4)
+        self.btn_extraer_sw = QPushButton("Extraer Props SW")
+        self.btn_extraer_sw.setToolTip("Extrae propiedades (Láser, Pintura...) de SolidWorks en segundo plano")
+        self.btn_extraer_sw.setStyleSheet("""
+            QPushButton {
+                background-color: #3498db; 
+                color: white; 
+                font-weight: bold; 
+                padding: 8px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+        """)
+        self.btn_extraer_sw.setFixedWidth(130)
+        self.btn_extraer_sw.clicked.connect(self.iniciar_extraccion_sw)
+        footer_layout.addWidget(self.btn_extraer_sw)
         
         self.btn_cancelar = QPushButton("⏹ Cancelar")
         self.btn_cancelar.setToolTip("Detiene la indexación actual")
@@ -1319,6 +1390,9 @@ class BuscadorPiezas(QMainWindow):
             if not extensiones and tipos_sel:
                 extensiones = None
 
+            # Filtros de Propiedades (V1.0.4)
+            procesos_filtro = {proc: chk.isChecked() for proc, chk in self.prop_checkboxes.items()}
+
             resultados = self.controller.perform_search(
                 termino, 
                 comp_sel,
@@ -1329,7 +1403,8 @@ class BuscadorPiezas(QMainWindow):
                 proyectos_sel,
                 incluir_siddex=buscar_siddex,
                 incluir_estandar=buscar_estandar,
-                incluir_darkweb_ja=buscar_darkweb
+                incluir_darkweb_ja=buscar_darkweb,
+                procesos_filtro=procesos_filtro
             )
             
             # Prealocar filas de golpe (mucho más rápido que insertRow en bucle)
@@ -1525,6 +1600,66 @@ class BuscadorPiezas(QMainWindow):
         self.refrescar_filtros_jerarquicos()
 
     # ═══════════════════════════════════════════
+    # EXTRACCIÓN DE PROPIEDADES SW (V1.0.4)
+    # ═══════════════════════════════════════════
+    def iniciar_extraccion_sw(self):
+        sw_thread = getattr(self, 'sw_thread', None)
+        if sw_thread is not None:
+            try:
+                if sw_thread.isRunning():
+                    QMessageBox.warning(self, "Extracción en curso", "Ya hay una extracción de propiedades SolidWorks en curso.")
+                    return
+            except RuntimeError:
+                pass
+            
+        with self.db.get_connection() as conn:
+            c = conn.execute("SELECT COUNT(*) FROM archivos WHERE extension IN ('.sldprt', '.sldasm') AND (sw_props_extracted IS NULL OR sw_props_extracted = 0)")
+            pendientes = c.fetchone()[0]
+            
+        if pendientes == 0:
+            QMessageBox.information(self, "Completado", "Todas las piezas tienen ya extraídas sus propiedades.")
+            return
+            
+        resp = QMessageBox.question(self, "Extraer Propiedades", f"Hay {pendientes:,} archivos de SolidWorks pendientes de extraer sus propiedades personalizadas (Láser, Pintura, etc.).\\n\\nEl proceso se ejecutará en segundo plano usando SolidWorks. Tardará varios minutos u horas dependiendo de la cantidad, pero puedes seguir usando la aplicación.\\n\\n¿Deseas comenzar la extracción de este lote ahora?", QMessageBox.Yes | QMessageBox.No)
+        
+        if resp == QMessageBox.Yes:
+            self.btn_extraer_sw.setEnabled(False)
+            self.btn_extraer_sw.setText("Extrayendo...")
+            self.lbl_status.setText("Iniciando extractor SW...")
+            
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setRange(0, pendientes)
+            self.progress_bar.setValue(0)
+            
+            self.sw_thread = SWPropertyExtractorThread(self.db, batch_size=500)
+            self.sw_thread.progress.connect(self.on_extraccion_progress)
+            self.sw_thread.status.connect(self.lbl_status.setText)
+            self.sw_thread.error.connect(lambda e: QMessageBox.critical(self, "Error SW", e))
+            self.sw_thread.finished.connect(self.on_extraccion_finished)
+            self.sw_thread.file_extracted.connect(self.on_sw_file_extracted)
+            self.sw_thread.start()
+
+    def on_extraccion_progress(self, procesados, total):
+        self.progress_bar.setValue(procesados)
+
+    def on_extraccion_finished(self, procesados, duracion):
+        self.btn_extraer_sw.setEnabled(True)
+        self.btn_extraer_sw.setText("Extraer Props SW")
+        self.progress_bar.setVisible(False)
+        self.lbl_status.setText(f"Extracción SW Finalizada ({procesados} procesados en {duracion/60:.1f} min)")
+        if procesados > 0:
+            self.ejecutar_busqueda()
+            
+    def on_sw_file_extracted(self, ruta, props):
+        # Si el usuario está viendo actualmente el archivo que se acaba de extraer
+        if hasattr(self, 'current_preview_data') and self.current_preview_data and self.current_preview_data.get('ruta') == ruta:
+            # Actualizar data en RAM
+            for pk, pv in props.items():
+                self.current_preview_data[pk] = pv
+            self.timer_preview.start(50)  # Forzar repintado del preview
+
+
+    # ═══════════════════════════════════════════
     # PREVISUALIZACIÓN (Cambio 4)
     # ═══════════════════════════════════════════
 
@@ -1644,7 +1779,6 @@ class BuscadorPiezas(QMainWindow):
         IID = GUID(0xbcc18b79, 0xba16, 0x442f,
                    (ctypes.c_ubyte * 8)(0x80, 0xc4, 0x8a, 0x59, 0xc3, 0x0c, 0x46, 0x3b))
         
-        pythoncom.CoInitialize()
         try:
             ppv = c_void_p()
             hr = ctypes.windll.shell32.SHCreateItemFromParsingName(
@@ -1680,8 +1814,8 @@ class BuscadorPiezas(QMainWindow):
                 ReleaseFunc = ctypes.WINFUNCTYPE(c_ulong, c_void_p)
                 release = ReleaseFunc(vtable2[2])
                 release(ppv)
-        finally:
-            pythoncom.CoUninitialize()
+        except Exception as e:
+            logger.debug(f"_thumbnail_via_shell_factory error: {e}")
         
         return None
 
@@ -1714,6 +1848,15 @@ class BuscadorPiezas(QMainWindow):
             cod_ord = get_text(9)
             nom_ord = get_text(10)
             ruta = get_text(11)
+            # Extracción de propiedades para preview (V1.0.4)
+            soldadura = get_text(12)
+            pintura = get_text(13)
+            montaje = get_text(14)
+            laser = get_text(15)
+            torno = get_text(16)
+            fresa = get_text(17)
+            tratami = get_text(18)
+            material = get_text(19)
             
             if not nombre or not ruta:
                 self.btn_abrir_carpeta.setEnabled(False)
@@ -1738,6 +1881,32 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_preview_ruta.setText(f"📂 {ruta}")
             self.lbl_preview_tamaño.setText("💾 Tamaño: Cargando...")
             
+            # Mostrar propiedades V1.0.4
+            if ext in ('.sldprt', '.sldasm'):
+                props_text = ""
+                if material: props_text += f"🧱 Material: {material}\n"
+                if tratami: props_text += f"🔨 Tratamiento: {tratami}\n"
+                self.lbl_preview_props.setText(props_text)
+                self.lbl_preview_props.setVisible(True)
+                
+                proc_list = []
+                if soldadura == 'Sí': proc_list.append("👨‍🏭 SOLDADURA")
+                if pintura == 'Sí': proc_list.append("🎨 PINTURA")
+                if montaje == 'Sí': proc_list.append("🏗️ MONTAJE")
+                if laser == 'Sí': proc_list.append("⚡ LÁSER")
+                if torno == 'Sí': proc_list.append("🌀 TORNO")
+                if fresa == 'Sí': proc_list.append("⚙️ FRESA")
+                
+                if proc_list:
+                    self.lbl_preview_sw_procesos.setText(" | ".join(proc_list))
+                    self.lbl_preview_sw_procesos.setVisible(True)
+                else:
+                    self.lbl_preview_sw_procesos.setText("Sin procesos definidos")
+                    self.lbl_preview_sw_procesos.setVisible(True)
+            else:
+                self.lbl_preview_props.setVisible(False)
+                self.lbl_preview_sw_procesos.setVisible(False)
+            
             # Limpiar icono previo o poner temporal
             if ruta not in self.cache_miniaturas:
                 icono = ICONOS_EXTENSION.get(ext, '🔍')
@@ -1746,6 +1915,7 @@ class BuscadorPiezas(QMainWindow):
                 self.preview_opacity.setOpacity(0.5)
             
             # 2. DIFERIR RECURSOS PESADOS (Miniatura, os.path.exists, etc.)
+            self._preview_hd_loaded = False  # Resetear flag HD para nueva fila
             self.current_preview_data = {
                 'ruta': ruta, 'tipo': tipo, 'ext': ext
             }
@@ -1794,9 +1964,10 @@ class BuscadorPiezas(QMainWindow):
                 self.cache_miniaturas[ruta] = pixmap
                 self.set_cell_thumbnail(row, pixmap)
                 
-                # Si es la fila actualmente seleccionada, actualizar también el panel derecho
+                # Si es la fila actualmente seleccionada, poner preview provisional
+                # (será reemplazado por _actualizar_preview_recursos_pesados con calidad HD)
                 try:
-                    if row == self.tabla.currentRow():
+                    if row == self.tabla.currentRow() and not getattr(self, '_preview_hd_loaded', False):
                         self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                         self.lbl_preview_icon.setText("")
                 except RuntimeError:
@@ -1826,11 +1997,26 @@ class BuscadorPiezas(QMainWindow):
             else:
                 self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size / (1024 * 1024):.1f} MB")
 
-            # Miniatura (Heavy IO)
-            pixmap = self.extraer_miniatura(ruta)
+            # Miniatura HD para el panel preview (extracción directa a 512px, sin caché)
+            image, hbitmap = self.extraer_miniatura_raw(ruta, size=512)
+            pixmap = None
+            if hbitmap != 0:
+                pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapPremultipliedAlpha)
+                if not pixmap or pixmap.isNull():
+                    pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapNoAlpha)
+                import ctypes
+                ctypes.windll.gdi32.DeleteObject(hbitmap)
+            elif image is not None and not image.isNull():
+                pixmap = QPixmap.fromImage(image)
+            
+            if not pixmap or pixmap.isNull():
+                # Fallback: usar caché si la extracción HD falla
+                pixmap = self.extraer_miniatura(ruta)
+            
             if pixmap and not pixmap.isNull():
                 self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 self.lbl_preview_icon.setText("")
+                self._preview_hd_loaded = True
                 self.anim_opacity.stop()
                 self.preview_opacity.setOpacity(0.0)
                 self.anim_opacity.setStartValue(0.0)
@@ -1838,6 +2024,20 @@ class BuscadorPiezas(QMainWindow):
                 self.anim_opacity.start()
             else:
                 self.preview_opacity.setOpacity(1.0)
+
+            # V1.0.4: Extracción on-demand si es SW y le faltan props
+            ext = Path(ruta).suffix.lower()
+            if ext in ('.sldprt', '.sldasm'):
+                 # Chequear si le faltan de base de datos
+                 with self.db.get_connection() as conn:
+                     c = conn.execute("SELECT sw_props_extracted FROM archivos WHERE ruta_completa = ?", (ruta,))
+                     row = c.fetchone()
+                     extracted = row[0] if (row and row[0] is not None) else 0
+                     
+                 if extracted == 0:
+                     self.od_thread = ODSWExtractor(self.db, ruta)
+                     self.od_thread.extracted.connect(self.on_sw_file_extracted)
+                     self.od_thread.start()
 
         except Exception as e:
             logger.debug(f"Error en recursos diferidos: {e}")
@@ -2002,7 +2202,7 @@ class BuscadorPiezas(QMainWindow):
             lbl_title.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_title)
             
-            lbl_ver = QLabel("Versión 1.0.3 (Thumbnails y Sin Acentos)")
+            lbl_ver = QLabel("Versión 1.0.5 (Estabilidad Crítica)")
             lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; font-weight: 500;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_ver)
@@ -2033,12 +2233,18 @@ class BuscadorPiezas(QMainWindow):
             
             browser = QTextBrowser()
             browser.setHtml("""
+            <b>v1.0.3:</b><br>
+            • Nueva columna de miniaturas (Vista) con carga asíncrona.<br>
+            • Búsqueda inteligente que ignora acentos (tildes).<br>
+            • Filtro dedicado para "Dark Web J.A" (Javier Alonso).<br>
+            • Corrección crítica de Drag & Drop hacia SolidWorks.<br>
+            • Estabilidad 64-bits en extracción de iconos.<br><br>
             <b>v1.1.0:</b><br>
             • Compatibilidad oficial con Windows 7.<br>
             • Instalación de Python 3.8.10 embebido.<br>
             • Corrección de dependencias de sistema (api-ms-win-core-path).<br><br>
             <b>v1.0.2:</b><br>
-            • Búsqueda insensible a acentos (tildes).<br><br>
+            • Mejoras de rendimiento en hilos secundarios.<br><br>
             <b>v1.0.1:</b><br>
             • Búsqueda automática al cambiar filtros.<br>
             • Mejoras en el instalador para redes locales (UNC).<br><br>
@@ -2071,47 +2277,7 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.error(f"Error mostrando info: {e}")
 
-    # ═══════════════════════════════════════════
-    # UTILIDADES
-    # ═══════════════════════════════════════════
-    def toggle_checkboxes(self, list_widget, checked):
-        for i in range(list_widget.count()):
-            item = list_widget.item(i)
-            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
 
-    def get_selected_items(self, list_widget):
-        selected = []
-        for i in range(list_widget.count()):
-            item = list_widget.item(i)
-            if item.checkState() == Qt.Checked:
-                selected.append(item.text())
-        return selected
-
-    def add_toggle_buttons(self, layout, list_widget):
-        """Añade botones de Todos/Ninguno a un layout para un list_widget dado"""
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(5)
-        btn_todos = QPushButton("Todos")
-        btn_todos.setCursor(Qt.PointingHandCursor)
-        btn_todos.setMinimumHeight(24)
-        btn_todos.clicked.connect(lambda: self.toggle_checkboxes(list_widget, True))
-        
-        btn_ninguno = QPushButton("Ninguno")
-        btn_ninguno.setCursor(Qt.PointingHandCursor)
-        btn_ninguno.setMinimumHeight(24)
-        btn_ninguno.clicked.connect(lambda: self.toggle_checkboxes(list_widget, False))
-        
-        btn_layout.addWidget(btn_todos)
-        btn_layout.addWidget(btn_ninguno)
-        layout.addLayout(btn_layout)
-
-    def closeEvent(self, event):
-        """Guardar preferencias al cerrar"""
-        # Guardar ancho del sidebar si está visible
-        sizes = self.main_splitter.sizes()
-        if len(sizes) > 0 and sizes[0] > 0:
-            self.controller.save_preference('sidebar_width', str(sizes[0]))
-        event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

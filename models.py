@@ -75,7 +75,17 @@ class IndexManager:
                 ("codigo_proyecto", "TEXT"),
                 ("nombre_proyecto", "TEXT"),
                 ("codigo_orden", "TEXT"),
-                ("nombre_orden", "TEXT")
+                ("nombre_orden", "TEXT"),
+                # V1.0.4 - Propiedades SolidWorks
+                ("soldadura", "TEXT"),
+                ("pintura", "TEXT"),
+                ("montaje", "TEXT"),
+                ("laser", "TEXT"),
+                ("torno", "TEXT"),
+                ("fresa", "TEXT"),
+                ("tratamiento", "TEXT"),
+                ("material", "TEXT"),
+                ("sw_props_extracted", "INTEGER DEFAULT 0"),
             ]
             for col_name, col_type in cols_to_add:
                 try:
@@ -128,11 +138,12 @@ class IndexManager:
             res = conn.execute('SELECT valor FROM preferencias WHERE clave = ?', (clave,)).fetchone()
             return res[0] if res else default
 
-    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False, incluir_darkweb_ja=False):
+    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False, incluir_darkweb_ja=False, procesos_filtro=None):
         """
         # Búsqueda multi-keyword con scoring y filtros múltiples (V1.0.0).
         # V1.0.0 - Soporte para búsqueda híbrida (Contexto OR Biblioteca).
         # V1.0.3 - Soporte Dark Web J.A.
+        # V1.0.4 - Filtros de propiedades SolidWorks.
         """
         logger.info(f"Buscando: '{termino}' | Siddex: {incluir_siddex}, Estandar: {incluir_estandar}, DarkWeb: {incluir_darkweb_ja}")
         
@@ -142,7 +153,7 @@ class IndexManager:
             keywords = [termino] if termino.strip() else []
 
         params = []
-        base_cols = "nombre_archivo, compañero, año, cliente, proyecto, tipo_carpeta, codigo_proyecto, nombre_proyecto, codigo_orden, nombre_orden, ruta_completa"
+        base_cols = "nombre_archivo, compañero, año, cliente, proyecto, tipo_carpeta, codigo_proyecto, nombre_proyecto, codigo_orden, nombre_orden, ruta_completa, soldadura, pintura, montaje, laser, torno, fresa, tratamiento, material"
 
         # 1. Construcción de Scores y WHERE base (Keywords)
         if not keywords:
@@ -234,6 +245,13 @@ class IndexManager:
              context_sql = " AND ".join(context_clauses)
              query += f" AND ({context_sql})"
              params.extend(context_params)
+
+        # V1.0.4 - Filtros de propiedades SolidWorks
+        if procesos_filtro:
+            for proc, activo in procesos_filtro.items():
+                if activo:
+                    col = proc.lower().replace('á', 'a')  # LÁSER -> laser
+                    query += f" AND {col} = 'Sí'"
 
         query += " ORDER BY score DESC, ultima_modificacion DESC LIMIT 5000"
         
