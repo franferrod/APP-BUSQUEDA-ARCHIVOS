@@ -1,8 +1,10 @@
 import sys
 import os
+import time
 import sqlite3
 import re
 import subprocess
+import urllib.request
 from pathlib import Path
 from datetime import datetime
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
@@ -385,8 +387,31 @@ class BuscadorPiezas(QMainWindow):
         self.refrescar_filtros_jerarquicos()  # Carga inicial V1.0.0
         self.cargar_preferencias()
         
-        # Diagnóstico de red (V1.0.0)
+        # Diagnóstico de red y actualizaciones (V1.0.3 Repaired)
         QTimer.singleShot(1000, self.verificar_rutas_red)
+        QTimer.singleShot(2000, self.check_for_updates)
+
+    def check_for_updates(self):
+        """Busca silenciosamente el archivo version.txt desplegado en la red y avisa si hay versión nueva"""
+        try:
+            # Obtener versión local desde el nombre del instalador o exe, heurísticamente, 
+            # pero sabemos que esta release será v1.0.3 repaired.
+            local_version = "v1.0.3 Repaired"
+            
+            # Buscar en red
+            version_file = os.path.join(RUTA_BIBLIOTECA, "APP BÚSQUEDA ARCHIVOS", "version.txt")
+            if os.path.exists(version_file):
+                with open(version_file, "r", encoding="utf-8") as f:
+                    red_version = f.read().strip()
+                
+                # Comparar. Si la de red tiene formato v1.X pero es distinta
+                # y no es vacía. (Simplificado para evitar reglas semver complejas)
+                if red_version and red_version != local_version and "v1." in red_version:
+                    # Mostrar banner de actualización
+                    self.lbl_update.setText(f"🚀 ¡Nueva versión {red_version} disponible! Actualiza ejecutando el instalador local.")
+                    self.lbl_update.setVisible(True)
+        except Exception as e:
+            logger.debug(f"Error comprobando actualizaciones: {e}")
 
     def verificar_rutas_red(self):
         """Comprueba si las rutas críticas de la biblioteca son accesibles (V1.0.0)"""
@@ -562,9 +587,17 @@ class BuscadorPiezas(QMainWindow):
         self.btn_buscar.setMinimumHeight(45)
         self.btn_buscar.setFixedWidth(120)
         self.btn_buscar.clicked.connect(self.ejecutar_busqueda)
+        # Main Menu
         header_layout.addWidget(self.btn_buscar)
         
         main_layout.addLayout(header_layout)
+
+        # Banner de Actualización (Oculto por defecto)
+        self.lbl_update = QLabel()
+        self.lbl_update.setStyleSheet("background-color: #27ae60; color: white; padding: 6px; font-weight: bold; border-radius: 4px;")
+        self.lbl_update.setAlignment(Qt.AlignCenter)
+        self.lbl_update.setVisible(False)
+        main_layout.addWidget(self.lbl_update)
 
         # ═══════════════════════════════════════════
         # CONTENIDO PRINCIPAL (SPLITTER: SIDEBAR + CONTENT) V1.0.0
@@ -1644,7 +1677,7 @@ class BuscadorPiezas(QMainWindow):
         IID = GUID(0xbcc18b79, 0xba16, 0x442f,
                    (ctypes.c_ubyte * 8)(0x80, 0xc4, 0x8a, 0x59, 0xc3, 0x0c, 0x46, 0x3b))
         
-        pythoncom.CoInitialize()
+        # Eliminado CoInitialize explícito aquí para evitar conflictos de hilos (V1.0.3 Repaired)
         try:
             ppv = c_void_p()
             hr = ctypes.windll.shell32.SHCreateItemFromParsingName(
@@ -1680,8 +1713,8 @@ class BuscadorPiezas(QMainWindow):
                 ReleaseFunc = ctypes.WINFUNCTYPE(c_ulong, c_void_p)
                 release = ReleaseFunc(vtable2[2])
                 release(ppv)
-        finally:
-            pythoncom.CoUninitialize()
+        except Exception as e:
+            logger.debug(f"Error en ThumbnailFactory COM: {e}")
         
         return None
 
@@ -2071,47 +2104,7 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.error(f"Error mostrando info: {e}")
 
-    # ═══════════════════════════════════════════
-    # UTILIDADES
-    # ═══════════════════════════════════════════
-    def toggle_checkboxes(self, list_widget, checked):
-        for i in range(list_widget.count()):
-            item = list_widget.item(i)
-            item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
-
-    def get_selected_items(self, list_widget):
-        selected = []
-        for i in range(list_widget.count()):
-            item = list_widget.item(i)
-            if item.checkState() == Qt.Checked:
-                selected.append(item.text())
-        return selected
-
-    def add_toggle_buttons(self, layout, list_widget):
-        """Añade botones de Todos/Ninguno a un layout para un list_widget dado"""
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(5)
-        btn_todos = QPushButton("Todos")
-        btn_todos.setCursor(Qt.PointingHandCursor)
-        btn_todos.setMinimumHeight(24)
-        btn_todos.clicked.connect(lambda: self.toggle_checkboxes(list_widget, True))
-        
-        btn_ninguno = QPushButton("Ninguno")
-        btn_ninguno.setCursor(Qt.PointingHandCursor)
-        btn_ninguno.setMinimumHeight(24)
-        btn_ninguno.clicked.connect(lambda: self.toggle_checkboxes(list_widget, False))
-        
-        btn_layout.addWidget(btn_todos)
-        btn_layout.addWidget(btn_ninguno)
-        layout.addLayout(btn_layout)
-
-    def closeEvent(self, event):
-        """Guardar preferencias al cerrar"""
-        # Guardar ancho del sidebar si está visible
-        sizes = self.main_splitter.sizes()
-        if len(sizes) > 0 and sizes[0] > 0:
-            self.controller.save_preference('sidebar_width', str(sizes[0]))
-        event.accept()
+    # Eliminadas funciones duplicadas y closeEvent que sobreescribía el original.
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

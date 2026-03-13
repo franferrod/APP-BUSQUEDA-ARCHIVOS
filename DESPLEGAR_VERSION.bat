@@ -1,5 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
+chcp 65001 > nul
 
 :: ======================================================
 :: SCRIPT DE DESPLIEGUE DE VERSIONES ALSI
@@ -27,6 +28,7 @@ echo === Desplegando Version %VERSION% a la red ===
 echo Origen: releases\%VERSION%
 echo Destino: %RED_PATH%
 
+echo %VERSION%> "releases\%VERSION%\version.txt"
 xcopy /Y /S /I "releases\%VERSION%\*" %RED_PATH%
 
 if %ERRORLEVEL% EQU 0 (
