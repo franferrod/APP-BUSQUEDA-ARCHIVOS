@@ -6,9 +6,12 @@ set APP_EXE=BuscadorPiezas.exe
 set TARGET_DIR=%LOCALAPPDATA%\ALSI_Buscador
 set DESKTOP_PATH=%USERPROFILE%\Desktop
 
+set APP_VERSION=Desconocida
+if exist "%~dp0version.txt" set /p APP_VERSION=<"%~dp0version.txt"
+
 echo.
 echo  ======================================================
-echo     INSTALANDO BUSCADOR DE PIEZAS ALSI (V1.0.0)
+echo     INSTALANDO BUSCADOR DE PIEZAS ALSI (!APP_VERSION!)
 echo  ======================================================
 echo.
 

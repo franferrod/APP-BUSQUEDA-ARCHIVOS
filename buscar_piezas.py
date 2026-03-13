@@ -399,8 +399,26 @@ class BuscadorPiezas(QMainWindow):
         self.refrescar_filtros_jerarquicos()  # Carga inicial V1.0.0
         self.cargar_preferencias()
         
-        # Diagnóstico de red (V1.0.0)
+        # Diagnóstico de red y actualizaciones (V1.0.5)
         QTimer.singleShot(1000, self.verificar_rutas_red)
+        QTimer.singleShot(2000, self.check_for_updates)
+
+    def check_for_updates(self):
+        """Comprueba si hay una nueva versión en la red (V1.0.5)"""
+        try:
+            ruta_red = r'Z:\ALSI INTERCAMBIO\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS'
+            version_file = os.path.join(ruta_red, 'version.txt')
+            if os.path.exists(version_file):
+                with open(version_file, 'r', encoding='utf-8') as f:
+                    latest = f.read().strip()
+                
+                current = "v1.0.5" # Versión local actual
+                if latest and latest.strip().lower() != current.lower():
+                    # Hay actualización disponible
+                    self.lbl_update.setText(f"<a href='file:///{ruta_red}' style='color: {RAL_2010_NARANJA}; text-decoration: none;'>🚀 Actualización Disp.: {latest} (Clic aquí)</a>")
+                    self.lbl_update.setVisible(True)
+        except Exception as e:
+            logger.debug(f"Error comprobando actualizaciones: {e}")
 
     def verificar_rutas_red(self):
         """Comprueba si las rutas críticas de la biblioteca son accesibles (V1.0.0)"""
@@ -577,6 +595,12 @@ class BuscadorPiezas(QMainWindow):
         self.btn_buscar.setFixedWidth(120)
         self.btn_buscar.clicked.connect(self.ejecutar_busqueda)
         header_layout.addWidget(self.btn_buscar)
+        
+        # Etiqueta de actualización (Oculta por defecto)
+        self.lbl_update = QLabel()
+        self.lbl_update.setOpenExternalLinks(True)
+        self.lbl_update.setVisible(False)
+        header_layout.addWidget(self.lbl_update)
         
         main_layout.addLayout(header_layout)
 
