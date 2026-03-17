@@ -304,7 +304,8 @@ class TablaArrastrable(QTableWidget):
         # Obtener las filas seleccionadas (sin duplicados)
         rows = set()
         for item in items:
-            rows.add(item.row())
+            if item:
+                rows.add(item.row())
         
         for row in rows:
             # Columna 11 = ruta completa (V1.0.3: se movió de col 10 a col 11)
