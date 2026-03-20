@@ -348,7 +348,7 @@ class ThumbnailWorker(QThread):
                 if self._cancelar:
                     break
                 try:
-                    image, hbitmap = self.method_extractor(ruta, size=64)
+                    image, hbitmap = self.method_extractor(ruta, size=128)
                     if image is not None or hbitmap != 0:
                         self.thumbnail_ready.emit(row, ruta, image, hbitmap)
                 except Exception as e:
@@ -1569,9 +1569,18 @@ class BuscadorPiezas(QMainWindow):
             if not ruta or not os.path.exists(ruta):
                 return None, 0
             
+            # 1. PRIORIZAR IShellItemImageFactory (Calidad Explorador de Windows)
+            try:
+                hbitmap = self._thumbnail_via_shell_factory(ruta, size)
+                if hbitmap and hbitmap != 0:
+                    return None, hbitmap
+            except Exception as e:
+                logger.debug(f"IShellItemImageFactory falló: {e}")
+
             ext = Path(ruta).suffix.lower()
             
-            # 1. SolidWorks OLE (PreviewPNG)
+            # 2. FALLBACK A EXTRACTORES ESPECÍFICOS
+            # SolidWorks OLE (PreviewPNG)
             if ext in ('.sldprt', '.sldasm', '.slddrw'):
                 try:
                     import olefile
@@ -1585,30 +1594,21 @@ class BuscadorPiezas(QMainWindow):
                 except Exception:
                     logger.debug(f"OLE fallback para: {ruta}")
 
-            # 2. PDF
+            # PDF (Matrix 4x para nitidez HD)
             if ext == '.pdf':
                 try:
                     import fitz
                     doc = fitz.open(ruta)
                     if doc.page_count > 0:
                         page = doc[0]
-                        mat = fitz.Matrix(2, 2)
+                        mat = fitz.Matrix(4, 4) # Mayor resolución (V1.0.6)
                         pix = page.get_pixmap(matrix=mat, alpha=False)
                         image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
                         if not image.isNull():
-                            # Retornar una copia para evitar problemas de punteros al destruir 'pix'
                             return image.copy(), 0
                     doc.close()
                 except Exception as e:
                     logger.debug(f"PyMuPDF falló para PDF: {e}")
-
-            # 3. IShellItemImageFactory (hbitmap)
-            try:
-                hbitmap = self._thumbnail_via_shell_factory(ruta, size)
-                if hbitmap and hbitmap != 0:
-                    return None, hbitmap
-            except Exception as e:
-                logger.debug(f"IShellItemImageFactory falló: {e}")
 
         except Exception as e:
             logger.debug(f"Error en extraer_miniatura_raw: {e}")
