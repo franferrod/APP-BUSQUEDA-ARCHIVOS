@@ -319,8 +319,6 @@ class TablaArrastrable(QTableWidget):
         
         if urls:
             mime.setUrls(urls)
-            # También poner como texto plano para compatibilidad
-            mime.setText('\n'.join(u.toLocalFile() for u in urls))
         
         return mime
         
