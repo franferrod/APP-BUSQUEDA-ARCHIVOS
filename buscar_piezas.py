@@ -395,7 +395,7 @@ class BuscadorPiezas(QMainWindow):
         try:
             # Obtener versión local desde el nombre del instalador o exe, heurísticamente, 
             # pero sabemos que esta release será v1.0.3 repaired.
-            local_version = "v1.0.3 Repaired"
+            local_version = "v1.0.4"
             
             # Buscar en red
             version_file = os.path.join(RUTA_BIBLIOTECA, "APP BÚSQUEDA ARCHIVOS", "version.txt")
@@ -1373,12 +1373,12 @@ class BuscadorPiezas(QMainWindow):
                 ruta = data[10]
                 vistas_pendientes.append((row, ruta))
                 
-                # Columna de miniatura (Vista centrada V1.0.3)
-                lbl_img = QLabel()
-                lbl_img.setAlignment(Qt.AlignCenter)
-                lbl_img.setContentsMargins(0, 0, 0, 0)
-                lbl_img.setStyleSheet("background: transparent; border: none; padding: 0px; margin: 0px;")
-                self.tabla.setCellWidget(row, 0, lbl_img)
+                # Columna de miniatura (V1.0.4 Fix: usar QTableWidgetItem en vez de
+                # setCellWidget para que las miniaturas se muevan con la ordenación)
+                thumb_item = QTableWidgetItem()
+                thumb_item.setData(Qt.UserRole, ruta)  # Guardar ruta para lookup posterior
+                thumb_item.setTextAlignment(Qt.AlignCenter)
+                self.tabla.setItem(row, 0, thumb_item)
                 
                 for col, val in enumerate(data):
                     item = QTableWidgetItem(str(val) if val else "")
@@ -1770,8 +1770,13 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_preview_ruta.setText(f"📂 {ruta}")
             self.lbl_preview_tamaño.setText("💾 Tamaño: Cargando...")
             
-            # Limpiar icono previo o poner temporal
-            if ruta not in self.cache_miniaturas:
+            # Mostrar miniatura cacheada inmediatamente o placeholder (V1.0.4 Fix)
+            if ruta in self.cache_miniaturas:
+                cached = self.cache_miniaturas[ruta]
+                self.lbl_preview_icon.setPixmap(cached.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.lbl_preview_icon.setText("")
+                self.preview_opacity.setOpacity(1.0)
+            else:
                 icono = ICONOS_EXTENSION.get(ext, '🔍')
                 self.lbl_preview_icon.setPixmap(QPixmap())
                 self.lbl_preview_icon.setText(icono)
@@ -1786,28 +1791,24 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.debug(f"Error actualizando preview inicial: {e}")
 
-    def set_cell_thumbnail(self, row, pixmap):
-        """Helper para poner el pixmap en el QLabel de la celda (V1.0.3)"""
+    def set_cell_thumbnail(self, ruta, pixmap):
+        """Helper para poner el pixmap como icono del QTableWidgetItem de la celda Vista (V1.0.4 Fix).
+        Busca la fila por el UserRole(ruta) almacenado en la columna 0."""
         try:
-            widget = self.tabla.cellWidget(row, 0)
-            if isinstance(widget, QLabel):
-                scaled = pixmap.scaled(50, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                widget.setPixmap(scaled)
+            scaled = pixmap.scaled(50, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            icon = QIcon(scaled)
+            for r in range(self.tabla.rowCount()):
+                item = self.tabla.item(r, 0)
+                if item and item.data(Qt.UserRole) == ruta:
+                    item.setIcon(icon)
+                    return
         except Exception as e:
             logger.debug(f"Error set_cell_thumbnail: {e}")
 
     def on_thumbnail_ready(self, row, ruta, image, hbitmap):
-        """Callback ejecutado en el hilo UI cuando el ThumbnailWorker extrae una miniatura"""
+        """Callback ejecutado en el hilo UI cuando el ThumbnailWorker extrae una miniatura (V1.0.4 Fix).
+        Usa la ruta para encontrar la fila correcta, independiente del orden de la tabla."""
         try:
-            # Guard: comprobar que la fila sigue existiendo en la tabla
-            if row < 0 or row >= self.tabla.rowCount():
-                if hbitmap and hbitmap != 0:
-                    import ctypes
-                    from ctypes import c_void_p
-                    ctypes.windll.gdi32.DeleteObject.argtypes = [c_void_p]
-                    ctypes.windll.gdi32.DeleteObject(hbitmap)
-                return
-            
             pixmap = None
             if hbitmap and hbitmap != 0:
                 pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapPremultipliedAlpha)
@@ -1824,13 +1825,18 @@ class BuscadorPiezas(QMainWindow):
 
             if pixmap and not pixmap.isNull():
                 self.cache_miniaturas[ruta] = pixmap
-                self.set_cell_thumbnail(row, pixmap)
                 
-                # Si es la fila actualmente seleccionada, actualizar también el panel derecho
+                # Poner miniatura en la celda correcta (busca por ruta, no por row)
+                self.set_cell_thumbnail(ruta, pixmap)
+                
+                # Si la fila seleccionada tiene esta ruta, actualizar el panel derecho
                 try:
-                    if row == self.tabla.currentRow():
-                        self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                        self.lbl_preview_icon.setText("")
+                    current_row = self.tabla.currentRow()
+                    if current_row >= 0:
+                        current_item = self.tabla.item(current_row, 0)
+                        if current_item and current_item.data(Qt.UserRole) == ruta:
+                            self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                            self.lbl_preview_icon.setText("")
                 except RuntimeError:
                     pass  # Widget eliminado durante búsqueda rápida
                     
@@ -2034,7 +2040,7 @@ class BuscadorPiezas(QMainWindow):
             lbl_title.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_title)
             
-            lbl_ver = QLabel("Versión 1.0.3 (Thumbnails y Sin Acentos)")
+            lbl_ver = QLabel("Versión 1.0.4 (Fix Miniaturas y Ordenación)")
             lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; font-weight: 500;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_ver)

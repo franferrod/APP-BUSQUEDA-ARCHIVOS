@@ -1,5 +1,10 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [1.0.4] - 2026-04-07 (Fix Miniaturas y Ordenación)
+- **Fix Miniaturas**: Corregido un error donde la imagen del panel de previsualización no correspondía con la miniatura de la tabla al ordenar por columnas.
+- **Causa**: Las miniaturas usaban `setCellWidget` (QLabel) que no se mueve al ordenar la tabla. Ahora usan `QTableWidgetItem` con `DecorationRole`, que se reordena correctamente con los datos.
+- **Mejora Preview**: La previsualización ahora muestra inmediatamente la miniatura cacheada al seleccionar una fila, sin esperar al timer de carga diferida.
+
 ## [1.0.3] - 2026-02-26 (Thumbnails y Sin Acentos)
 - **Búsqueda Inteligente**: Las búsquedas ahora ignoran los acentos/tildes, tratando (por ejemplo) "telescópico" y "telescopico" como equivalentes.
 - **Columna de Miniaturas (Asíncrona)**: Se ha incorporado una nueva columna "Vista" al inicio de la tabla.
