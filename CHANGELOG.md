@@ -1,5 +1,11 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [1.0.5] - 2026-04-08 (UI/UX Global Remaster)
+- **UI Pro**: Modernización visual completa de la interfaz inspirada en macOS/Fluent Design con base en el color corporativo.
+- **Oculto bajo el capó**: Aplicación de estilos mediante QSS global optimizado e inyectado en el ejecutable, eliminando CSS en línea y bordes "feos" heredados.
+- **Micro-interacciones**: Nuevos efectos *Hover*, Scrollbars compactos semi-transparentes, y alternancia de color de fila dinámico en tablas sin grid-lines bruscas.
+- **UX Pulida**: Reestructurado el panel de filtros izquierdo: ahora muestra obligatoriamente varios compañeros, años, y carpetas al mismo tiempo, sin aplastarse ni ocultar los selectores. Se resolvió el fallo gráfico del texto cruzado en el grupo *Filtros Avanzados*.
+
 ## [1.0.4] - 2026-04-07 (Fix Miniaturas y Ordenación)
 - **Fix Miniaturas**: Corregido un error donde la imagen del panel de previsualización no correspondía con la miniatura de la tabla al ordenar por columnas.
 - **Causa**: Las miniaturas usaban `setCellWidget` (QLabel) que no se mueve al ordenar la tabla. Ahora usan `QTableWidgetItem` con `DecorationRole`, que se reordena correctamente con los datos.

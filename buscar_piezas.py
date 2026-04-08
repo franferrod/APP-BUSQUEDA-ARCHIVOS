@@ -155,6 +155,101 @@ DESCRIPCIONES_EXTENSION = {
     '.iges': 'Archivo IGES', '.igs': 'Archivo IGES',
 }
 
+MODERN_QSS = """
+/* ============================================================
+   ESTILOS MODERNOS (V1.0.5) - FLUENT / macOS Inspired
+   ============================================================ */
+
+/* 1. Base y Ventana Principal */
+QMainWindow { background-color: #F5F7FA; }
+QWidget { font-family: "Segoe UI", sans-serif; color: #2D3748; }
+
+/* 2. Scrollbars Sutiles */
+QScrollBar:vertical {
+    border: none; background: transparent; width: 8px; margin: 0px;
+}
+QScrollBar::handle:vertical { background-color: #CBD5E1; min-height: 20px; border-radius: 4px; }
+QScrollBar::handle:vertical:hover { background-color: #A0AEC0; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+
+QScrollBar:horizontal {
+    border: none; background: transparent; height: 8px; margin: 0px;
+}
+QScrollBar::handle:horizontal { background-color: #CBD5E1; min-width: 20px; border-radius: 4px; }
+QScrollBar::handle:horizontal:hover { background-color: #A0AEC0; }
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
+
+/* 3. Inputs (Barra de Búsqueda) */
+QLineEdit {
+    background-color: #FFFFFF; border: 1px solid #E2E8F0;
+    border-radius: 8px; padding: 8px 12px; font-size: 14px;
+    selection-background-color: #E15B1E;
+}
+QLineEdit:focus { border: 2px solid #E15B1E; padding: 7px 11px; }
+QLineEdit:hover:!focus { border: 1px solid #CBD5E1; }
+
+/* 4. Botones Estándar */
+QPushButton {
+    background-color: #FFFFFF; border: 1px solid #E2E8F0;
+    border-radius: 6px; padding: 6px 14px; color: #4A5568; font-weight: 600;
+}
+QPushButton:hover { background-color: #F7FAFC; border: 1px solid #CBD5E1; color: #2D3748; }
+QPushButton:pressed { background-color: #EDF2F7; }
+
+QPushButton#btn_toggle { font-size: 11px; padding: 4px; border-radius: 4px; }
+
+/* 5. Botón Primario (Buscar y Acciones) */
+QPushButton#btn_buscar, QPushButton#btn_abrir_carpeta {
+    background-color: #E15B1E; color: #FFFFFF; border: none; font-size: 14px; border-radius: 8px; font-weight: bold;
+}
+QPushButton#btn_buscar:hover, QPushButton#btn_abrir_carpeta:hover { background-color: #D35400; }
+QPushButton#btn_buscar:pressed, QPushButton#btn_abrir_carpeta:pressed { background-color: #B34700; }
+QPushButton:disabled { background-color: #E2E8F0; color: #A0AEC0; }
+
+/* 6. Listas (Checkboxes laterales) */
+QListWidget { background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 4px; outline: none; }
+QListWidget::item { border-radius: 2px; padding: 2px; }
+QListWidget::item:hover { background-color: #F7FAFC; }
+QListWidget::item:selected { background-color: #F1F5F9; color: #2D3748; }
+
+/* 7. GroupBox (Contenedores) */
+QGroupBox { font-weight: bold; color: #78858B; border: 1px solid #E2E8F0; border-radius: 8px; margin-top: 8px; background-color: #FFFFFF; }
+QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 4px; color: #E15B1E; background-color: #F5F7FA; }
+
+/* 8. Tabla Principal */
+QTableWidget {
+    background-color: #FFFFFF; alternate-background-color: #FAFAFA;
+    border: 1px solid #E2E8F0; border-radius: 8px; gridline-color: transparent;
+    selection-background-color: rgba(225, 91, 30, 0.12); selection-color: #1A202C; outline: none;
+}
+QTableWidget::item { padding: 4px 8px; border-bottom: 1px solid #F1F5F9; }
+QTableWidget::item:focus { outline: none; border: none; }
+
+QHeaderView { background-color: transparent; }
+QHeaderView::section {
+    background-color: #F8FAFC; color: #64748B; padding: 8px; border: none;
+    border-right: 1px solid #E2E8F0; border-bottom: 2px solid #E2E8F0; font-weight: bold; font-size: 11px; text-transform: uppercase;
+}
+QHeaderView::section:hover { background-color: #F1F5F9; }
+
+/* 9. Panel Visualizador Derecho (Card Flotante) */
+#panel_preview { background-color: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; }
+#panel_preview QLabel { color: #2D3748; }
+#preview_title { font-size: 18px; font-weight: bold; color: #E15B1E; }
+
+/* Separadores */
+QFrame[frameShape="4"] { color: #E2E8F0; }
+
+/* Checkboxes sueltos */
+QCheckBox { spacing: 8px; color: #4A5568; font-weight: 500; }
+
+/* Combobox */
+QComboBox { border: 1px solid #E2E8F0; border-radius: 6px; padding: 5px; background: white; }
+QComboBox:hover { border: 1px solid #CBD5E1; }
+QComboBox::drop-down { border: none; width: 24px; }
+QComboBox::down-arrow { image: none; } /* Could use an icon here if available */
+"""
+
 # MOTOR DE BASE DE DATOS E INDEXACIÓN MOVIDOS A models.py Y controllers.py
 
 # -----------------------------------------------------------------------------
@@ -395,7 +490,7 @@ class BuscadorPiezas(QMainWindow):
         try:
             # Obtener versión local desde el nombre del instalador o exe, heurísticamente, 
             # pero sabemos que esta release será v1.0.3 repaired.
-            local_version = "v1.0.4"
+            local_version = "v1.0.5"
             
             # Buscar en red
             version_file = os.path.join(RUTA_BIBLIOTECA, "APP BÚSQUEDA ARCHIVOS", "version.txt")
@@ -627,8 +722,8 @@ class BuscadorPiezas(QMainWindow):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll_widget = QWidget()
         izq_layout = QVBoxLayout(scroll_widget)
-        izq_layout.setContentsMargins(8, 8, 8, 8)
-        izq_layout.setSpacing(10)
+        izq_layout.setContentsMargins(4, 4, 4, 4)
+        izq_layout.setSpacing(4)
         
         # 1. COMPAÑEROS
         lbl_comp = QLabel("Compañeros:")
@@ -652,6 +747,7 @@ class BuscadorPiezas(QMainWindow):
         izq_layout.addWidget(self.chk_darkweb_ja)
 
         self.list_companeros = QListWidget()
+        self.list_companeros.setMinimumHeight(80)
         self.list_companeros.setMaximumHeight(200)
         for comp in list(RUTAS_RED.keys()):
             item = QListWidgetItem(comp)
@@ -665,13 +761,12 @@ class BuscadorPiezas(QMainWindow):
         self.chk_siddex.stateChanged.connect(self.on_filtro_jerarquico_changed)
         self.chk_estandar.stateChanged.connect(self.on_filtro_jerarquico_changed)
 
-        izq_layout.addSpacing(10)
-
         # 2. AÑOS
         lbl_años = QLabel("Años de Proyecto:")
         lbl_años.setStyleSheet("font-weight: bold; color: #555;")
         izq_layout.addWidget(lbl_años)
         self.list_años = QListWidget()
+        self.list_años.setMinimumHeight(80)
         self.list_años.setMaximumHeight(200)
         año_actual = datetime.now().year
         for año in range(año_actual + 1, 2012, -1):
@@ -682,13 +777,12 @@ class BuscadorPiezas(QMainWindow):
         izq_layout.addWidget(self.list_años)
         self.add_toggle_buttons(izq_layout, self.list_años)
 
-        izq_layout.addSpacing(10)
-
         # 3. CARPETAS (MECANICA, LAYOUT...) - V1.2.3
         lbl_folder = QLabel("Carpetas:")
         lbl_folder.setStyleSheet("font-weight: bold; color: #555;")
         izq_layout.addWidget(lbl_folder)
         self.list_carpetas = QListWidget()
+        self.list_carpetas.setMinimumHeight(80)
         self.list_carpetas.setMaximumHeight(180)
         for folder in FILTRO_CARPETAS:
             if folder == 'TODOS': continue
@@ -700,26 +794,22 @@ class BuscadorPiezas(QMainWindow):
         self.add_toggle_buttons(izq_layout, self.list_carpetas)
         self.list_carpetas.itemChanged.connect(self.on_filtro_jerarquico_changed)
 
-        izq_layout.addSpacing(10)
-
-        izq_layout.addSpacing(10)
-
         # 5. CLIENTES (V1.3.0)
         lbl_clientes = QLabel("Clientes:")
         lbl_clientes.setStyleSheet("font-weight: bold; color: #555;")
         izq_layout.addWidget(lbl_clientes)
         self.list_clientes = QListWidget()
+        self.list_clientes.setMinimumHeight(80)
         self.list_clientes.setMaximumHeight(200)
         izq_layout.addWidget(self.list_clientes)
         self.add_toggle_buttons(izq_layout, self.list_clientes)
-
-        izq_layout.addSpacing(10)
 
         # 6. PROYECTOS (V1.3.0)
         lbl_proys = QLabel("Proyectos:")
         lbl_proys.setStyleSheet("font-weight: bold; color: #555;")
         izq_layout.addWidget(lbl_proys)
         self.list_proyectos = QListWidget()
+        self.list_proyectos.setMinimumHeight(80)
         self.list_proyectos.setMaximumHeight(200)
         izq_layout.addWidget(self.list_proyectos)
         self.add_toggle_buttons(izq_layout, self.list_proyectos)
@@ -762,16 +852,6 @@ class BuscadorPiezas(QMainWindow):
         header = self.tabla.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive) # Todas interactivas V1.3.11
         header.setStretchLastSection(True) # La última columna estira hasta el final V1.3.12
-        header.setStyleSheet("""
-            QHeaderView::section {
-                background-color: #7f8c8d;
-                color: white;
-                padding: 4px;
-                border: none;
-                border-right: 1px solid #95a5a6; /* Delimitadores visuales */
-                font-weight: bold;
-            }
-        """)
         
         self.tabla.setColumnWidth(0, 52)  # Vista
         self.tabla.setColumnWidth(1, 400) # Nombre
@@ -902,18 +982,6 @@ class BuscadorPiezas(QMainWindow):
         self.btn_indexar = QPushButton("Indexar Compañeros")
         self.btn_indexar.setToolTip("Abre el diálogo para elegir qué compañeros indexar")
         self.btn_indexar.setIcon(QIcon(LOGO_ISOTIPO)) # Usar el isotipo naranja
-        self.btn_indexar.setStyleSheet("""
-            QPushButton {
-                background-color: #e67e22; 
-                color: white; 
-                font-weight: bold; 
-                padding: 8px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #d35400;
-            }
-        """)
         self.btn_indexar.setFixedWidth(185)
         self.btn_indexar.clicked.connect(self.confirmar_indexacion)
         footer_layout.addWidget(self.btn_indexar)
@@ -921,19 +989,6 @@ class BuscadorPiezas(QMainWindow):
         # Botón Indexar Comerciales (Nuevo V1.0.0)
         self.btn_indexar_comerciales = QPushButton("Indexar Comerciales")
         self.btn_indexar_comerciales.setToolTip("Indexar Biblioteca Siddex y Alsi Estándar")
-        # self.btn_indexar_comerciales.setIcon(QIcon("ruta_icono.png")) # Opcional
-        self.btn_indexar_comerciales.setStyleSheet("""
-            QPushButton {
-                background-color: #27ae60; 
-                color: white; 
-                font-weight: bold; 
-                padding: 8px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #2ecc71;
-            }
-        """)
         self.btn_indexar_comerciales.setFixedWidth(185)
         self.btn_indexar_comerciales.clicked.connect(self.abrir_dialogo_indexacion_comerciales)
         footer_layout.addWidget(self.btn_indexar_comerciales)
@@ -941,18 +996,6 @@ class BuscadorPiezas(QMainWindow):
         # Botón Indexar Otros (Nuevo V1.0.3)
         self.btn_indexar_otros = QPushButton("Indexar Otros")
         self.btn_indexar_otros.setToolTip("Indexar carpetas especiales (ej: Dark Web J.A)")
-        self.btn_indexar_otros.setStyleSheet("""
-            QPushButton {
-                background-color: #8e44ad; 
-                color: white; 
-                font-weight: bold; 
-                padding: 8px;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #9b59b6;
-            }
-        """)
         self.btn_indexar_otros.setFixedWidth(185)
         self.btn_indexar_otros.clicked.connect(self.abrir_dialogo_indexacion_otros)
         footer_layout.addWidget(self.btn_indexar_otros)
@@ -2040,7 +2083,7 @@ class BuscadorPiezas(QMainWindow):
             lbl_title.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_title)
             
-            lbl_ver = QLabel("Versión 1.0.4 (Fix Miniaturas y Ordenación)")
+            lbl_ver = QLabel("Versión 1.0.5 (UI/UX Global Remaster)")
             lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; font-weight: 500;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_ver)
@@ -2118,6 +2161,7 @@ if __name__ == "__main__":
     # Fuente global
     font = QFont("Segoe UI", 9)
     app.setFont(font)
+    app.setStyleSheet(MODERN_QSS)
     
     window = BuscadorPiezas()
     window.show()
