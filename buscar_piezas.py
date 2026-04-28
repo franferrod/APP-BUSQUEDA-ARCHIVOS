@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QMenu, QAction, QAbstractItemView, QListWidget, QListWidgetItem,
                              QDialog, QDialogButtonBox, QSplitter, QGroupBox, QFrame, QScrollArea,
                              QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage
 from PyQt5.QtWidgets import QFileIconProvider
 import pythoncom
@@ -106,8 +106,25 @@ RUTAS_RED = {
 }
 
 # Rutas especiales para V1.0.0
-RUTA_BIBLIOTECA = r'Z:\ALSI INTERCAMBIO\BIBLIOTECA SIDDEX'
-RUTA_ESTANDAR = r'Z:\ALSI INTERCAMBIO\ALSI ESTANDAR'
+# Ruta principal + fallback para compañeros con mapeo de red diferente (VM)
+RUTA_BIBLIOTECA_OPCIONES = [
+    r'Z:\ALSI INTERCAMBIO\BIBLIOTECA SIDDEX',
+    r'Z:\BIBLIOTECA SIDDEX',
+]
+RUTA_ESTANDAR_OPCIONES = [
+    r'Z:\ALSI INTERCAMBIO\ALSI ESTANDAR',
+    r'Z:\ALSI ESTANDAR',
+]
+
+def _resolver_ruta(opciones):
+    """Devuelve la primera ruta accesible de la lista, o la primera como fallback."""
+    for ruta in opciones:
+        if os.path.exists(ruta):
+            return ruta
+    return opciones[0]  # Devuelve la principal para mensajes de error
+
+RUTA_BIBLIOTECA = _resolver_ruta(RUTA_BIBLIOTECA_OPCIONES)
+RUTA_ESTANDAR = _resolver_ruta(RUTA_ESTANDAR_OPCIONES)
 RUTA_DARKWEB_JA = r'\\Ofitec-5\javier alonso'
 
 EXTENSIONES = ('.sldprt', '.sldasm', '.slddrw', '.dwg', '.pdf', '.step', '.stp', '.iges', '.igs')
@@ -164,20 +181,26 @@ MODERN_QSS = """
 QMainWindow { background-color: #F5F7FA; }
 QWidget { font-family: "Segoe UI", sans-serif; color: #2D3748; }
 
-/* 2. Scrollbars Sutiles */
+/* 2. Scrollbars (Más gruesos y claros para usabilidad) */
 QScrollBar:vertical {
-    border: none; background: transparent; width: 8px; margin: 0px;
+    border: none; background: #F1F5F9; width: 16px; margin: 0px;
 }
-QScrollBar::handle:vertical { background-color: #CBD5E1; min-height: 20px; border-radius: 4px; }
-QScrollBar::handle:vertical:hover { background-color: #A0AEC0; }
+QScrollBar::handle:vertical { background-color: #94A3B8; min-height: 30px; border-radius: 8px; }
+QScrollBar::handle:vertical:hover { background-color: #64748B; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
 
 QScrollBar:horizontal {
-    border: none; background: transparent; height: 8px; margin: 0px;
+    border: none; background: #F1F5F9; height: 16px; margin: 0px;
 }
-QScrollBar::handle:horizontal { background-color: #CBD5E1; min-width: 20px; border-radius: 4px; }
-QScrollBar::handle:horizontal:hover { background-color: #A0AEC0; }
+QScrollBar::handle:horizontal { background-color: #94A3B8; min-width: 30px; border-radius: 8px; }
+QScrollBar::handle:horizontal:hover { background-color: #64748B; }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
+
+/* Splitter (Para que sea evidente que se puede arrastrar el panel derecho) */
+QSplitter::handle { background-color: transparent; }
+QSplitter::handle:horizontal { width: 6px; }
+QSplitter::handle:hover { background-color: #E15B1E; }
+QSplitter::handle:pressed { background-color: #D35400; }
 
 /* 3. Inputs (Barra de Búsqueda) */
 QLineEdit {
@@ -384,12 +407,36 @@ class DialogIndexacion(QDialog):
 # TABLA CON DRAG & DROP (Cambio 5)
 # -----------------------------------------------------------------------------
 class TablaArrastrable(QTableWidget):
-    """QTableWidget con drag habilitado para arrastrar archivos a SolidWorks"""
+    """QTableWidget con drag habilitado para arrastrar archivos a SolidWorks y pan con botón central"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragOnly)
         self.setDefaultDropAction(Qt.CopyAction)
+        
+        # Panning manual con botón central
+        self._pan_start = None
+        self.viewport().installEventFilter(self)
+
+    def eventFilter(self, source, event):
+        if source is self.viewport():
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.MiddleButton:
+                self._pan_start = event.pos()
+                self.viewport().setCursor(Qt.ClosedHandCursor)
+                return True
+            elif event.type() == QEvent.MouseMove and self._pan_start is not None:
+                delta = event.pos() - self._pan_start
+                h_bar = self.horizontalScrollBar()
+                v_bar = self.verticalScrollBar()
+                h_bar.setValue(h_bar.value() + delta.x())
+                v_bar.setValue(v_bar.value() + delta.y())
+                self._pan_start = event.pos()
+                return True
+            elif event.type() == QEvent.MouseButtonRelease and event.button() == Qt.MiddleButton:
+                self._pan_start = None
+                self.viewport().unsetCursor()
+                return True
+        return super().eventFilter(source, event)
     
     def mimeData(self, items):
         """Genera mimeData con file:/// URI para drag & drop a SolidWorks"""
@@ -403,8 +450,8 @@ class TablaArrastrable(QTableWidget):
                 rows.add(item.row())
         
         for row in rows:
-            # Columna 11 = ruta completa (V1.0.3: se movió de col 10 a col 11)
-            ruta_item = self.item(row, 11)
+            # Columna 0 = ruta completa
+            ruta_item = self.item(row, 0)
             if ruta_item:
                 ruta = ruta_item.text()
                 if ruta:
@@ -489,7 +536,7 @@ class BuscadorPiezas(QMainWindow):
         """Busca silenciosamente el archivo version.txt desplegado en la red y avisa si hay versión nueva"""
         try:
             # Obtener versión local desde el nombre del instalador o exe, heurísticamente, 
-            # pero sabemos que esta release será v1.0.3 repaired.
+            # pero sabemos que esta release será v1.0.5.
             local_version = "v1.0.5"
             
             # Buscar en red
@@ -509,6 +556,11 @@ class BuscadorPiezas(QMainWindow):
 
     def verificar_rutas_red(self):
         """Comprueba si las rutas críticas de la biblioteca son accesibles (V1.0.0)"""
+        global RUTA_BIBLIOTECA, RUTA_ESTANDAR
+        # Re-resolver en caliente por si la red se conectó después del arranque
+        RUTA_BIBLIOTECA = _resolver_ruta(RUTA_BIBLIOTECA_OPCIONES)
+        RUTA_ESTANDAR = _resolver_ruta(RUTA_ESTANDAR_OPCIONES)
+        
         error_msg = ""
         if not os.path.exists(RUTA_BIBLIOTECA):
             error_msg += f"• No se detecta: {RUTA_BIBLIOTECA}\n"
@@ -521,6 +573,8 @@ class BuscadorPiezas(QMainWindow):
                                 error_msg + 
                                 "\nPor favor, asegúrate de que la unidad Z: está correctamente conectada.")
             logger.error(f"Rutas de red no accesibles: {error_msg}")
+        else:
+            logger.info(f"Rutas de red OK: Biblioteca={RUTA_BIBLIOTECA}, Estándar={RUTA_ESTANDAR}")
 
     def toggle_checkboxes(self, list_widget, state):
         """Activa o desactiva todos los checkboxes en un QListWidget"""
@@ -831,36 +885,49 @@ class BuscadorPiezas(QMainWindow):
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setHandleWidth(3)
         
-        # Tabla (V1.0.3: 12 columnas)
+        # Tabla (V1.0.5 Patch: 13 columnas - Reordenado: Tipo al final para estiramiento)
         self.tabla = TablaArrastrable()
-        self.tabla.setColumnCount(12)
+        self.tabla.setColumnCount(13)
         self.tabla.setHorizontalHeaderLabels([
-            "Vista", "Nombre", "Compañero", "Año", "Cliente", "Proyecto", "Tipo", 
-            "Cód. Proyecto", "Nombre Proyecto", "Cód. Orden", "Nombre Orden",
-            "Ruta Completa"
+            "Ruta_Hidden", "Orden_Orig", "Cód. Proy_Hidden", "Nom. Proy_Hidden", "Vista", 
+            "Nombre", "Compañero", "Año", "Cliente", "Proyecto", 
+            "Orden", "Nombre Orden", "Tipo"
         ])
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tabla.setAlternatingRowColors(True)
         self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.tabla.setSortingEnabled(True)  # <-- Ordenación por columnas activada
+        self.tabla.setFrameStyle(QFrame.NoFrame)
+        
+        # 3-State Sorting Manual
+        self.tabla.setSortingEnabled(False)
+        self._sort_state = {"col": -1, "order": Qt.AscendingOrder}
         
         # Ajuste de tamaño de filas e iconos para las miniaturas
         self.tabla.setIconSize(QSize(44, 44))
         self.tabla.verticalHeader().setDefaultSectionSize(46)
         
         header = self.tabla.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Interactive) # Todas interactivas V1.3.11
-        header.setStretchLastSection(True) # La última columna estira hasta el final V1.3.12
+        header.setSectionResizeMode(QHeaderView.Interactive) # Todas interactivas 
+        header.setStretchLastSection(True) # Ahora la última (12) es Nombre Orden y es visible
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(False)
+        header.sectionClicked.connect(self.on_header_clicked)
         
-        self.tabla.setColumnWidth(0, 52)  # Vista
-        self.tabla.setColumnWidth(1, 400) # Nombre
-        self.tabla.setColumnWidth(2, 95)  # Compañero
-        self.tabla.setColumnWidth(3, 55)  # Año
-        self.tabla.setColumnWidth(4, 120) # Cliente
-        self.tabla.setColumnWidth(5, 250) # Proyecto
-        self.tabla.setColumnWidth(6, 120) # Tipo
-        self.tabla.setColumnHidden(7, True) # Cod. Proy
+        self.tabla.setColumnHidden(0, True) # Ruta_Hidden
+        self.tabla.setColumnHidden(1, True) # Orden_Orig
+        self.tabla.setColumnHidden(2, True) # Cód. Proy_Hidden
+        self.tabla.setColumnHidden(3, True) # Nom. Proy_Hidden
+        self.tabla.setColumnWidth(4, 52)  # Vista
+        self.tabla.setColumnWidth(5, 408) # Nombre
+        self.tabla.setColumnWidth(6, 95)  # Compañero
+        self.tabla.setColumnWidth(7, 55)  # Año
+        self.tabla.setColumnWidth(8, 144) # Cliente
+        self.tabla.setColumnWidth(9, 250) # Proyecto
+        self.tabla.setColumnWidth(10, 55) # Orden
+        self.tabla.setColumnWidth(11, 166)# Nombre Orden
+        # Columna 12 (Tipo) estira automáticamente (setStretchLastSection en header)
+        # Columna 12 (Tipo) estira automáticamente (setStretchLastSection en header)
         
         self.tabla.doubleClicked.connect(self.abrir_carpeta_seleccionada)
         self.tabla.selectionModel().currentRowChanged.connect(self.actualizar_preview)
@@ -1412,20 +1479,44 @@ class BuscadorPiezas(QMainWindow):
             vistas_pendientes = []
             
             for row, data in enumerate(resultados):
-                # data[10] es la ruta completa
+                # V1.0.5 Final Clean Mapping:
+                # [nombre, comp, año, cliente, proy, tipo, codProy, nomProy, codOrd, nomOrd, ruta]
+                
+                # Columna oculta 0: Ruta
                 ruta = data[10]
                 vistas_pendientes.append((row, ruta))
+                self.tabla.setItem(row, 0, QTableWidgetItem(ruta))
                 
-                # Columna de miniatura (V1.0.4 Fix: usar QTableWidgetItem en vez de
-                # setCellWidget para que las miniaturas se muevan con la ordenación)
+                # Columna oculta 1: Orden Original
+                self.tabla.setItem(row, 1, QTableWidgetItem(str(row).zfill(6)))
+                
+                # Columna oculta 2: Cod Proy
+                self.tabla.setItem(row, 2, QTableWidgetItem(str(data[6]) if data[6] else ""))
+                
+                # Columna oculta 3: Nom Proy
+                self.tabla.setItem(row, 3, QTableWidgetItem(str(data[7]) if data[7] else ""))
+                
+                # Columna 4: Vista (Miniatura)
                 thumb_item = QTableWidgetItem()
-                thumb_item.setData(Qt.UserRole, ruta)  # Guardar ruta para lookup posterior
+                thumb_item.setData(Qt.UserRole, ruta)
                 thumb_item.setTextAlignment(Qt.AlignCenter)
-                self.tabla.setItem(row, 0, thumb_item)
+                self.tabla.setItem(row, 4, thumb_item)
                 
-                for col, val in enumerate(data):
+                # Resto de columnas visibles:
+                map_cols = {
+                    0: 5, # nombre -> col 5
+                    1: 6, # comp -> col 6
+                    2: 7, # año -> col 7
+                    3: 8, # cliente -> col 8
+                    4: 9, # proy -> col 9
+                    5: 12,# tipo -> col 12 (FINAL STRETCH)
+                    8: 10,# codOrd -> col 10
+                    9: 11 # nomOrd -> col 11
+                }
+                for i_data, i_tabla in map_cols.items():
+                    val = data[i_data]
                     item = QTableWidgetItem(str(val) if val else "")
-                    self.tabla.setItem(row, col + 1, item)
+                    self.tabla.setItem(row, i_tabla, item)
             
             # Lanzamos hilo de miniaturas
             if hasattr(self, 'thumb_worker') and self.thumb_worker and self.thumb_worker.isRunning():
@@ -1778,17 +1869,20 @@ class BuscadorPiezas(QMainWindow):
                     return item.text() if item else ""
                 except: return ""
 
-            nombre = get_text(1)
-            comp = get_text(2)
-            año = get_text(3)
-            cliente = get_text(4)
-            proyecto = get_text(5)
-            tipo = get_text(6)
-            cod_proy = get_text(7)
-            nom_proy = get_text(8)
-            cod_ord = get_text(9)
-            nom_ord = get_text(10)
-            ruta = get_text(11)
+            # Mapeo según nuevo orden V1.0.5 Patch: 
+            # 0:Ruta, 1:Orden, 2:CodProy, 3:NomProy, 4:Vista, 5:Nombre, 
+            # 6:Comp, 7:Año, 8:Cliente, 9:Proy, 10:CodOrd, 11:NomOrd, 12:Tipo
+            nombre = get_text(5)
+            comp = get_text(6)
+            año = get_text(7)
+            cliente = get_text(8)
+            proyecto = get_text(9)
+            tipo = get_text(12)
+            cod_proy = get_text(2)
+            nom_proy = get_text(3)
+            cod_ord = get_text(10)
+            nom_ord = get_text(11)
+            ruta = get_text(0)
             
             if not nombre or not ruta:
                 self.btn_abrir_carpeta.setEnabled(False)
@@ -1841,9 +1935,12 @@ class BuscadorPiezas(QMainWindow):
             scaled = pixmap.scaled(50, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             icon = QIcon(scaled)
             for r in range(self.tabla.rowCount()):
-                item = self.tabla.item(r, 0)
-                if item and item.data(Qt.UserRole) == ruta:
-                    item.setIcon(icon)
+                item_ruta = self.tabla.item(r, 0)
+                if item_ruta and item_ruta.text() == ruta:
+                    # Aplicamos el icono en la columna VISTA (4)
+                    item_vista = self.tabla.item(r, 4)
+                    if item_vista:
+                        item_vista.setIcon(icon)
                     return
         except Exception as e:
             logger.debug(f"Error set_cell_thumbnail: {e}")
@@ -1876,7 +1973,7 @@ class BuscadorPiezas(QMainWindow):
                 try:
                     current_row = self.tabla.currentRow()
                     if current_row >= 0:
-                        current_item = self.tabla.item(current_row, 0)
+                        current_item = self.tabla.item(current_row, 4)
                         if current_item and current_item.data(Qt.UserRole) == ruta:
                             self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                             self.lbl_preview_icon.setText("")
@@ -1886,8 +1983,34 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.debug(f"Error renderizando miniatura remota fila {row}: {e}")
 
+    # ═══════════════════════════════════════════
+    # ORDENACIÓN 3-STATES
+    # ═══════════════════════════════════════════
+    def on_header_clicked(self, logicalIndex):
+        header = self.tabla.horizontalHeader()
+        
+        # Ignorar clics en columnas técnicas ocultas (0, 1, 2, 3)
+        if logicalIndex < 4: return
+
+        if self._sort_state["col"] == logicalIndex:
+            if self._sort_state["order"] == Qt.AscendingOrder:
+                self._sort_state["order"] = Qt.DescendingOrder
+                header.setSortIndicator(logicalIndex, Qt.DescendingOrder)
+                self.tabla.sortItems(logicalIndex, Qt.DescendingOrder)
+            else:
+                self._sort_state["col"] = -1
+                header.setSortIndicatorShown(False)
+                # Ordenar por nuestra columna oculta de Orden_Orig (1)
+                self.tabla.sortItems(1, Qt.AscendingOrder)
+        else:
+            self._sort_state["col"] = logicalIndex
+            self._sort_state["order"] = Qt.AscendingOrder
+            header.setSortIndicatorShown(True)
+            header.setSortIndicator(logicalIndex, Qt.AscendingOrder)
+            self.tabla.sortItems(logicalIndex, Qt.AscendingOrder)
+
     def _actualizar_preview_recursos_pesados(self):
-        """Ejecutado por el timer_preview tras 100ms de inactividad (V1.0.05)"""
+        """Ejecutado por el timer_preview tras 100ms de inactividad (V1.0.5)"""
         try:
             data = self.current_preview_data
             ruta = data.get('ruta')
@@ -1929,7 +2052,7 @@ class BuscadorPiezas(QMainWindow):
     def abrir_carpeta_seleccionada(self):
         row = self.tabla.currentRow()
         if row >= 0:
-            ruta = self.tabla.item(row, 11).text()  # Columna 11 = Ruta Completa
+            ruta = self.tabla.item(row, 0).text()  # Columna 0 = Ruta Completa
             if ruta and os.path.exists(ruta):
                 subprocess.Popen(f'explorer /select,"{ruta}"')
             else:
@@ -1938,7 +2061,7 @@ class BuscadorPiezas(QMainWindow):
     def copiar_ruta_seleccionada(self):
         row = self.tabla.currentRow()
         if row >= 0:
-            ruta = self.tabla.item(row, 11).text()  # Columna 11 = Ruta Completa
+            ruta = self.tabla.item(row, 0).text()  # Columna 0 = Ruta Completa
             QApplication.clipboard().setText(ruta)
             self.lbl_status.setText("✅ Ruta copiada al portapapeles")
 
@@ -1961,8 +2084,8 @@ class BuscadorPiezas(QMainWindow):
             menu.addAction(action_copy)
             menu.addAction(action_copy_name)
 
-            # Columna 11 = Ruta Completa
-            item_ruta = self.tabla.item(self.tabla.currentRow(), 11)
+            # Columna 0 = Ruta Completa
+            item_ruta = self.tabla.item(self.tabla.currentRow(), 0)
             ruta = item_ruta.text() if item_ruta else ""
             if ruta and os.path.exists(ruta):
                 menu.addSeparator()
@@ -1976,7 +2099,7 @@ class BuscadorPiezas(QMainWindow):
         """Acción proactiva: copiar solo el nombre del archivo"""
         row = self.tabla.currentRow()
         if row >= 0:
-            nombre = self.tabla.item(row, 1).text() # Columna 1 = Nombre
+            nombre = self.tabla.item(row, 5).text() # Columna 5 = Nombre
             QApplication.clipboard().setText(nombre)
             self.lbl_status.setText(f"✅ Nombre copiado: {nombre}")
 
@@ -2113,19 +2236,7 @@ class BuscadorPiezas(QMainWindow):
             layout.addWidget(lbl_updates)
             
             browser = QTextBrowser()
-            browser.setHtml("""
-            <b>v1.1.0:</b><br>
-            • Compatibilidad oficial con Windows 7.<br>
-            • Instalación de Python 3.8.10 embebido.<br>
-            • Corrección de dependencias de sistema (api-ms-win-core-path).<br><br>
-            <b>v1.0.2:</b><br>
-            • Búsqueda insensible a acentos (tildes).<br><br>
-            <b>v1.0.1:</b><br>
-            • Búsqueda automática al cambiar filtros.<br>
-            • Mejoras en el instalador para redes locales (UNC).<br><br>
-            <b>v1.0.0:</b><br>
-            • Lanzamiento oficial.
-        """)
+            browser.setHtml(self._obtener_changelog_html())
             browser.setStyleSheet("background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;")
             browser.setMaximumHeight(120)
             layout.addWidget(browser)
@@ -2151,6 +2262,39 @@ class BuscadorPiezas(QMainWindow):
             dialog.exec_()
         except Exception as e:
             logger.error(f"Error mostrando info: {e}")
+
+    def _obtener_changelog_html(self):
+        """Lee el archivo CHANGELOG.md y lo convierte en HTML básico (V1.0.5 Dynamic)"""
+        try:
+            path_changelog = resource_path("CHANGELOG.md")
+            if not os.path.exists(path_changelog):
+                return "<i>No se encontraron notas de versión.</i>"
+            
+            with open(path_changelog, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            lines = content.split('\n')
+            html_lines = []
+            for line in lines:
+                l = line.strip()
+                if l.startswith('## ['):
+                    html_lines.append(f"<h3 style='color:#E15B1E;'>{l.replace('#', '').strip()}</h3>")
+                elif l.startswith('- '):
+                    # Manejar negritas básicas
+                    processed = l[2:].replace('**', '<b>').replace('**', '</b>')
+                    html_lines.append(f"• {processed}<br>")
+                elif l.startswith('    - '):
+                    processed = l[6:].replace('**', '<b>').replace('**', '</b>')
+                    html_lines.append(f"&nbsp;&nbsp;&nbsp;&nbsp;◦ {processed}<br>")
+                elif not l:
+                    html_lines.append("<br>")
+            
+            return "".join(html_lines)
+        except Exception as e:
+            logger.error(f"Error parseando changelog: {e}")
+            return "<i>Error al cargar las notas de versión.</i>"
+
+    # Eliminadas funciones duplicadas y closeEvent que sobreescribía el original.
 
     # Eliminadas funciones duplicadas y closeEvent que sobreescribía el original.
 
