@@ -8,7 +8,7 @@ chcp 65001 > nul
 :: ======================================================
 
 set VERSION=%1
-set RED_PATH="\\192.168.1.229\Volume_1\ALSI INTERCAMBIO\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS"
+set RED_PATH="\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS"
 
 if "%VERSION%"=="" (
     echo [ERROR] Debes especificar una version. Ejemplo: DESPLEGAR_VERSION.bat v1.0.1

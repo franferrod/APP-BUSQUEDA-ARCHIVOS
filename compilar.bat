@@ -22,7 +22,7 @@ copy "INSTALAR_LOCAL.bat" "dist\"
 
 REM echo.
 REM echo === Desplegando en Unidad Z: ===
-REM set RED_PATH="Z:\ALSI INTERCAMBIO\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS"
+REM set RED_PATH="\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS"
 REM if exist %RED_PATH% (
 REM     echo Copiando a %RED_PATH%...
 REM     xcopy /Y /S /I "dist\*" %RED_PATH%

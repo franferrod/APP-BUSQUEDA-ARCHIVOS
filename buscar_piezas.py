@@ -127,6 +127,10 @@ RUTA_BIBLIOTECA = _resolver_ruta(RUTA_BIBLIOTECA_OPCIONES)
 RUTA_ESTANDAR = _resolver_ruta(RUTA_ESTANDAR_OPCIONES)
 RUTA_DARKWEB_JA = r'\\Ofitec-5\javier alonso'
 
+# Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
+# NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
+RUTA_DESPLIEGUE_APP = r'\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS'
+
 EXTENSIONES = ('.sldprt', '.sldasm', '.slddrw', '.dwg', '.pdf', '.step', '.stp', '.iges', '.igs')
 
 # Mapeo de filtro de carpetas (Cambio V1.2.2 - Recuperado)
@@ -540,7 +544,7 @@ class BuscadorPiezas(QMainWindow):
             local_version = "v1.0.5"
             
             # Buscar en red
-            version_file = os.path.join(RUTA_BIBLIOTECA, "APP BÚSQUEDA ARCHIVOS", "version.txt")
+            version_file = os.path.join(RUTA_DESPLIEGUE_APP, "version.txt")
             if os.path.exists(version_file):
                 with open(version_file, "r", encoding="utf-8") as f:
                     red_version = f.read().strip()
