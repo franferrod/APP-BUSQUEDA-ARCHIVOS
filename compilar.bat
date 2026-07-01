@@ -1,9 +1,13 @@
 @echo off
 echo ======================================================
-echo COMPILANDO BUSCADOR DE PIEZAS (ALSI) - V1.0.5
+echo COMPILANDO BUSCADOR DE PIEZAS (ALSI) - V1.0.7
 echo ======================================================
 echo Instalando dependencias necesarias...
 pip install -r requirements.txt
+
+echo.
+echo === Compilando extractor de propiedades SolidWorks ===
+C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe /reference:"C:\Program Files\Common Files\SOLIDWORKS Shared\SolidWorks.Interop.swdocumentmgr.dll" /reference:System.Web.Extensions.dll /out:"SwPropExtractor.exe" "SwPropExtractor.cs"
 
 echo.
 echo === Generando recursos de imagen y Marca ===

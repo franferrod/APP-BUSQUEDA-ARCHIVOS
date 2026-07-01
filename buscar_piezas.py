@@ -78,7 +78,7 @@ from controllers import SearchController, IndexadorThread
 
 # Configuración Global
 CONFIG_DIR = Path(os.path.expanduser("~")) / ".alsi_busqueda"
-DB_PATH = CONFIG_DIR / "index.db"
+# V1.0.7 - Base de datos PostgreSQL compartida (ya no hay DB_PATH local)
 
 # Colores Corporativos ALSI
 RAL_2010_NARANJA = "#E15B1E"  # Naranja corporativo
@@ -90,42 +90,19 @@ LOGO_ISOTIPO = resource_path("ALSI_ISOTIPO_naranja.png")
 LOGO_IMAGOTIPO = resource_path("ALSI_IMAGOTIPO_naranja.png")
 APP_ICON = resource_path("ALSI_BUSCADOR.ico")
 
-RUTAS_RED = {
-    'EMRAH': r'\\OFITEC-7\alsi proyectos aprobados (emrah)',
-    'DANI': r'\\OFITEC-5\alsi - proyectos aprobados (dani)',
-    'EMILIA': r'\\OFITEC-3\alsi proyectos aprobados (emilia)',
-    'MACIEK': r'\\PABLO-OT\alsi - proyectos aprobados (maciek)',
-    'MARCOS': r'\\OFITEC-2\alsi proyectos aprobados (marcos)',
-    'JESUS': r'\\OFITEC-1\alsi proyectos aprobados (jesus)',
-    'PACO': r'\\OFITEC-4\alsi proyectos aprobados (paco)',
-    'ALVARO': r'\\Ofitec-3\alsi proyectos aprobados (álvaro)',
-    'MICHO': r'\\Ofitec-3\alsi proyectos aprobados (antonio)',
-    'JAVI GARCÍA': r'\\OFITEC-4\ALSI PROYECTOS APROBADOS',
-    'JAVI ALONSO': r'\\OFITEC-5\alsi-proyectos aprobados javier',
-    'DAVID BARÓN': r'Z:\ALSI INTERCAMBIO\ALSI LEGENDS\DAVID B',
+# v1.0.7 - Rutas NAS nuevo (modelo por origen, sustituye RUTAS_RED por compañero)
+RUTAS_NAS = {
+    'PROYECTOS':     r'\\192.168.1.10\Oficina Tecnica\ALSI PROYECTOS APROBADOS',
+    'BIBLIOTECA_3D': r'\\192.168.1.10\Oficina Tecnica\ALSI BIBLIOTECA 3D',
+    'ALSI_ESTANDAR': r'\\192.168.1.10\Oficina Tecnica\ALSI ESTANDAR',
 }
 
-# Rutas especiales para V1.0.0
-# Ruta principal + fallback para compañeros con mapeo de red diferente (VM)
-RUTA_BIBLIOTECA_OPCIONES = [
-    r'Z:\ALSI INTERCAMBIO\BIBLIOTECA SIDDEX',
-    r'Z:\BIBLIOTECA SIDDEX',
-]
-RUTA_ESTANDAR_OPCIONES = [
-    r'Z:\ALSI INTERCAMBIO\ALSI ESTANDAR',
-    r'Z:\ALSI ESTANDAR',
-]
-
-def _resolver_ruta(opciones):
-    """Devuelve la primera ruta accesible de la lista, o la primera como fallback."""
-    for ruta in opciones:
-        if os.path.exists(ruta):
-            return ruta
-    return opciones[0]  # Devuelve la principal para mensajes de error
-
-RUTA_BIBLIOTECA = _resolver_ruta(RUTA_BIBLIOTECA_OPCIONES)
-RUTA_ESTANDAR = _resolver_ruta(RUTA_ESTANDAR_OPCIONES)
-RUTA_DARKWEB_JA = r'\\Ofitec-5\javier alonso'
+# Etiquetas legibles para la UI
+ETIQUETAS_ORIGEN = {
+    'PROYECTOS':     'Proyectos',
+    'BIBLIOTECA_3D': 'Biblioteca 3D',
+    'ALSI_ESTANDAR': 'ALSI Estándar',
+}
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -283,11 +260,11 @@ QComboBox::down-arrow { image: none; } /* Could use an icon here if available */
 # DIÁLOGO DE INDEXACIÓN SELECTIVA (Cambio 2)
 # -----------------------------------------------------------------------------
 class DialogIndexacion(QDialog):
-    """Modal para elegir qué compañeros y años indexar"""
-    def __init__(self, rutas_red, parent=None):
+    """Modal para elegir qué orígenes y años indexar (v1.0.7 - NAS nuevo)"""
+    def __init__(self, rutas_dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🔄 Configurar Indexación")
-        self.setMinimumSize(420, 520)
+        self.setWindowTitle("🔄 Configurar Indexación NAS")
+        self.setMinimumSize(420, 480)
         self.setModal(True)
         
         layout = QVBoxLayout(self)
@@ -295,19 +272,21 @@ class DialogIndexacion(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         
         # Título descriptivo
-        lbl_titulo = QLabel("Selecciona los compañeros a re-indexar:")
+        lbl_titulo = QLabel("Selecciona los orígenes a indexar en el NAS:")
         lbl_titulo.setFont(QFont("Segoe UI", 10, QFont.Bold))
         layout.addWidget(lbl_titulo)
         
-        # --- Compañeros ---
-        group_comp = QGroupBox("👥 Compañeros")
+        # --- Orígenes ---
+        group_comp = QGroupBox("📂 Orígenes")
         group_comp.setFont(QFont("Segoe UI", 9))
         comp_layout = QVBoxLayout(group_comp)
         
         self.list_companeros = QListWidget()
-        self.list_companeros.setMaximumHeight(220)
-        for comp in rutas_red.keys():
-            item = QListWidgetItem(comp)
+        self.list_companeros.setMaximumHeight(160)
+        for key in rutas_dict.keys():
+            label = ETIQUETAS_ORIGEN.get(key, key)
+            item = QListWidgetItem(key)
+            item.setToolTip(rutas_dict[key])
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
             self.list_companeros.addItem(item)
@@ -351,7 +330,7 @@ class DialogIndexacion(QDialog):
         layout.addWidget(group_años)
         
         # --- Info ---
-        lbl_info = QLabel("⏱ El proceso puede tardar 1-3 minutos por compañero.\n"
+        lbl_info = QLabel("⏱ El proceso puede tardar varios minutos según el tamaño del NAS.\n"
                          "Puedes cancelar en cualquier momento.")
         lbl_info.setStyleSheet("color: #666; font-style: italic; padding: 4px;")
         lbl_info.setWordWrap(True)
@@ -532,53 +511,27 @@ class BuscadorPiezas(QMainWindow):
         self.refrescar_filtros_jerarquicos()  # Carga inicial V1.0.0
         self.cargar_preferencias()
         
-        # Diagnóstico de red y actualizaciones (V1.0.3 Repaired)
+        # Diagnóstico de red (V1.0.7)
         QTimer.singleShot(1000, self.verificar_rutas_red)
-        QTimer.singleShot(2000, self.check_for_updates)
 
-    def check_for_updates(self):
-        """Busca silenciosamente el archivo version.txt desplegado en la red y avisa si hay versión nueva"""
-        try:
-            # Obtener versión local desde el nombre del instalador o exe, heurísticamente, 
-            # pero sabemos que esta release será v1.0.5.
-            local_version = "v1.0.5"
-            
-            # Buscar en red
-            version_file = os.path.join(RUTA_DESPLIEGUE_APP, "version.txt")
-            if os.path.exists(version_file):
-                with open(version_file, "r", encoding="utf-8") as f:
-                    red_version = f.read().strip()
-                
-                # Comparar. Si la de red tiene formato v1.X pero es distinta
-                # y no es vacía. (Simplificado para evitar reglas semver complejas)
-                if red_version and red_version != local_version and "v1." in red_version:
-                    # Mostrar banner de actualización
-                    self.lbl_update.setText(f"🚀 ¡Nueva versión {red_version} disponible! Actualiza ejecutando el instalador local.")
-                    self.lbl_update.setVisible(True)
-        except Exception as e:
-            logger.debug(f"Error comprobando actualizaciones: {e}")
+    # check_for_updates eliminado en V1.0.7 — El aviso de actualización lo gestiona
+    # el administrador directamente con los compañeros.
 
     def verificar_rutas_red(self):
-        """Comprueba si las rutas críticas de la biblioteca son accesibles (V1.0.0)"""
-        global RUTA_BIBLIOTECA, RUTA_ESTANDAR
-        # Re-resolver en caliente por si la red se conectó después del arranque
-        RUTA_BIBLIOTECA = _resolver_ruta(RUTA_BIBLIOTECA_OPCIONES)
-        RUTA_ESTANDAR = _resolver_ruta(RUTA_ESTANDAR_OPCIONES)
-        
+        """Comprueba si las rutas del NAS nuevo son accesibles (V1.0.7)"""
         error_msg = ""
-        if not os.path.exists(RUTA_BIBLIOTECA):
-            error_msg += f"• No se detecta: {RUTA_BIBLIOTECA}\n"
-        if not os.path.exists(RUTA_ESTANDAR):
-            error_msg += f"• No se detecta: {RUTA_ESTANDAR}\n"
-            
+        for origen, ruta in RUTAS_NAS.items():
+            if not os.path.exists(ruta):
+                error_msg += f"• {ETIQUETAS_ORIGEN.get(origen, origen)}: {ruta}\n"
+        
         if error_msg:
             QMessageBox.warning(self, "Problema de Red", 
-                                "Atención: No se puede acceder a las librerías comerciales.\n\n" + 
+                                "Atención: No se puede acceder a las siguientes rutas del NAS:\n\n" + 
                                 error_msg + 
-                                "\nPor favor, asegúrate de que la unidad Z: está correctamente conectada.")
-            logger.error(f"Rutas de red no accesibles: {error_msg}")
+                                "\nComprueba la conexión de red con 192.168.1.10.")
+            logger.error(f"Rutas NAS no accesibles: {error_msg}")
         else:
-            logger.info(f"Rutas de red OK: Biblioteca={RUTA_BIBLIOTECA}, Estándar={RUTA_ESTANDAR}")
+            logger.info("Rutas NAS OK: todas accesibles")
 
     def toggle_checkboxes(self, list_widget, state):
         """Activa o desactiva todos los checkboxes en un QListWidget"""
@@ -744,12 +697,7 @@ class BuscadorPiezas(QMainWindow):
         
         main_layout.addLayout(header_layout)
 
-        # Banner de Actualización (Oculto por defecto)
-        self.lbl_update = QLabel()
-        self.lbl_update.setStyleSheet("background-color: #27ae60; color: white; padding: 6px; font-weight: bold; border-radius: 4px;")
-        self.lbl_update.setAlignment(Qt.AlignCenter)
-        self.lbl_update.setVisible(False)
-        main_layout.addWidget(self.lbl_update)
+        # Banner de Actualización eliminado en V1.0.7
 
         # ═══════════════════════════════════════════
         # CONTENIDO PRINCIPAL (SPLITTER: SIDEBAR + CONTENT) V1.0.0
@@ -783,41 +731,23 @@ class BuscadorPiezas(QMainWindow):
         izq_layout.setContentsMargins(4, 4, 4, 4)
         izq_layout.setSpacing(4)
         
-        # 1. COMPAÑEROS
-        lbl_comp = QLabel("Compañeros:")
+        # 1. ORIGEN (v1.0.7 - antes era Compañeros)
+        lbl_comp = QLabel("Origen:")
         lbl_comp.setStyleSheet("font-weight: bold; color: #555;")
         izq_layout.addWidget(lbl_comp)
 
-        # Checkbox para Biblioteca y Estándar (V1.0.0 - Separadas)
-        self.chk_siddex = QCheckBox("Incluir biblioteca Siddex")
-        self.chk_siddex.setToolTip("Buscar también en la biblioteca Siddex")
-        self.chk_siddex.setStyleSheet("color: #d35400; font-weight: bold;")
-        izq_layout.addWidget(self.chk_siddex)
-
-        self.chk_estandar = QCheckBox("Incluir ALSI Estándar")
-        self.chk_estandar.setToolTip("Buscar también en las piezas estándar de ALSI")
-        self.chk_estandar.setStyleSheet("color: #d35400; font-weight: bold;")
-        izq_layout.addWidget(self.chk_estandar)
-
-        self.chk_darkweb_ja = QCheckBox("Incluir Dark Web J.A")
-        self.chk_darkweb_ja.setToolTip("Buscar también en \\\\Ofitec-5\\javier alonso")
-        self.chk_darkweb_ja.setStyleSheet("color: #8e44ad; font-weight: bold;")
-        izq_layout.addWidget(self.chk_darkweb_ja)
-
         self.list_companeros = QListWidget()
-        self.list_companeros.setMinimumHeight(80)
-        self.list_companeros.setMaximumHeight(200)
-        for comp in list(RUTAS_RED.keys()):
-            item = QListWidgetItem(comp)
+        self.list_companeros.setMinimumHeight(60)
+        self.list_companeros.setMaximumHeight(120)
+        for key, label in ETIQUETAS_ORIGEN.items():
+            item = QListWidgetItem(key)
+            item.setText(key)  # Internamente usamos la key
+            item.setToolTip(RUTAS_NAS.get(key, ''))
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
             self.list_companeros.addItem(item)
         izq_layout.addWidget(self.list_companeros)
         self.add_toggle_buttons(izq_layout, self.list_companeros)
-
-        # Conectar checkboxes de biblioteca (V1.0.1 Auto-update)
-        self.chk_siddex.stateChanged.connect(self.on_filtro_jerarquico_changed)
-        self.chk_estandar.stateChanged.connect(self.on_filtro_jerarquico_changed)
 
         # 2. AÑOS
         lbl_años = QLabel("Años de Proyecto:")
@@ -889,13 +819,14 @@ class BuscadorPiezas(QMainWindow):
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setHandleWidth(3)
         
-        # Tabla (V1.0.5 Patch: 13 columnas - Reordenado: Tipo al final para estiramiento)
+        # Tabla (V1.0.6: 22 columnas)
         self.tabla = TablaArrastrable()
-        self.tabla.setColumnCount(13)
+        self.tabla.setColumnCount(22)
         self.tabla.setHorizontalHeaderLabels([
             "Ruta_Hidden", "Orden_Orig", "Cód. Proy_Hidden", "Nom. Proy_Hidden", "Vista", 
-            "Nombre", "Compañero", "Año", "Cliente", "Proyecto", 
-            "Orden", "Nombre Orden", "Tipo"
+            "Nombre", "Origen", "Año", "Cliente", "Proyecto", 
+            "Orden", "Nombre Orden", "Material", "Tratamiento", "Espesor", "Láser",
+            "Torno", "Fresa", "Soldadura", "Pintura", "Montaje", "Tipo"
         ])
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -923,15 +854,23 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setColumnHidden(2, True) # Cód. Proy_Hidden
         self.tabla.setColumnHidden(3, True) # Nom. Proy_Hidden
         self.tabla.setColumnWidth(4, 52)  # Vista
-        self.tabla.setColumnWidth(5, 408) # Nombre
+        self.tabla.setColumnWidth(5, 250) # Nombre
         self.tabla.setColumnWidth(6, 95)  # Compañero
         self.tabla.setColumnWidth(7, 55)  # Año
         self.tabla.setColumnWidth(8, 144) # Cliente
-        self.tabla.setColumnWidth(9, 250) # Proyecto
+        self.tabla.setColumnWidth(9, 200) # Proyecto
         self.tabla.setColumnWidth(10, 55) # Orden
         self.tabla.setColumnWidth(11, 166)# Nombre Orden
-        # Columna 12 (Tipo) estira automáticamente (setStretchLastSection en header)
-        # Columna 12 (Tipo) estira automáticamente (setStretchLastSection en header)
+        self.tabla.setColumnWidth(12, 100)# Material
+        self.tabla.setColumnWidth(13, 100)# Tratamiento
+        self.tabla.setColumnWidth(14, 60) # Espesor
+        self.tabla.setColumnWidth(15, 50) # Láser
+        self.tabla.setColumnWidth(16, 50) # Torno
+        self.tabla.setColumnWidth(17, 50) # Fresa
+        self.tabla.setColumnWidth(18, 70) # Soldadura
+        self.tabla.setColumnWidth(19, 70) # Pintura
+        self.tabla.setColumnWidth(20, 70) # Montaje
+        # Columna 21 (Tipo) estira automáticamente
         
         self.tabla.doubleClicked.connect(self.abrir_carpeta_seleccionada)
         self.tabla.selectionModel().currentRowChanged.connect(self.actualizar_preview)
@@ -1004,16 +943,71 @@ class BuscadorPiezas(QMainWindow):
         self.splitter.setStretchFactor(0, 4)
         self.splitter.setStretchFactor(1, 1)
         
+        # --- Panel filtros derecho (Propiedades) ---
+        panel_derecho = QGroupBox("Propiedades SW")
+        panel_derecho.setMinimumWidth(80)
+        panel_derecho.setMaximumWidth(250)
+        der_outer_layout = QVBoxLayout(panel_derecho)
+        der_outer_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll_der = QScrollArea()
+        scroll_der.setWidgetResizable(True)
+        scroll_der.setFrameShape(QFrame.NoFrame)
+        scroll_widget_der = QWidget()
+        der_layout = QVBoxLayout(scroll_widget_der)
+        der_layout.setContentsMargins(4, 4, 4, 4)
+        der_layout.setSpacing(4)
+        
+        lbl_fabricacion = QLabel("Fabricación:")
+        lbl_fabricacion.setStyleSheet("font-weight: bold; color: #555; margin-top: 5px;")
+        der_layout.addWidget(lbl_fabricacion)
+        
+        self.chk_laser = QCheckBox("Láser")
+        self.chk_torno = QCheckBox("Torno")
+        self.chk_fresa = QCheckBox("Fresa")
+        self.chk_soldadura = QCheckBox("Soldadura")
+        self.chk_pintura = QCheckBox("Pintura")
+        self.chk_montaje = QCheckBox("Montaje")
+        
+        for chk in [self.chk_laser, self.chk_torno, self.chk_fresa, self.chk_soldadura, self.chk_pintura, self.chk_montaje]:
+            der_layout.addWidget(chk)
+            chk.stateChanged.connect(self.ejecutar_busqueda)
+            
+        der_layout.addSpacing(5)
+        lbl_bandas = QLabel("Bandas:")
+        lbl_bandas.setStyleSheet("font-weight: bold; color: #555; margin-top: 5px;")
+        der_layout.addWidget(lbl_bandas)
+        
+        self.combo_cierre = QComboBox()
+        self.combo_cierre.addItems(["(Cualquier cierre)", "SIN FIN", "CON GRAPA", "CON GRAPA OCULTA", "ABIERTA", "CON GRAPA EN UN LADO"])
+        der_layout.addWidget(self.combo_cierre)
+        self.combo_cierre.currentIndexChanged.connect(self.ejecutar_busqueda)
+        
+        self.chk_filo_guiado = QCheckBox("Filo Guiado")
+        self.chk_onda = QCheckBox("Onda")
+        self.chk_cangilon = QCheckBox("Cangilón")
+        self.chk_runer = QCheckBox("Runer")
+        
+        for chk in [self.chk_filo_guiado, self.chk_onda, self.chk_cangilon, self.chk_runer]:
+            der_layout.addWidget(chk)
+            chk.stateChanged.connect(self.ejecutar_busqueda)
+            
+        der_layout.addStretch()
+        scroll_der.setWidget(scroll_widget_der)
+        der_outer_layout.addWidget(scroll_der)
+
         # Añadir splitter derecho al splitter principal
         self.main_splitter.addWidget(self.splitter)
+        self.main_splitter.addWidget(panel_derecho)
         self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setStretchFactor(2, 0)
         
         # Restaurar ancho guardado (Persistencia)
         saved_width = self.controller.load_preference('sidebar_width')
         if saved_width:
-             self.main_splitter.setSizes([int(saved_width), 1200])
+             self.main_splitter.setSizes([int(saved_width), 1200, 200])
         else:
-             self.main_splitter.setSizes([240, 1200]) # Default original
+             self.main_splitter.setSizes([240, 1200, 200]) # Default original
 
         main_layout.addWidget(self.main_splitter, stretch=1)
 
@@ -1049,27 +1043,13 @@ class BuscadorPiezas(QMainWindow):
         line_sep.setFrameShape(QFrame.VLine)
         line_sep.setFrameShadow(QFrame.Sunken)
         footer_layout.addWidget(line_sep)
-        # Botón Indexar Compañeros (Renombrado V1.0.0)
-        self.btn_indexar = QPushButton("Indexar Compañeros")
-        self.btn_indexar.setToolTip("Abre el diálogo para elegir qué compañeros indexar")
-        self.btn_indexar.setIcon(QIcon(LOGO_ISOTIPO)) # Usar el isotipo naranja
+        # Botón Reindexar NAS (v1.0.7 - sustituye 3 botones anteriores)
+        self.btn_indexar = QPushButton("🔄 Reindexar NAS")
+        self.btn_indexar.setToolTip("Abre el diálogo para elegir qué orígenes indexar del NAS")
+        self.btn_indexar.setIcon(QIcon(LOGO_ISOTIPO))
         self.btn_indexar.setFixedWidth(185)
         self.btn_indexar.clicked.connect(self.confirmar_indexacion)
         footer_layout.addWidget(self.btn_indexar)
-
-        # Botón Indexar Comerciales (Nuevo V1.0.0)
-        self.btn_indexar_comerciales = QPushButton("Indexar Comerciales")
-        self.btn_indexar_comerciales.setToolTip("Indexar Biblioteca Siddex y Alsi Estándar")
-        self.btn_indexar_comerciales.setFixedWidth(185)
-        self.btn_indexar_comerciales.clicked.connect(self.abrir_dialogo_indexacion_comerciales)
-        footer_layout.addWidget(self.btn_indexar_comerciales)
-        
-        # Botón Indexar Otros (Nuevo V1.0.3)
-        self.btn_indexar_otros = QPushButton("Indexar Otros")
-        self.btn_indexar_otros.setToolTip("Indexar carpetas especiales (ej: Dark Web J.A)")
-        self.btn_indexar_otros.setFixedWidth(185)
-        self.btn_indexar_otros.clicked.connect(self.abrir_dialogo_indexacion_otros)
-        footer_layout.addWidget(self.btn_indexar_otros)
         
         self.btn_cancelar = QPushButton("⏹ Cancelar")
         self.btn_cancelar.setToolTip("Detiene la indexación actual")
@@ -1263,11 +1243,8 @@ class BuscadorPiezas(QMainWindow):
     def cargar_preferencias(self):
         self.input_buscar.setText(self.controller.load_preference("ultimo_termino", ""))
         
-        # Restaurar Checkbox Biblioteca (V1.0.0)
-        sid_status = self.controller.load_preference("incluir_siddex", "0")
-        self.chk_siddex.setChecked(sid_status == "1")
-        est_status = self.controller.load_preference("incluir_estandar", "0")
-        self.chk_estandar.setChecked(est_status == "1")
+        # Restaurar Checkbox Biblioteca (V1.0.0) - ELIMINADO PARA NAS NUEVO
+
         
         comp_guardados = self.controller.load_preference("companeros_checked", "")
         if comp_guardados:
@@ -1322,9 +1299,8 @@ class BuscadorPiezas(QMainWindow):
         self.controller.save_preference("geometria", val)
         self.controller.save_preference("ultimo_termino", self.input_buscar.text())
         
-        # Guardar Checkbox Biblioteca (V1.0.0)
-        self.controller.save_preference("incluir_siddex", "1" if self.chk_siddex.isChecked() else "0")
-        self.controller.save_preference("incluir_estandar", "1" if self.chk_estandar.isChecked() else "0")
+        # Guardar Checkbox Biblioteca (V1.0.0) - ELIMINADO PARA NAS NUEVO
+
         
 
         comp_checked = ','.join(self.get_selected_items(self.list_companeros))
@@ -1427,14 +1403,10 @@ class BuscadorPiezas(QMainWindow):
             comp_sel = self.get_selected_items(self.list_companeros)
             años_sel = self.get_selected_items(self.list_años)
 
-            # Validación: al menos un compañero y un año, A MENOS QUE se busque en biblioteca (V1.0.0)
-            buscar_siddex = self.chk_siddex.isChecked()
-            buscar_estandar = self.chk_estandar.isChecked()
-            buscar_darkweb = self.chk_darkweb_ja.isChecked()
-            
-            if not comp_sel and not años_sel and not buscar_siddex and not buscar_estandar and not buscar_darkweb:
+            # Validación: al menos un origen seleccionado (v1.0.7)
+            if not comp_sel:
                 if not auto:
-                    QMessageBox.warning(self, "Atención", "Selecciona al menos un compañero y un año, o marca una casilla de Biblioteca.")
+                    QMessageBox.warning(self, "Atención", "Selecciona al menos un origen.")
                 return
             
             if not termino:
@@ -1465,6 +1437,22 @@ class BuscadorPiezas(QMainWindow):
             if not extensiones and tipos_sel:
                 extensiones = None
 
+            props_fabricacion = {
+                'laser': self.chk_laser.isChecked(),
+                'torno': self.chk_torno.isChecked(),
+                'fresa': self.chk_fresa.isChecked(),
+                'soldadura': self.chk_soldadura.isChecked(),
+                'pintura': self.chk_pintura.isChecked(),
+                'montaje': self.chk_montaje.isChecked()
+            }
+            props_bandas = {
+                'cierre': self.combo_cierre.currentText() if self.combo_cierre.currentIndex() > 0 else None,
+                'filo_guiado': self.chk_filo_guiado.isChecked(),
+                'onda': self.chk_onda.isChecked(),
+                'cangilon': self.chk_cangilon.isChecked(),
+                'runer': self.chk_runer.isChecked()
+            }
+
             resultados = self.controller.perform_search(
                 termino, 
                 comp_sel,
@@ -1473,9 +1461,9 @@ class BuscadorPiezas(QMainWindow):
                 carpetas_sel,
                 clientes_sel,
                 proyectos_sel,
-                incluir_siddex=buscar_siddex,
-                incluir_estandar=buscar_estandar,
-                incluir_darkweb_ja=buscar_darkweb
+                None, # ordenes
+                props_fabricacion,
+                props_bandas
             )
             
             # Prealocar filas de golpe (mucho más rápido que insertRow en bucle)
@@ -1508,14 +1496,23 @@ class BuscadorPiezas(QMainWindow):
                 
                 # Resto de columnas visibles:
                 map_cols = {
-                    0: 5, # nombre -> col 5
-                    1: 6, # comp -> col 6
-                    2: 7, # año -> col 7
-                    3: 8, # cliente -> col 8
-                    4: 9, # proy -> col 9
-                    5: 12,# tipo -> col 12 (FINAL STRETCH)
-                    8: 10,# codOrd -> col 10
-                    9: 11 # nomOrd -> col 11
+                    0: 5,  # nombre_archivo -> col 5
+                    1: 6,  # compañero -> col 6 (Origen)
+                    2: 7,  # año -> col 7
+                    3: 8,  # cliente -> col 8
+                    4: 9,  # proyecto -> col 9
+                    5: 21, # tipo_carpeta -> col 21 (FINAL STRETCH)
+                    8: 10, # codigo_orden -> col 10
+                    9: 11, # nombre_orden -> col 11
+                    11: 12, # sw_material -> col 12
+                    12: 13, # sw_tratamiento -> col 13
+                    13: 14, # sw_espesor -> col 14
+                    14: 15, # sw_laser -> col 15
+                    15: 16, # sw_torno -> col 16
+                    16: 17, # sw_fresa -> col 17
+                    17: 18, # sw_soldadura -> col 18
+                    18: 19, # sw_pintura -> col 19
+                    19: 20, # sw_montaje -> col 20
                 }
                 for i_data, i_tabla in map_cols.items():
                     val = data[i_data]
@@ -1551,8 +1548,6 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_count.setText(f"{len(resultados)} resultados")
             if not resultados and termino:
                 txt = f"No se encontraron resultados para '{termino}'"
-                if buscar_siddex or buscar_estandar:
-                    txt += "\n(Pista: Asegúrate de haber usado el botón 'Indexar Comerciales' al menos una vez)"
                 self.lbl_status.setText(txt)
                 
         except Exception as e:
@@ -1566,106 +1561,27 @@ class BuscadorPiezas(QMainWindow):
     # INDEXACIÓN (Cambio 2: modal selectivo + cancelar)
     # ═══════════════════════════════════════════
     def confirmar_indexacion(self):
-        dialog = DialogIndexacion(RUTAS_RED, self)
-        dialog.setWindowTitle("Configurar Indexación Compañeros")
+        """Abre el diálogo de indexación para el NAS nuevo (v1.0.7)"""
+        dialog = DialogIndexacion(RUTAS_NAS, self)
+        dialog.setWindowTitle("Configurar Indexación NAS")
         if dialog.exec_() == QDialog.Accepted:
-            companeros = dialog.get_companeros_seleccionados()
+            origenes = dialog.get_companeros_seleccionados()
             anos = dialog.get_años_seleccionados()
-            if companeros:
-                self.iniciar_indexacion(companeros, anos)
+            if origenes:
+                self.iniciar_indexacion(origenes, anos)
             else:
-                QMessageBox.warning(self, "Atención", "No has seleccionado ningún compañero.")
+                QMessageBox.warning(self, "Atención", "No has seleccionado ningún origen.")
 
-    def abrir_dialogo_indexacion_comerciales(self):
-        # Nuevo Diálogo para Biblioteca y Estándar (V1.0.0)
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Indexar Comerciales")
-        dialog.setMinimumWidth(350)
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        layout = QVBoxLayout(dialog)
-
-        lbl_info = QLabel("Selecciona las carpetas comerciales a indexar:")
-        lbl_info.setStyleSheet("font-weight: bold; font-size: 12px;")
-        layout.addWidget(lbl_info)
-
-        # Checkboxes
-        chk_biblioteca = QCheckBox("Biblioteca Siddex")
-        chk_biblioteca.setChecked(True)
-        layout.addWidget(chk_biblioteca)
-
-        chk_estandar = QCheckBox("Alsi Estándar")
-        chk_estandar.setChecked(True)
-        layout.addWidget(chk_estandar)
-
-        # Botones
-        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btn_box.accepted.connect(dialog.accept)
-        btn_box.rejected.connect(dialog.reject)
-        layout.addWidget(btn_box)
-
-        if dialog.exec_() == QDialog.Accepted:
-            rutas_a_indexar = {}
-            if chk_biblioteca.isChecked():
-                rutas_a_indexar['BIBLIOTECA'] = RUTA_BIBLIOTECA
-            if chk_estandar.isChecked():
-                rutas_a_indexar['ESTANDAR'] = RUTA_ESTANDAR
-            
-            if rutas_a_indexar:
-                # Iniciamos indexación SIN pasar años (lista vacía) para que no filtre por año
-                self.iniciar_indexacion(rutas_a_indexar, anos_sel=[], rutas_custom=rutas_a_indexar) 
-            else:
-                QMessageBox.warning(self, "Atención", "No has seleccionado ninguna carpeta.")
-
-    def abrir_dialogo_indexacion_otros(self):
-        # Nuevo Diálogo para Otras Carpetas (V1.0.3)
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Indexar Otras Carpetas")
-        dialog.setMinimumWidth(350)
-        dialog.setWindowFlags(dialog.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        layout = QVBoxLayout(dialog)
-
-        lbl_info = QLabel("Selecciona las carpetas adicionales a indexar:")
-        lbl_info.setStyleSheet("font-weight: bold; font-size: 12px;")
-        layout.addWidget(lbl_info)
-
-        # Checkboxes
-        chk_darkweb = QCheckBox("Dark Web J.A")
-        chk_darkweb.setChecked(True)
-        layout.addWidget(chk_darkweb)
-
-        # Botones
-        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btn_box.accepted.connect(dialog.accept)
-        btn_box.rejected.connect(dialog.reject)
-        layout.addWidget(btn_box)
-
-        if dialog.exec_() == QDialog.Accepted:
-            rutas_a_indexar = {}
-            if chk_darkweb.isChecked():
-                rutas_a_indexar['DARKWEB_JA'] = RUTA_DARKWEB_JA
-            
-            if rutas_a_indexar:
-                # Iniciamos indexación SIN pasar años (lista vacía) para que no filtre por año
-                self.iniciar_indexacion(rutas_a_indexar, anos_sel=[], rutas_custom=rutas_a_indexar) 
-            else:
-                QMessageBox.warning(self, "Atención", "No has seleccionado ninguna carpeta.")
-
-    def iniciar_indexacion(self, companeros_sel, anos_sel, rutas_custom=None):
+    def iniciar_indexacion(self, origenes_sel, anos_sel):
+        """Inicia la indexación del NAS nuevo (v1.0.7)"""
         self.btn_indexar.setEnabled(False)
         self.btn_cancelar.setVisible(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # Indeterminado
         
-        # Determinar qué diccionario de rutas usar (V1.0.0)
-        rutas_dict = rutas_custom if rutas_custom else RUTAS_RED
+        self.lbl_status.setText(f"Iniciando indexación de {len(origenes_sel)} orígenes...")
         
-        # Si usamos rutas custom, companeros_sel debe ser la lista de claves de ese dict
-        if rutas_custom:
-            companeros_sel = list(rutas_custom.keys())
-
-        self.lbl_status.setText(f"Iniciando indexación de {len(companeros_sel)} compañeros...")
-        
-        self.thread = IndexadorThread(self.db, rutas_dict, companeros_sel, anos_sel)
+        self.thread = IndexadorThread(self.db, RUTAS_NAS, origenes_sel, anos_sel)
         self.thread.status.connect(self.lbl_status.setText)
         self.thread.progress.connect(lambda n: self.lbl_count.setText(f"{n} archivos indexados"))
         self.thread.comp_finished.connect(self.on_comp_indexado)
@@ -1676,7 +1592,7 @@ class BuscadorPiezas(QMainWindow):
     def cancelar_indexacion(self):
         if hasattr(self, 'thread') and self.thread and self.thread.isRunning():
             self.thread.cancelar()
-            self.lbl_status.setText("⏹ Cancelando... esperando a que termine el compañero actual")
+            self.lbl_status.setText("⏹ Cancelando... esperando a que termine el origen actual")
             self.btn_cancelar.setEnabled(False)
 
     def on_comp_indexado(self, comp, count):
@@ -1873,19 +1789,19 @@ class BuscadorPiezas(QMainWindow):
                     return item.text() if item else ""
                 except: return ""
 
-            # Mapeo según nuevo orden V1.0.5 Patch: 
+            # Mapeo según nuevo orden V1.0.6: 
             # 0:Ruta, 1:Orden, 2:CodProy, 3:NomProy, 4:Vista, 5:Nombre, 
-            # 6:Comp, 7:Año, 8:Cliente, 9:Proy, 10:CodOrd, 11:NomOrd, 12:Tipo
+            # 6:Desc, 7:Comp, 8:Año, 9:Cliente, 10:Proy, 11:CodOrd, 12:NomOrd, ... 22:Tipo
             nombre = get_text(5)
-            comp = get_text(6)
-            año = get_text(7)
-            cliente = get_text(8)
-            proyecto = get_text(9)
-            tipo = get_text(12)
+            comp = get_text(7)
+            año = get_text(8)
+            cliente = get_text(9)
+            proyecto = get_text(10)
+            tipo = get_text(22)
             cod_proy = get_text(2)
             nom_proy = get_text(3)
-            cod_ord = get_text(10)
-            nom_ord = get_text(11)
+            cod_ord = get_text(11)
+            nom_ord = get_text(12)
             ruta = get_text(0)
             
             if not nombre or not ruta:
@@ -2210,7 +2126,7 @@ class BuscadorPiezas(QMainWindow):
             lbl_title.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_title)
             
-            lbl_ver = QLabel("Versión 1.0.5 (UI/UX Global Remaster)")
+            lbl_ver = QLabel("Versión 1.0.7 (Migración NAS Nuevo)")
             lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; font-weight: 500;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             layout.addWidget(lbl_ver)

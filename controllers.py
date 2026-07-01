@@ -5,6 +5,13 @@ import threading
 from pathlib import Path
 from PyQt5.QtCore import QThread, pyqtSignal
 from models import IndexManager, logger
+from sw_properties import extractor
+
+# v1.0.7 - Carpetas a excluir durante indexación
+CARPETAS_EXCLUIDAS = {
+    'ARCHIVOS REPETIDOS', 'REVISION MIGRACION', '__pycache__',
+    'BACKUPS', 'build', 'dist', '.git', 'D:\\MIGRACION_NAS_BACKUPS',
+}
 
 class IndexadorThread(QThread):
     progress = pyqtSignal(int)
@@ -34,7 +41,11 @@ class IndexadorThread(QThread):
             rutas_a_indexar = {k: v for k, v in self.rutas.items() 
                               if self.compañeros_sel is None or k in self.compañeros_sel}
             
-            with self.db.get_connection() as conn:
+            wrapper = self.db.get_connection()
+            try:
+                conn = wrapper._conn
+                cursor = conn.cursor()
+                
                 for comp, ruta_val in rutas_a_indexar.items():
                     if self._cancelar:
                         self.status.emit("⏹ Indexación cancelada")
@@ -43,16 +54,17 @@ class IndexadorThread(QThread):
                     # Normalizar ruta_val a lista (soporte para múltiples rutas V1.0.0)
                     rutas_lista = ruta_val if isinstance(ruta_val, list) else [ruta_val]
                     
-                    # Limpiar datos previos antes de empezar con todas las rutas de este compañero
+                    # Limpiar datos previos antes de empezar con todas las rutas de este origen
                     if self.años_sel:
-                        placeholders = ','.join(['?' for _ in self.años_sel])
-                        query_del = f"DELETE FROM archivos WHERE compañero = ? AND año IN ({placeholders})"
-                        conn.execute(query_del, [comp] + self.años_sel)
+                        placeholders = ','.join(['%s' for _ in self.años_sel])
+                        query_del = f"DELETE FROM buscador.archivos WHERE origen = %s AND anio IN ({placeholders})"
+                        cursor.execute(query_del, [comp] + self.años_sel)
                     else:
-                        conn.execute("DELETE FROM archivos WHERE compañero = ?", (comp,))
+                        cursor.execute("DELETE FROM buscador.archivos WHERE origen = %s", (comp,))
+                    conn.commit()
                     
                     count_comp = 0
-                    is_commercial = comp in ['BIBLIOTECA', 'ESTANDAR', 'DARKWEB_JA']
+                    is_commercial = comp in ('BIBLIOTECA_3D', 'ALSI_ESTANDAR')
 
                     for ruta_base in rutas_lista:
                         if self._cancelar: break
@@ -69,77 +81,109 @@ class IndexadorThread(QThread):
                         for root, dirs, files in os.walk(ruta_base):
                             if self._cancelar: break
                             
-                            # Pruning de directorios: Si estamos en la raíz o nivel superior,
-                            # solo entramos en carpetas "ANO 20XX" si están en años_sel
-                            # NOTA: No filtramos por año en BIBLIOTECA/ESTANDAR (V1.0.0)
-                            if self.años_sel and not is_commercial:
-                                # Verificamos si estamos en un nivel donde el nombre del directorio
-                                # indica el año (Formato: ANO 20XX)
-                                dirname = os.path.basename(root).upper().replace("Ñ", "N")
-                                if dirname.startswith("ANO 20"):
-                                    match = re.search(r'20\d{2}', dirname)
-                                    if match:
-                                        dir_year = int(match.group(0))
-                                        if dir_year not in self.años_sel:
-                                            dirs[:] = [] # No descender en este directorio
-                                            continue
-                                
-                                # También filtramos la lista de subdirectorios en la raíz
-                                # para evitar entrar en años no deseados
-                                new_dirs = []
-                                for d in dirs:
-                                    d_upper = d.upper().replace("Ñ", "N")
-                                    if d_upper.startswith("ANO 20"):
-                                        match = re.search(r'20\d{2}', d_upper)
-                                        if match:
-                                            year_candidate = int(match.group(0))
-                                            if year_candidate in self.años_sel:
-                                                new_dirs.append(d)
-                                        else:
-                                            new_dirs.append(d) # No es carpeta de año, entramos por si acaso
-                                    else:
-                                        new_dirs.append(d) # No es carpeta de año standard
-                                dirs[:] = new_dirs
+                            # v1.0.7 - Excluir carpetas de migración y temporales
+                            dirs[:] = [d for d in dirs if d.upper() not in {x.upper() for x in CARPETAS_EXCLUIDAS} and not d.startswith('~')]
 
                             for file in files:
                                 # 1. Ignorar temporales y extensiones no deseadas
-                                if file.startswith("~$") or not file.lower().endswith(('.sldprt', '.sldasm', '.slddrw', '.dwg', '.pdf', '.step', '.stp', '.iges', '.igs')):
+                                if file.startswith("~$") or file == 'Thumbs.db' or not file.lower().endswith(('.sldprt', '.sldasm', '.slddrw', '.dwg', '.pdf', '.step', '.stp', '.iges', '.igs')):
                                     continue
                                     
                                 full_path = os.path.join(root, file)
                                 
                                 if is_commercial:
                                     # Metadatos simplificados para comerciales
+                                    tipo_map = {'BIBLIOTECA_3D': 'BIBLIOTECA', 'ALSI_ESTANDAR': 'ESTANDAR'}
                                     metadata = {
                                         'año': 0,
                                         'cliente': 'ALSI',
-                                        'proyecto': comp, # 'BIBLIOTECA' o 'ESTANDAR'
-                                        'tipo': 'COMERCIAL',
+                                        'proyecto': comp,
+                                        'tipo': tipo_map.get(comp, 'OTRO'),
                                         'codigo_proyecto': '',
                                         'nombre_proyecto': comp,
                                         'codigo_orden': '',
                                         'nombre_orden': ''
                                     }
                                 else:
-                                    metadata = self.extraer_metadata(file, root)
+                                    metadata = self.extraer_metadata(file, root, origen=comp, ruta_base=ruta_base)
                                     # Doble check de año si estamos en modo selectivo
                                     if self.años_sel and metadata['año'] not in self.años_sel:
                                         continue
 
                                 try:
                                     stats = os.stat(full_path)
-                                    conn.execute('''
-                                        INSERT OR REPLACE INTO archivos 
-                                        (nombre_archivo, compañero, año, cliente, proyecto, tipo_carpeta, 
-                                         ruta_completa, extension, ultima_modificacion, tamaño_bytes,
-                                         codigo_proyecto, nombre_proyecto, codigo_orden, nombre_orden)
-                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    
+                                    # V1.0.6 - Extraer propiedades SolidWorks si es .sldprt o .sldasm
+                                    sw_props = None
+                                    is_sw_file = file.lower().endswith(('.sldprt', '.sldasm'))
+                                    if is_sw_file:
+                                        try:
+                                            self.status.emit(f"Extrayendo propiedades SW: {file[:20]}...")
+                                            sw_props = extractor.extract_properties(full_path)
+                                        except Exception as ex:
+                                            logger.debug(f"SolidWorks DM falló para {file}: {ex}")
+                                            sw_props = {}
+                                    if not sw_props:
+                                        sw_props = {}
+
+                                    cursor.execute('''
+                                        INSERT INTO buscador.archivos 
+                                        (nombre_archivo, origen, anio, cliente, proyecto, tipo_carpeta, 
+                                         ruta_completa, extension, ultima_modificacion, tamano_bytes,
+                                         codigo_proyecto, nombre_proyecto, codigo_orden, nombre_orden,
+                                         sw_material, sw_tratamiento, sw_espesor, sw_laser, sw_torno, sw_fresa,
+                                         sw_soldadura, sw_pintura, sw_montaje, sw_tipo_cierre, sw_filo_guiado,
+                                         sw_onda, sw_cangilon, sw_runer)
+                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                        ON CONFLICT (ruta_completa) DO UPDATE SET
+                                            nombre_archivo = EXCLUDED.nombre_archivo,
+                                            origen = EXCLUDED.origen,
+                                            anio = EXCLUDED.anio,
+                                            cliente = EXCLUDED.cliente,
+                                            proyecto = EXCLUDED.proyecto,
+                                            tipo_carpeta = EXCLUDED.tipo_carpeta,
+                                            extension = EXCLUDED.extension,
+                                            ultima_modificacion = EXCLUDED.ultima_modificacion,
+                                            tamano_bytes = EXCLUDED.tamano_bytes,
+                                            codigo_proyecto = EXCLUDED.codigo_proyecto,
+                                            nombre_proyecto = EXCLUDED.nombre_proyecto,
+                                            codigo_orden = EXCLUDED.codigo_orden,
+                                            nombre_orden = EXCLUDED.nombre_orden,
+                                            sw_material = EXCLUDED.sw_material,
+                                            sw_tratamiento = EXCLUDED.sw_tratamiento,
+                                            sw_espesor = EXCLUDED.sw_espesor,
+                                            sw_laser = EXCLUDED.sw_laser,
+                                            sw_torno = EXCLUDED.sw_torno,
+                                            sw_fresa = EXCLUDED.sw_fresa,
+                                            sw_soldadura = EXCLUDED.sw_soldadura,
+                                            sw_pintura = EXCLUDED.sw_pintura,
+                                            sw_montaje = EXCLUDED.sw_montaje,
+                                            sw_tipo_cierre = EXCLUDED.sw_tipo_cierre,
+                                            sw_filo_guiado = EXCLUDED.sw_filo_guiado,
+                                            sw_onda = EXCLUDED.sw_onda,
+                                            sw_cangilon = EXCLUDED.sw_cangilon,
+                                            sw_runer = EXCLUDED.sw_runer,
+                                            indexado_en = NOW()
                                     ''', (
                                         file, comp, metadata['año'], metadata['cliente'], metadata['proyecto'], 
                                         metadata['tipo'], full_path, Path(file).suffix.lower(),
                                         int(stats.st_mtime), stats.st_size,
                                         metadata['codigo_proyecto'], metadata['nombre_proyecto'],
-                                        metadata['codigo_orden'], metadata['nombre_orden']
+                                        metadata['codigo_orden'], metadata['nombre_orden'],
+                                        sw_props.get('MATERIAL') or sw_props.get('material') or None,
+                                        sw_props.get('TRATAMIENTO') or None,
+                                        sw_props.get('ESPESOR') or None,
+                                        sw_props.get('LÁSER') or sw_props.get('LASER') or None,
+                                        sw_props.get('TORNO') or None,
+                                        sw_props.get('FRESA') or None,
+                                        sw_props.get('SOLDADURA') or None,
+                                        sw_props.get('PINTURA') or None,
+                                        sw_props.get('MONTAJE') or None,
+                                        sw_props.get('TIPO DE CIERRE') or None,
+                                        sw_props.get('FILO GUIADO') or None,
+                                        sw_props.get('ONDA') or None,
+                                        sw_props.get('CANGILÓN') or sw_props.get('CANGILON') or None,
+                                        sw_props.get('RUNER') or None,
                                     ))
                                     count_comp += 1
                                     total_indexados += 1
@@ -147,17 +191,26 @@ class IndexadorThread(QThread):
                                     if total_indexados % 500 == 0:
                                         self.progress.emit(total_indexados)
                                         self.status.emit(f"Escaneando {comp}... {count_comp} archivos")
+                                    
+                                    if total_indexados % 2000 == 0:
+                                        conn.commit()
                                 except Exception as ex:
                                     logger.debug(f"Error accediendo a archivo {full_path}: {ex}")
                                     continue
                                 
-                    conn.execute('''
-                        INSERT OR REPLACE INTO estado_indexacion 
-                        (compañero, ruta_base, ultima_indexacion, archivos_indexados)
-                        VALUES (?, ?, ?, ?)
+                    cursor.execute('''
+                        INSERT INTO buscador.estado_indexacion 
+                        (origen, ruta_base, ultima_indexacion, archivos_indexados)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT (origen) DO UPDATE SET
+                            ruta_base = EXCLUDED.ruta_base,
+                            ultima_indexacion = EXCLUDED.ultima_indexacion,
+                            archivos_indexados = EXCLUDED.archivos_indexados
                     ''', (comp, ruta_base, int(datetime.datetime.now().timestamp()), count_comp))
                     conn.commit()
                     self.comp_finished.emit(comp, count_comp)
+            finally:
+                wrapper.close()
             
             duration = (datetime.datetime.now() - start_time).total_seconds()
             logger.info(f"Indexación completada: {total_indexados} archivos en {duration:.2f}s")
@@ -167,10 +220,11 @@ class IndexadorThread(QThread):
             logger.exception("Error crítico durante la indexación")
             self.error.emit(str(e))
 
-    def extraer_metadata(self, nombre_archivo, ruta_carpeta):
+    def extraer_metadata(self, nombre_archivo, ruta_carpeta, origen=None, ruta_base=None):
         """
-        Extrae información jerárquica: AÑO > CLIENTE > PROYECTO > ORDEN
-        # V1.0.0 - Parsing posicional robusto.
+        Extrae información jerárquica de la ruta del archivo.
+        v1.0.7 - Nuevo parsing sin carpeta AÑO: CLIENTE > PROYECTO > ORDEN > TIPO_CARPETA
+        El año se infiere del código de proyecto (primeros 2 dígitos → 20XX).
         """
         metadata = {
             'año': 0,
@@ -183,37 +237,113 @@ class IndexadorThread(QThread):
             'tipo': 'OTRO'
         }
         
-        path_obj = Path(ruta_carpeta)
-        parts = path_obj.parts
         ruta_upper = ruta_carpeta.upper()
 
-        # 1. Buscar el anclaje "AÑO XXXX"
+        # --- Origen: PROYECTOS (estructura NAS principal) ---
+        if origen == 'PROYECTOS' and ruta_base:
+            try:
+                ruta_relativa = os.path.relpath(ruta_carpeta, ruta_base)
+                parts = Path(ruta_relativa).parts
+                
+                # parts[0] = CLIENTE
+                if len(parts) >= 1:
+                    metadata['cliente'] = parts[0]
+                
+                # parts[1] = PROYECTO (formato: "26046 LINEA PALETIZADO")
+                if len(parts) >= 2:
+                    raw_proj = parts[1]
+                    match_proj = re.match(r'^(\d+)\s+(.*)', raw_proj)
+                    if match_proj:
+                        metadata['codigo_proyecto'] = match_proj.group(1)
+                        metadata['nombre_proyecto'] = match_proj.group(2)
+                        metadata['proyecto'] = raw_proj
+                        
+                        # Inferir año del código de proyecto (primeros 2 dígitos → 20XX)
+                        codigo = match_proj.group(1)
+                        if len(codigo) >= 2 and codigo[:2].isdigit():
+                            metadata['año'] = int('20' + codigo[:2])
+                    else:
+                        metadata['nombre_proyecto'] = raw_proj
+                        metadata['proyecto'] = raw_proj
+                
+                # parts[2] = ORDEN (formato: "133 LINEA PALETIZADO")
+                if len(parts) >= 3:
+                    raw_orden = parts[2]
+                    match_orden = re.match(r'^(\d+)\s+(.*)', raw_orden)
+                    if match_orden:
+                        metadata['codigo_orden'] = match_orden.group(1)
+                        metadata['nombre_orden'] = match_orden.group(2)
+                    else:
+                        metadata['nombre_orden'] = raw_orden
+                
+                # parts[3+] = Buscar tipo_carpeta
+                if len(parts) >= 4:
+                    for part in parts[3:]:
+                        part_upper = part.upper()
+                        if 'MECANIC' in part_upper:
+                            metadata['tipo'] = 'MECANICA'
+                            break
+                        elif 'LAYOUT' in part_upper:
+                            metadata['tipo'] = 'LAYOUT'
+                            break
+                        elif 'LISTADO' in part_upper:
+                            metadata['tipo'] = 'LISTADOS'
+                            break
+                        elif 'OFERTA' in part_upper or 'PEDIDO' in part_upper:
+                            metadata['tipo'] = 'OFERTAS Y PEDIDOS'
+                            break
+                        elif 'PLIEGO' in part_upper:
+                            metadata['tipo'] = 'PLIEGO DE CONDICIONES'
+                            break
+                else:
+                    # Fallback: clasificar tipo desde ruta completa
+                    if 'MECANIC' in ruta_upper: metadata['tipo'] = 'MECANICA'
+                    elif 'LAYOUT' in ruta_upper: metadata['tipo'] = 'LAYOUT'
+                    elif 'LISTADO' in ruta_upper: metadata['tipo'] = 'LISTADOS'
+                    elif 'OFERTA' in ruta_upper or 'PEDIDO' in ruta_upper: metadata['tipo'] = 'OFERTAS Y PEDIDOS'
+                    elif 'PLIEGO' in ruta_upper: metadata['tipo'] = 'PLIEGO DE CONDICIONES'
+                    
+            except Exception as ex:
+                logger.debug(f"Error parseando ruta relativa para PROYECTOS: {ex}")
+            
+            return metadata
+
+        # --- Origen: BIBLIOTECA_3D / ALSI_ESTANDAR ---
+        if origen in ('BIBLIOTECA_3D', 'ALSI_ESTANDAR'):
+            tipo = 'BIBLIOTECA' if origen == 'BIBLIOTECA_3D' else 'ESTANDAR'
+            metadata['año'] = 0
+            metadata['cliente'] = 'ALSI'
+            metadata['proyecto'] = origen
+            metadata['tipo'] = tipo
+            return metadata
+
+        # --- Fallback: origen no reconocido o None ---
+        # Intentar lógica antigua: buscar anclaje "AÑO XXXX"
+        path_obj = Path(ruta_carpeta)
+        parts = path_obj.parts
+        
         idx_ano = -1
         for i, part in enumerate(parts):
-            if part.upper().replace("Ñ", "N").startswith("ANO 20"): # Normalizar AÑO/ANO
+            if part.upper().replace("Ñ", "N").startswith("ANO 20"):
                 match = re.search(r'20\d{2}', part)
                 if match:
                     metadata['año'] = int(match.group(0))
                     idx_ano = i
                     break
         
-        # 2. Navegación jerárquica relativa
         if idx_ano != -1 and idx_ano + 3 < len(parts):
-            # CLIENTE (Directamente bajo AÑO)
             metadata['cliente'] = parts[idx_ano + 1]
             
-            # PROYECTO (Bajo Cliente) - Formato: "12345 NOMBRE..."
             raw_proj = parts[idx_ano + 2]
             match_proj = re.match(r'^(\d+)\s+(.+)$', raw_proj)
             if match_proj:
                 metadata['codigo_proyecto'] = match_proj.group(1)
                 metadata['nombre_proyecto'] = match_proj.group(2)
-                metadata['proyecto'] = raw_proj # Legacy para compatibilidad
+                metadata['proyecto'] = raw_proj
             else:
                 metadata['nombre_proyecto'] = raw_proj
                 metadata['proyecto'] = raw_proj
 
-            # ORDEN (Bajo Proyecto) - Formato: "123 NOMBRE..."
             raw_orden = parts[idx_ano + 3]
             match_orden = re.match(r'^(\d+)\s+(.+)$', raw_orden)
             if match_orden:
@@ -222,13 +352,19 @@ class IndexadorThread(QThread):
             else:
                 metadata['nombre_orden'] = raw_orden
 
-        # 3. Fallback: Si no hay estructura, intentar lógica antigua para Año
+        # Fallback amplio: buscar año en la ruta como patrón suelto
         if metadata['año'] == 0:
             match_año_loose = re.search(r'[\\/](20\d{2})[\\/]', ruta_carpeta)
             if match_año_loose:
                 metadata['año'] = int(match_año_loose.group(1))
+        
+        # Si aún no hay año, intentar inferir desde código de proyecto
+        if metadata['año'] == 0 and metadata['codigo_proyecto']:
+            codigo = metadata['codigo_proyecto']
+            if len(codigo) >= 2 and codigo[:2].isdigit():
+                metadata['año'] = int('20' + codigo[:2])
 
-        # 4. Clasificar tipo (Mantiene lógica anterior)
+        # Clasificar tipo desde ruta completa
         if 'MECANIC' in ruta_upper: metadata['tipo'] = 'MECANICA'
         elif 'LAYOUT' in ruta_upper: metadata['tipo'] = 'LAYOUT'
         elif 'LISTADO' in ruta_upper: metadata['tipo'] = 'LISTADOS'
@@ -237,16 +373,15 @@ class IndexadorThread(QThread):
             
         return metadata
 
-from pathlib import Path
 
 class SearchController:
     """Orquestador entre la Vista y el Modelo"""
     def __init__(self, db):
         self.db = db
 
-    def perform_search(self, term, companions, years, extensiones=None, folder_type="TODOS", 
-                      clientes=None, proyectos=None, ordenes=None, incluir_siddex=False, incluir_estandar=False, incluir_darkweb_ja=False):
-        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes, incluir_siddex, incluir_estandar, incluir_darkweb_ja)
+    def perform_search(self, term, companions, years, extensiones=None, folder_type="TODOS",
+                      clientes=None, proyectos=None, ordenes=None):
+        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes)
 
     def save_preference(self, key, value):
         self.db.guardar_preferencia(key, value)

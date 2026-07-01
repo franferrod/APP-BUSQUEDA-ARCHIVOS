@@ -1,5 +1,13 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [1.0.7] - 2026-07-01 (Migración NAS Nuevo y Filtros de Propiedades)
+- **Base de Datos Compartida**: Migración de la base de datos local SQLite a PostgreSQL centralizada (`192.168.1.10:5433`). Todos los usuarios comparten la misma indexación en tiempo real.
+- **Indexación Automática**: Nuevo script de reindexación diaria (a las 15:45h) que se lanza de forma desatendida, actualizando archivos recientes de proyectos.
+- **Nuevas Propiedades de Fabricación y Bandas**: El buscador ahora extrae y permite filtrar por `TIPO DE CIERRE`, `FILO GUIADO`, `ONDA`, `CANGILÓN`, `RUNER`, `MONTAJE`, `LÁSER`, `TORNO`, `FRESA`, `SOLDADURA` y `PINTURA`.
+- **Panel de Filtros de Propiedades**: Añadido un nuevo panel lateral derecho interactivo para filtrar por todas las propiedades de SolidWorks de forma independiente a la estructura jerárquica de la izquierda.
+- **NAS Centralizado**: Toda la indexación apunta al NAS `\\192.168.1.10\Oficina Tecnica\...`, eliminando dependencia de carpetas por compañero (`\\OFITEC-*`, `Z:\`).
+- **4 Orígenes**: `PROYECTOS`, `BIBLIOTECA_3D`, `ALSI_ESTANDAR`. `ALSI_LEGENDS` se ha eliminado al haberse integrado en los proyectos del NAS nuevo.
+- **UI Simplificada**: Columna "Descripción" eliminada para limpiar la vista. Botón único "Reindexar NAS".
 ## [1.0.5] - 2026-04-08 (UI/UX Global Remaster)
 - **UI Pro**: Modernización visual completa de la interfaz inspirada en macOS/Fluent Design con base en el color corporativo.
 - **Oculto bajo el capó**: Aplicación de estilos mediante QSS global optimizado e inyectado en el ejecutable, eliminando CSS en línea y bordes "feos" heredados.
