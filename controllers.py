@@ -6,6 +6,10 @@ from pathlib import Path
 from PyQt5.QtCore import QThread, pyqtSignal
 from models import IndexManager, logger
 from sw_properties import extractor
+import xml.etree.ElementTree as ET
+
+# Cache para materiales
+_MATERIALES_VALIDOS_CACHE = None
 
 # v1.0.7 - Carpetas a excluir durante indexación
 CARPETAS_EXCLUIDAS = {
@@ -380,8 +384,8 @@ class SearchController:
         self.db = db
 
     def perform_search(self, term, companions, years, extensiones=None, folder_type="TODOS",
-                      clientes=None, proyectos=None, ordenes=None):
-        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes)
+                      clientes=None, proyectos=None, ordenes=None, props_fabricacion=None, props_bandas=None, material=None, tratamiento=None, espesor=None):
+        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes, props_fabricacion, props_bandas, material, tratamiento, espesor)
 
     def save_preference(self, key, value):
         self.db.guardar_preferencia(key, value)
@@ -396,3 +400,40 @@ class SearchController:
 
     def get_all_projects(self, clientes=None, companions=None, years=None):
         return self.db.obtener_proyectos(clientes, companions, years)
+        
+    def get_all_materiales(self):
+        global _MATERIALES_VALIDOS_CACHE
+        raw_materiales = self.db.obtener_materiales()
+        
+        # Cargar lista oficial de materiales desde el NAS si no está en caché
+        if _MATERIALES_VALIDOS_CACHE is None:
+            _MATERIALES_VALIDOS_CACHE = set()
+            ruta_sldmat = r"\\192.168.1.10\Oficina Tecnica\ALSI UTILIDADES OT\SOLIDWORKS MATERIALES PERSONALIZADOS\MATERIALES ALSI.sldmat"
+            try:
+                if os.path.exists(ruta_sldmat):
+                    tree = ET.parse(ruta_sldmat)
+                    root = tree.getroot()
+                    for elem in root.iter():
+                        if 'material' in elem.tag.lower():
+                            name = elem.get('name')
+                            if name:
+                                _MATERIALES_VALIDOS_CACHE.add(name.strip().lower())
+            except Exception as e:
+                logger.error(f"Error parseando sldmat: {e}")
+        
+        if not _MATERIALES_VALIDOS_CACHE:
+            return raw_materiales
+            
+        # Filtrar
+        materiales_filtrados = []
+        for mat in raw_materiales:
+            if mat and mat.strip().lower() in _MATERIALES_VALIDOS_CACHE:
+                materiales_filtrados.append(mat)
+                
+        return sorted(materiales_filtrados)
+        
+    def get_all_tratamientos(self):
+        return self.db.obtener_tratamientos()
+
+    def get_all_espesores(self):
+        return self.db.obtener_espesores()

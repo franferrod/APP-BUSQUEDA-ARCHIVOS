@@ -25,3 +25,7 @@ app.log
 # Actually, better keep Git clean.
 BACKUPS/
 releases/
+
+# Config & Secrets
+.env
+config.ini

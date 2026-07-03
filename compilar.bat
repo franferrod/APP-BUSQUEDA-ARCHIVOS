@@ -23,6 +23,7 @@ copy "ALSI_ISOTIPO_naranja.png" "dist\"
 copy "ALSI_IMAGOTIPO_naranja.png" "dist\"
 copy "ALSI_BUSCADOR.ico" "dist\"
 copy "INSTALAR_LOCAL.bat" "dist\"
+copy "config.ini" "dist\"
 
 REM echo.
 REM echo === Desplegando en Unidad Z: ===

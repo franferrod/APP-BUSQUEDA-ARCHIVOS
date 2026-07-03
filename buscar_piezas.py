@@ -1,5 +1,15 @@
 import sys
 import os
+
+# Redirigir errores críticos a un archivo temporal (para debug de PyInstaller noconsole)
+error_log = os.path.expanduser("~/.alsi_busqueda/startup_error.log")
+try:
+    os.makedirs(os.path.dirname(error_log), exist_ok=True)
+    sys.stderr = open(error_log, 'w', encoding='utf-8')
+    sys.stdout = sys.stderr
+except Exception:
+    pass
+
 import time
 import sqlite3
 import re
@@ -12,7 +22,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QHeaderView, QStatusBar, QProgressBar, QLabel, QMessageBox, 
                              QMenu, QAction, QAbstractItemView, QListWidget, QListWidgetItem,
                              QDialog, QDialogButtonBox, QSplitter, QGroupBox, QFrame, QScrollArea,
-                             QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser)
+                             QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser, QFileDialog, QListView, QGraphicsDropShadowEffect)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage
 from PyQt5.QtWidgets import QFileIconProvider
@@ -247,11 +257,11 @@ QFrame[frameShape="4"] { color: #E2E8F0; }
 /* Checkboxes sueltos */
 QCheckBox { spacing: 8px; color: #4A5568; font-weight: 500; }
 
-/* Combobox */
-QComboBox { border: 1px solid #E2E8F0; border-radius: 6px; padding: 5px; background: white; }
+/* Combobox y su Desplegable (Scroll controlado) */
+QComboBox { border: 1px solid #E2E8F0; border-radius: 6px; padding: 5px; background: white; combobox-popup: 0; }
 QComboBox:hover { border: 1px solid #CBD5E1; }
 QComboBox::drop-down { border: none; width: 24px; }
-QComboBox::down-arrow { image: none; } /* Could use an icon here if available */
+QComboBox::down-arrow { image: none; }
 """
 
 # MOTOR DE BASE DE DATOS E INDEXACIÓN MOVIDOS A models.py Y controllers.py
@@ -285,7 +295,8 @@ class DialogIndexacion(QDialog):
         self.list_companeros.setMaximumHeight(160)
         for key in rutas_dict.keys():
             label = ETIQUETAS_ORIGEN.get(key, key)
-            item = QListWidgetItem(key)
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, key)
             item.setToolTip(rutas_dict[key])
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
@@ -481,6 +492,51 @@ class ThumbnailWorker(QThread):
 
 
 # -----------------------------------------------------------------------------
+# TOAST NOTIFICATION WIDGET (V1.0.8)
+# -----------------------------------------------------------------------------
+class ToastNotification(QWidget):
+    def __init__(self, parent=None, text=""):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.SubWindow | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(15, 10, 15, 10)
+        
+        self.label = QLabel(text)
+        self.label.setStyleSheet("""
+            QLabel {
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                background-color: rgba(40, 44, 52, 230);
+                padding: 8px 16px;
+                border-radius: 8px;
+                border: 1px solid rgba(255, 255, 255, 50);
+            }
+        """)
+        self.layout.addWidget(self.label)
+        
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.hide)
+        
+    def show_message(self, text, duration=2000):
+        self.label.setText(text)
+        self.adjustSize()
+        
+        # Position at bottom center of parent
+        if self.parent():
+            parent_rect = self.parent().rect()
+            x = parent_rect.width() // 2 - self.width() // 2
+            y = parent_rect.height() - self.height() - 40
+            self.move(x, y)
+            
+        self.show()
+        self.timer.start(duration)
+
+# -----------------------------------------------------------------------------
 # INTERFAZ PRINCIPAL
 # -----------------------------------------------------------------------------
 class BuscadorPiezas(QMainWindow):
@@ -508,7 +564,9 @@ class BuscadorPiezas(QMainWindow):
         self.current_preview_data = {} # Almacena datos para la carga diferida
         
         self.init_ui()
+        self.toast = ToastNotification(self) # Inicializar Toast
         self.refrescar_filtros_jerarquicos()  # Carga inicial V1.0.0
+        self.cargar_filtros_propiedades()
         self.cargar_preferencias()
         
         # Diagnóstico de red (V1.0.7)
@@ -539,12 +597,13 @@ class BuscadorPiezas(QMainWindow):
             list_widget.item(i).setCheckState(Qt.Checked if state else Qt.Unchecked)
     
     def get_selected_items(self, list_widget):
-        """Devuelve una lista con el texto de los items marcados en un QListWidget"""
+        """Devuelve una lista con el texto o data de los items marcados en un QListWidget"""
         sel = []
         for i in range(list_widget.count()):
             item = list_widget.item(i)
             if item.checkState() == Qt.Checked:
-                sel.append(item.text())
+                data = item.data(Qt.UserRole)
+                sel.append(data if data is not None else item.text())
         return sel
 
     def add_toggle_buttons(self, layout, list_widget):
@@ -636,12 +695,32 @@ class BuscadorPiezas(QMainWindow):
         
         # Imagotipo Corporativo
         self.lbl_logo = QLabel()
+        self.lbl_logo.setStyleSheet("background-color: transparent; border: none; padding: 0px; margin: 0px;")
         if os.path.exists(LOGO_IMAGOTIPO):
-            pixmap = QPixmap(LOGO_IMAGOTIPO)
-            self.lbl_logo.setPixmap(pixmap.scaled(180, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            # Pre-componer sobre fondo blanco para eliminar transparencia parcial
+            # que causa franjas oscuras en Windows
+            from PIL import Image as PILImage
+            pil_img = PILImage.open(LOGO_IMAGOTIPO).convert("RGBA")
+            bg = PILImage.new("RGBA", pil_img.size, (255, 255, 255, 255))
+            bg.paste(pil_img, (0, 0), pil_img)
+            bg = bg.convert("RGB")
+            # Escalar con PIL (alta calidad) al tamaño final
+            target_h = 60
+            aspect = pil_img.width / pil_img.height
+            target_w = int(target_h * aspect)
+            bg = bg.resize((target_w, target_h), PILImage.LANCZOS)
+            # Convertir a QPixmap
+            from io import BytesIO
+            buffer = BytesIO()
+            bg.save(buffer, format="PNG")
+            buffer.seek(0)
+            pixmap = QPixmap()
+            pixmap.loadFromData(buffer.read())
+            self.lbl_logo.setPixmap(pixmap)
+            self.lbl_logo.setFixedSize(target_w, target_h)
         else:
             self.lbl_logo.setText("ALSI")
-            self.lbl_logo.setStyleSheet(f"color: {RAL_2010_NARANJA}; font-size: 24px; font-weight: bold;")
+            self.lbl_logo.setStyleSheet(f"color: {RAL_2010_NARANJA}; font-size: 24px; font-weight: bold; background-color: transparent; border: none;")
         header_layout.addWidget(self.lbl_logo)
         
         # Barra de búsqueda
@@ -740,8 +819,8 @@ class BuscadorPiezas(QMainWindow):
         self.list_companeros.setMinimumHeight(60)
         self.list_companeros.setMaximumHeight(120)
         for key, label in ETIQUETAS_ORIGEN.items():
-            item = QListWidgetItem(key)
-            item.setText(key)  # Internamente usamos la key
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, key)  # Internamente usamos la key
             item.setToolTip(RUTAS_NAS.get(key, ''))
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
@@ -760,7 +839,8 @@ class BuscadorPiezas(QMainWindow):
         for año in range(año_actual + 1, 2012, -1):
             item = QListWidgetItem(str(año))
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if año >= 2024 else Qt.Unchecked)
+            # Marcar por defecto hasta 2022 (o todo)
+            item.setCheckState(Qt.Checked if año >= 2022 else Qt.Unchecked)
             self.list_años.addItem(item)
         izq_layout.addWidget(self.list_años)
         self.add_toggle_buttons(izq_layout, self.list_años)
@@ -821,15 +901,20 @@ class BuscadorPiezas(QMainWindow):
         
         # Tabla (V1.0.6: 22 columnas)
         self.tabla = TablaArrastrable()
-        self.tabla.setColumnCount(22)
+        shadow_effect2 = QGraphicsDropShadowEffect()
+        shadow_effect2.setBlurRadius(15)
+        shadow_effect2.setColor(QColor(0, 0, 0, 20))
+        shadow_effect2.setOffset(0, 2)
+        self.tabla.setGraphicsEffect(shadow_effect2)
+        self.tabla.setColumnCount(21)
         self.tabla.setHorizontalHeaderLabels([
             "Ruta_Hidden", "Orden_Orig", "Cód. Proy_Hidden", "Nom. Proy_Hidden", "Vista", 
             "Nombre", "Origen", "Año", "Cliente", "Proyecto", 
-            "Orden", "Nombre Orden", "Material", "Tratamiento", "Espesor", "Láser",
+            "Orden", "Material", "Tratamiento", "Espesor", "Láser",
             "Torno", "Fresa", "Soldadura", "Pintura", "Montaje", "Tipo"
         ])
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.tabla.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tabla.setAlternatingRowColors(True)
         self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tabla.setFrameStyle(QFrame.NoFrame)
@@ -859,18 +944,17 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setColumnWidth(7, 55)  # Año
         self.tabla.setColumnWidth(8, 144) # Cliente
         self.tabla.setColumnWidth(9, 200) # Proyecto
-        self.tabla.setColumnWidth(10, 55) # Orden
-        self.tabla.setColumnWidth(11, 166)# Nombre Orden
-        self.tabla.setColumnWidth(12, 100)# Material
-        self.tabla.setColumnWidth(13, 100)# Tratamiento
-        self.tabla.setColumnWidth(14, 60) # Espesor
-        self.tabla.setColumnWidth(15, 50) # Láser
-        self.tabla.setColumnWidth(16, 50) # Torno
-        self.tabla.setColumnWidth(17, 50) # Fresa
-        self.tabla.setColumnWidth(18, 70) # Soldadura
-        self.tabla.setColumnWidth(19, 70) # Pintura
-        self.tabla.setColumnWidth(20, 70) # Montaje
-        # Columna 21 (Tipo) estira automáticamente
+        self.tabla.setColumnWidth(10, 180) # Orden combinada
+        self.tabla.setColumnWidth(11, 100)# Material
+        self.tabla.setColumnWidth(12, 100)# Tratamiento
+        self.tabla.setColumnWidth(13, 60) # Espesor
+        self.tabla.setColumnWidth(14, 50) # Láser
+        self.tabla.setColumnWidth(15, 50) # Torno
+        self.tabla.setColumnWidth(16, 50) # Fresa
+        self.tabla.setColumnWidth(17, 70) # Soldadura
+        self.tabla.setColumnWidth(18, 70) # Pintura
+        self.tabla.setColumnWidth(19, 70) # Montaje
+        # Columna 20 (Tipo) estira automáticamente
         
         self.tabla.doubleClicked.connect(self.abrir_carpeta_seleccionada)
         self.tabla.selectionModel().currentRowChanged.connect(self.actualizar_preview)
@@ -883,9 +967,16 @@ class BuscadorPiezas(QMainWindow):
         self.panel_preview = QFrame()
         self.panel_preview.setObjectName("panel_preview")
         self.panel_preview.setFrameStyle(QFrame.StyledPanel)
+        shadow_effect = QGraphicsDropShadowEffect()
+        shadow_effect.setBlurRadius(15)
+        shadow_effect.setColor(QColor(0, 0, 0, 40))
+        shadow_effect.setOffset(0, 4)
+        self.panel_preview.setGraphicsEffect(shadow_effect)
         preview_layout = QVBoxLayout(self.panel_preview)
-        preview_layout.setContentsMargins(15, 20, 15, 20)
+        preview_layout.setContentsMargins(15, 5, 15, 20)
         preview_layout.setSpacing(8)
+        
+        # El botón de ocultar panel fue movido al footer
         
         self.lbl_preview_icon = QLabel("🔍")
         self.lbl_preview_icon.setAlignment(Qt.AlignCenter)
@@ -946,7 +1037,7 @@ class BuscadorPiezas(QMainWindow):
         # --- Panel filtros derecho (Propiedades) ---
         panel_derecho = QGroupBox("Propiedades SW")
         panel_derecho.setMinimumWidth(80)
-        panel_derecho.setMaximumWidth(250)
+        panel_derecho.setMaximumWidth(300)
         der_outer_layout = QVBoxLayout(panel_derecho)
         der_outer_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -958,8 +1049,9 @@ class BuscadorPiezas(QMainWindow):
         der_layout.setContentsMargins(4, 4, 4, 4)
         der_layout.setSpacing(4)
         
+        # --- Fabricación (Checkboxes booleanos) — ARRIBA ---
         lbl_fabricacion = QLabel("Fabricación:")
-        lbl_fabricacion.setStyleSheet("font-weight: bold; color: #555; margin-top: 5px;")
+        lbl_fabricacion.setStyleSheet("font-weight: bold; color: #555;")
         der_layout.addWidget(lbl_fabricacion)
         
         self.chk_laser = QCheckBox("Láser")
@@ -972,16 +1064,61 @@ class BuscadorPiezas(QMainWindow):
         for chk in [self.chk_laser, self.chk_torno, self.chk_fresa, self.chk_soldadura, self.chk_pintura, self.chk_montaje]:
             der_layout.addWidget(chk)
             chk.stateChanged.connect(self.ejecutar_busqueda)
-            
-        der_layout.addSpacing(5)
-        lbl_bandas = QLabel("Bandas:")
-        lbl_bandas.setStyleSheet("font-weight: bold; color: #555; margin-top: 5px;")
-        der_layout.addWidget(lbl_bandas)
         
-        self.combo_cierre = QComboBox()
-        self.combo_cierre.addItems(["(Cualquier cierre)", "SIN FIN", "CON GRAPA", "CON GRAPA OCULTA", "ABIERTA", "CON GRAPA EN UN LADO"])
-        der_layout.addWidget(self.combo_cierre)
-        self.combo_cierre.currentIndexChanged.connect(self.ejecutar_busqueda)
+        # --- Material (QListWidget multi-selección) ---
+        lbl_material = QLabel("Material:")
+        lbl_material.setStyleSheet("font-weight: bold; color: #555;")
+        der_layout.addWidget(lbl_material)
+        self.list_materiales = QListWidget()
+        self.list_materiales.setMinimumHeight(60)
+        self.list_materiales.setMaximumHeight(150)
+        der_layout.addWidget(self.list_materiales)
+        self.add_toggle_buttons(der_layout, self.list_materiales)
+        self.list_materiales.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
+        
+        # --- Tratamiento (QListWidget multi-selección, valores oficiales de plantilla SW) ---
+        lbl_tratamiento = QLabel("Tratamiento:")
+        lbl_tratamiento.setStyleSheet("font-weight: bold; color: #555;")
+        der_layout.addWidget(lbl_tratamiento)
+        self.list_tratamientos = QListWidget()
+        self.list_tratamientos.setMinimumHeight(60)
+        self.list_tratamientos.setMaximumHeight(150)
+        # Valores oficiales de template_PZ.prtprp
+        TRATAMIENTOS_OFICIALES = [
+            "ZINCADO", "CROMADO", "GRANALLADO", "VULCANIZADO", "VULCANIZADO ALIMENTARIO",
+            "RAL 2010", "RAL 7000", "RAL 9003", "RAL 9006", "RAL 3020",
+            "RAL 7047", "RAL 1018", "RAL 9005", "RAL 1021", "RAL 5018",
+            "RAL 5021", "RAL 5003"
+        ]
+        for trat in TRATAMIENTOS_OFICIALES:
+            item = QListWidgetItem(trat)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_tratamientos.addItem(item)
+        der_layout.addWidget(self.list_tratamientos)
+        self.add_toggle_buttons(der_layout, self.list_tratamientos)
+        self.list_tratamientos.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
+        
+        # --- Cierre (QListWidget multi-selección) ---
+        lbl_cierre = QLabel("Cierre:")
+        lbl_cierre.setStyleSheet("font-weight: bold; color: #555;")
+        der_layout.addWidget(lbl_cierre)
+        self.list_cierres = QListWidget()
+        self.list_cierres.setMinimumHeight(60)
+        self.list_cierres.setMaximumHeight(120)
+        for cierre in ["SIN FIN", "CON GRAPA", "CON GRAPA OCULTA", "ABIERTA", "CON GRAPA EN UN LADO"]:
+            item = QListWidgetItem(cierre)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_cierres.addItem(item)
+        der_layout.addWidget(self.list_cierres)
+        self.add_toggle_buttons(der_layout, self.list_cierres)
+        self.list_cierres.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
+        
+        # --- Tipo de Banda (Checkboxes booleanos) ---
+        lbl_banda = QLabel("Tipo de Banda:")
+        lbl_banda.setStyleSheet("font-weight: bold; color: #555;")
+        der_layout.addWidget(lbl_banda)
         
         self.chk_filo_guiado = QCheckBox("Filo Guiado")
         self.chk_onda = QCheckBox("Onda")
@@ -991,6 +1128,22 @@ class BuscadorPiezas(QMainWindow):
         for chk in [self.chk_filo_guiado, self.chk_onda, self.chk_cangilon, self.chk_runer]:
             der_layout.addWidget(chk)
             chk.stateChanged.connect(self.ejecutar_busqueda)
+        
+        # --- Espesor (QListWidget multi-selección, solo para piezas, 1-20mm) ---
+        lbl_espesor = QLabel("Espesor:")
+        lbl_espesor.setStyleSheet("font-weight: bold; color: #555;")
+        der_layout.addWidget(lbl_espesor)
+        self.list_espesores = QListWidget()
+        self.list_espesores.setMinimumHeight(60)
+        self.list_espesores.setMaximumHeight(150)
+        for mm in range(1, 21):
+            item = QListWidgetItem(f"{mm}mm")
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.list_espesores.addItem(item)
+        der_layout.addWidget(self.list_espesores)
+        self.add_toggle_buttons(der_layout, self.list_espesores)
+        self.list_espesores.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
             
         der_layout.addStretch()
         scroll_der.setWidget(scroll_widget_der)
@@ -1032,11 +1185,34 @@ class BuscadorPiezas(QMainWindow):
         footer_layout.addWidget(self.btn_copiar_ruta)
         
         self.btn_copiar_nombre = QPushButton("📝 Copiar Nombre")
-        self.btn_copiar_nombre.setToolTip("Copia solo el nombre del archivo")
+        self.btn_copiar_nombre.setToolTip("Copia solo el nombre del archivo (Ctrl+C)")
         self.btn_copiar_nombre.clicked.connect(self.copiar_nombre_seleccionado)
         self.btn_copiar_nombre.setEnabled(False)
         self.btn_copiar_nombre.setCursor(Qt.PointingHandCursor)
         footer_layout.addWidget(self.btn_copiar_nombre)
+        
+        self.btn_exportar = QPushButton("📥 Exportar a Excel")
+        self.btn_exportar.setToolTip("Exportar resultados a Excel (.csv)")
+        self.btn_exportar.clicked.connect(self.exportar_excel_completo)
+        self.btn_exportar.setCursor(Qt.PointingHandCursor)
+        footer_layout.addWidget(self.btn_exportar)
+        
+        # Separador visual
+        line_sep1 = QFrame()
+        line_sep1.setFrameShape(QFrame.VLine)
+        line_sep1.setFrameShadow(QFrame.Sunken)
+        footer_layout.addWidget(line_sep1)
+        
+        lbl_densidad = QLabel("Vista:")
+        lbl_densidad.setStyleSheet("color: #555;")
+        footer_layout.addWidget(lbl_densidad)
+        
+        self.combo_densidad = QComboBox()
+        self.combo_densidad.setView(QListView())
+        self.combo_densidad.setMaxVisibleItems(10)
+        self.combo_densidad.addItems(["Cómoda", "Compacta"])
+        self.combo_densidad.currentIndexChanged.connect(self.cambiar_densidad_tabla)
+        footer_layout.addWidget(self.combo_densidad)
         
         # Separador visual
         line_sep = QFrame()
@@ -1050,6 +1226,12 @@ class BuscadorPiezas(QMainWindow):
         self.btn_indexar.setFixedWidth(185)
         self.btn_indexar.clicked.connect(self.confirmar_indexacion)
         footer_layout.addWidget(self.btn_indexar)
+        
+        # Botón Ocultar/Mostrar panel (Movido desde el panel derecho)
+        self.btn_toggle_preview = QPushButton("👁 Ocultar Previsualizador")
+        self.btn_toggle_preview.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_preview.clicked.connect(self.toggle_preview_panel)
+        footer_layout.addWidget(self.btn_toggle_preview)
         
         self.btn_cancelar = QPushButton("⏹ Cancelar")
         self.btn_cancelar.setToolTip("Detiene la indexación actual")
@@ -1338,6 +1520,22 @@ class BuscadorPiezas(QMainWindow):
         # V1.0.1: Disparar búsqueda automática (silenciosa)
         self.ejecutar_busqueda(auto=True)
 
+    def cargar_filtros_propiedades(self):
+        try:
+            # Materiales (se cargan de la BD, filtrados por lista oficial de SW)
+            materiales = self.controller.get_all_materiales()
+            self.list_materiales.blockSignals(True)
+            self.list_materiales.clear()
+            for mat in materiales:
+                item = QListWidgetItem(mat)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+                self.list_materiales.addItem(item)
+            self.list_materiales.blockSignals(False)
+            # Tratamientos y Espesores son fijos (definidos en la UI)
+        except Exception as e:
+            logger.error(f"Error cargando propiedades: {e}")
+
     def refrescar_filtros_jerarquicos(self, solo_proyectos=False, solo_ordenes=False):
         """Puebla las listas de Clientes, Proyectos y Órdenes con lógica de cascada total (V1.0.0)"""
         if self.bloqueo_filtros:
@@ -1446,12 +1644,17 @@ class BuscadorPiezas(QMainWindow):
                 'montaje': self.chk_montaje.isChecked()
             }
             props_bandas = {
-                'cierre': self.combo_cierre.currentText() if self.combo_cierre.currentIndex() > 0 else None,
+                'cierres': self.get_selected_items(self.list_cierres) or None,
                 'filo_guiado': self.chk_filo_guiado.isChecked(),
                 'onda': self.chk_onda.isChecked(),
                 'cangilon': self.chk_cangilon.isChecked(),
                 'runer': self.chk_runer.isChecked()
             }
+            
+            # Recoger filtros de propiedades (listas multi-selección)
+            materiales_sel = self.get_selected_items(self.list_materiales) or None
+            tratamientos_sel = self.get_selected_items(self.list_tratamientos) or None
+            espesores_sel = self.get_selected_items(self.list_espesores) or None
 
             resultados = self.controller.perform_search(
                 termino, 
@@ -1463,7 +1666,10 @@ class BuscadorPiezas(QMainWindow):
                 proyectos_sel,
                 None, # ordenes
                 props_fabricacion,
-                props_bandas
+                props_bandas,
+                materiales_sel,
+                tratamientos_sel,
+                espesores_sel
             )
             
             # Prealocar filas de golpe (mucho más rápido que insertRow en bucle)
@@ -1501,23 +1707,27 @@ class BuscadorPiezas(QMainWindow):
                     2: 7,  # año -> col 7
                     3: 8,  # cliente -> col 8
                     4: 9,  # proyecto -> col 9
-                    5: 21, # tipo_carpeta -> col 21 (FINAL STRETCH)
-                    8: 10, # codigo_orden -> col 10
-                    9: 11, # nombre_orden -> col 11
-                    11: 12, # sw_material -> col 12
-                    12: 13, # sw_tratamiento -> col 13
-                    13: 14, # sw_espesor -> col 14
-                    14: 15, # sw_laser -> col 15
-                    15: 16, # sw_torno -> col 16
-                    16: 17, # sw_fresa -> col 17
-                    17: 18, # sw_soldadura -> col 18
-                    18: 19, # sw_pintura -> col 19
-                    19: 20, # sw_montaje -> col 20
+                    5: 20, # tipo_carpeta -> col 20 (FINAL STRETCH)
+                    11: 11, # sw_material -> col 11
+                    12: 12, # sw_tratamiento -> col 12
+                    13: 13, # sw_espesor -> col 13
+                    14: 14, # sw_laser -> col 14
+                    15: 15, # sw_torno -> col 15
+                    16: 16, # sw_fresa -> col 16
+                    17: 17, # sw_soldadura -> col 17
+                    18: 18, # sw_pintura -> col 18
+                    19: 19, # sw_montaje -> col 19
                 }
                 for i_data, i_tabla in map_cols.items():
                     val = data[i_data]
                     item = QTableWidgetItem(str(val) if val else "")
                     self.tabla.setItem(row, i_tabla, item)
+                    
+                # Combinar Orden y Nombre Orden en la columna 10
+                cod_ord = str(data[8]) if data[8] else ""
+                nom_ord = str(data[9]) if data[9] else ""
+                orden_completa = f"{cod_ord} {nom_ord}".strip()
+                self.tabla.setItem(row, 10, QTableWidgetItem(orden_completa))
             
             # Lanzamos hilo de miniaturas
             if hasattr(self, 'thumb_worker') and self.thumb_worker and self.thumb_worker.isRunning():
@@ -1793,15 +2003,14 @@ class BuscadorPiezas(QMainWindow):
             # 0:Ruta, 1:Orden, 2:CodProy, 3:NomProy, 4:Vista, 5:Nombre, 
             # 6:Desc, 7:Comp, 8:Año, 9:Cliente, 10:Proy, 11:CodOrd, 12:NomOrd, ... 22:Tipo
             nombre = get_text(5)
-            comp = get_text(7)
-            año = get_text(8)
-            cliente = get_text(9)
-            proyecto = get_text(10)
-            tipo = get_text(22)
+            comp = get_text(6)
+            año = get_text(7)
+            cliente = get_text(8)
+            proyecto = get_text(9)
+            tipo = get_text(20)
             cod_proy = get_text(2)
             nom_proy = get_text(3)
-            cod_ord = get_text(11)
-            nom_ord = get_text(12)
+            orden_completa = get_text(10)
             ruta = get_text(0)
             
             if not nombre or not ruta:
@@ -1822,7 +2031,7 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_preview_comp.setText(f"👤 Compañero: {comp} | AÑO {año}")
             
             proy_str = f"{cod_proy} {nom_proy}" if cod_proy else (nom_proy if nom_proy else proyecto)
-            ord_str = f"Orden: {cod_ord} {nom_ord}" if cod_ord else ""
+            ord_str = f"Orden: {orden_completa}" if orden_completa else ""
             self.lbl_preview_proyecto.setText(f"🏢 Cliente: {cliente}\n🏗️ Proyecto: {proy_str}\n📄 {ord_str}")
             self.lbl_preview_ruta.setText(f"📂 {ruta}")
             self.lbl_preview_tamaño.setText("💾 Tamaño: Cargando...")
@@ -1984,6 +2193,84 @@ class BuscadorPiezas(QMainWindow):
             ruta = self.tabla.item(row, 0).text()  # Columna 0 = Ruta Completa
             QApplication.clipboard().setText(ruta)
             self.lbl_status.setText("✅ Ruta copiada al portapapeles")
+            self.toast.show_message(f"✅ Ruta copiada:\n{os.path.basename(ruta)}")
+
+    def toggle_preview_panel(self):
+        is_visible = self.panel_preview.isVisible()
+        self.panel_preview.setVisible(not is_visible)
+        if is_visible:
+            self.btn_toggle_preview.setText("👁 Mostrar Previsualizador")
+        else:
+            self.btn_toggle_preview.setText("👁 Ocultar Previsualizador")
+            sizes = self.splitter.sizes()
+            if len(sizes) > 1 and sizes[1] == 0:
+                sizes[1] = 250
+                self.splitter.setSizes(sizes)
+
+    def cambiar_densidad_tabla(self, index):
+        if index == 0:  # Cómoda
+            self.tabla.verticalHeader().setDefaultSectionSize(46)
+            self.tabla.setIconSize(QSize(44, 44))
+        else:           # Compacta
+            self.tabla.verticalHeader().setDefaultSectionSize(30)
+            self.tabla.setIconSize(QSize(24, 24))
+
+    def _export_to_csv(self, rows):
+        if not rows: return
+        import csv
+        path, _ = QFileDialog.getSaveFileName(self, "Exportar a Excel (CSV)", "Listado_Piezas.csv", "Archivos CSV (*.csv)")
+        if not path: return
+        
+        try:
+            with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f, delimiter=';')
+                headers = []
+                for j in range(5, self.tabla.columnCount()):
+                    headers.append(self.tabla.horizontalHeaderItem(j).text())
+                writer.writerow(headers)
+                
+                for r in rows:
+                    row_data = []
+                    for j in range(5, self.tabla.columnCount()):
+                        item = self.tabla.item(r, j)
+                        row_data.append(item.text() if item else "")
+                    writer.writerow(row_data)
+            self.toast.show_message("✅ Exportado con éxito")
+        except Exception as e:
+            QMessageBox.critical(self, "Error al Exportar", f"No se pudo guardar el archivo:\n{e}")
+
+    def exportar_excel_completo(self):
+        rows = list(range(self.tabla.rowCount()))
+        self._export_to_csv(rows)
+        
+    def exportar_excel_seleccion(self):
+        rows = sorted(list(set(item.row() for item in self.tabla.selectedItems())))
+        self._export_to_csv(rows)
+
+    def keyPressEvent(self, event):
+        # Keyboard First Navigation
+        if event.key() == Qt.Key_F and event.modifiers() == Qt.ControlModifier:
+            self.search_box.setFocus()
+            self.search_box.selectAll()
+            event.accept()
+        elif event.key() == Qt.Key_Escape:
+            if self.search_box.hasFocus():
+                self.search_box.clear()
+            else:
+                self.panel_preview.setVisible(False)
+            event.accept()
+        elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
+            if self.tabla.hasFocus():
+                self.abrir_carpeta_seleccionada()
+                event.accept()
+        elif event.key() == Qt.Key_C and event.modifiers() == Qt.ControlModifier:
+            self.copiar_nombre_seleccionado()
+            event.accept()
+        elif event.key() == Qt.Key_C and event.modifiers() == (Qt.ControlModifier | Qt.ShiftModifier):
+            self.copiar_ruta_seleccionada()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def mostrar_menu_contextual(self, pos):
         if self.tabla.currentRow() >= 0:
@@ -2013,6 +2300,13 @@ class BuscadorPiezas(QMainWindow):
                     lambda: os.startfile(ruta)
                 )
 
+            # Export selection option
+            if len(self.tabla.selectedItems()) > self.tabla.columnCount(): # Si hay más de 1 fila seleccionada
+                menu.addSeparator()
+                action_export_sel = QAction("📥 Exportar Selección a Excel", self)
+                action_export_sel.triggered.connect(self.exportar_excel_seleccion)
+                menu.addAction(action_export_sel)
+
             menu.exec_(self.tabla.mapToGlobal(pos))
 
     def copiar_nombre_seleccionado(self):
@@ -2022,6 +2316,7 @@ class BuscadorPiezas(QMainWindow):
             nombre = self.tabla.item(row, 5).text() # Columna 5 = Nombre
             QApplication.clipboard().setText(nombre)
             self.lbl_status.setText(f"✅ Nombre copiado: {nombre}")
+            self.toast.show_message(f"✅ Nombre copiado:\n{nombre}")
 
     # ═══════════════════════════════════════════
     # AYUDA E INFORMACIÓN (V1.0)

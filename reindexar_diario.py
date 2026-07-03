@@ -21,14 +21,7 @@ import datetime
 import psycopg2
 from pathlib import Path
 
-# ----- Configuración -----
-PG_CONFIG = {
-    'host': '192.168.1.10',
-    'port': 5433,
-    'dbname': 'ALSI',
-    'user': 'ALSI',
-    'password': 'alsi_super_password_2026',
-}
+from models import PG_CONFIG
 
 RUTAS_NAS = {
     'PROYECTOS':     r'\\192.168.1.10\Oficina Tecnica\ALSI PROYECTOS APROBADOS',

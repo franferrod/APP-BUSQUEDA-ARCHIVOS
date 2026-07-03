@@ -1,5 +1,17 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [1.1.0] - 2026-07-03 (Rediseño Completo UI/UX y Fix Logo)
+- **Fix Logo Definitivo**: Solucionado el problema visual ("franja negra") del logo ALSI al arrancar, procesando la imagen con PIL (LANCZOS) sobre fondo blanco puro, eliminando los píxeles de anti-aliasing con transparencia alfa.
+- **Rediseño Panel Propiedades SW**: Cambio completo del paradigma de filtrado en el panel derecho. Sustitución de `QComboBox` por `QListWidget` para permitir selección múltiple en Material, Tratamiento, Cierre y Espesor.
+- **SQL IN**: Actualización del motor de búsqueda en PostgreSQL para soportar `IN (...)` y lógica OR/LIKE avanzada, permitiendo búsquedas combinadas (ej. buscar piezas que sean Zincadas O Cromadas O Pintadas).
+- **Tratamientos Oficiales**: Sincronizado dinámicamente con la plantilla oficial `template_PZ.prtprp` del NAS (ZINCADO, RALs, GRANALLADO, etc.).
+- **Filtro de Espesores Inteligente**: Nuevo filtro para "Espesores" (1mm-20mm). El motor filtra automáticamente entre los valores de la base de datos (que pueden ser números simples "3" o fórmulas de SolidWorks).
+- **Limpieza de Código**: Eliminación de scripts de prueba, limpieza del directorio raíz y actualización de `.gitignore` para un repositorio más limpio.
+
+## [1.0.8] - 2026-07-01 (Seguridad & UI/UX Extension)
+- **Seguridad**: Extracción de credenciales de PostgreSQL a archivo externo `config.ini`. La app y los scripts leen desde el archivo para mayor seguridad y adherencia a buenas prácticas.
+- **UI/UX Enterprise**: Implementación completa de atajos de teclado, exportación selectiva a Excel (CSV), panel master-detail colapsable, vistas dinámicas (Cómoda vs Compacta), notificaciones flotantes (Toasts) y corrección del filtrado combinado de propiedades booleanas.
+
 ## [1.0.7] - 2026-07-01 (Migración NAS Nuevo y Filtros de Propiedades)
 - **Base de Datos Compartida**: Migración de la base de datos local SQLite a PostgreSQL centralizada (`192.168.1.10:5433`). Todos los usuarios comparten la misma indexación en tiempo real.
 - **Indexación Automática**: Nuevo script de reindexación diaria (a las 15:45h) que se lanza de forma desatendida, actualizando archivos recientes de proyectos.

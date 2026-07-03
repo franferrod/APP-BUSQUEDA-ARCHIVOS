@@ -75,14 +75,20 @@ class SWPropertyExtractor:
             result = subprocess.run(
                 [self.extractor_exe, self.license_key, filepath],
                 capture_output=True,
-                text=True,
-                encoding='utf-8',
                 startupinfo=startupinfo,
                 timeout=5  # 5 segundos max por archivo
             )
             
             if result.stdout:
-                data = json.loads(result.stdout)
+                try:
+                    text_out = result.stdout.decode('cp850')
+                except UnicodeDecodeError:
+                    try:
+                        text_out = result.stdout.decode('utf-8')
+                    except UnicodeDecodeError:
+                        text_out = result.stdout.decode('latin-1', errors='replace')
+                        
+                data = json.loads(text_out)
                 if "error" in data:
                     print(f"Error SW DM para {os.path.basename(filepath)}: {data['error']}")
                     return None

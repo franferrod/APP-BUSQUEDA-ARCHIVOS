@@ -8,14 +8,39 @@ from pathlib import Path
 CONFIG_DIR = Path(os.path.expanduser("~")) / ".alsi_busqueda"
 LOG_PATH = CONFIG_DIR / "app.log"
 
-# V1.0.7 - PostgreSQL compartido (sustituye SQLite local y NAS)
-PG_CONFIG = {
-    'host': '192.168.1.10',
-    'port': 5433,
-    'dbname': 'ALSI',
-    'user': 'ALSI',
-    'password': 'alsi_super_password_2026',
-}
+import sys
+import configparser
+
+def load_pg_config():
+    config = configparser.ConfigParser()
+    config_path = "config.ini"
+    
+    # Soporte para ejecutable PyInstaller
+    if getattr(sys, 'frozen', False):
+        config_path = os.path.join(os.path.dirname(sys.executable), "config.ini")
+        if not os.path.exists(config_path):
+            config_path = "config.ini" # Fallback
+            
+    if not os.path.exists(config_path):
+        msg = f"Falta archivo de configuración: config.ini\nBuscado en: {config_path}\nPor favor, reinstala usando INSTALAR_LOCAL.bat"
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, msg, "Error fatal", 0x10)
+        except:
+            pass
+        sys.exit(1)
+        
+    config.read(config_path)
+    return {
+        'host': config['database']['host'],
+        'port': int(config['database']['port']),
+        'dbname': config['database']['dbname'],
+        'user': config['database']['user'],
+        'password': config['database']['password'],
+    }
+
+# V1.0.8 - PostgreSQL compartido (credenciales en config.ini)
+PG_CONFIG = load_pg_config()
 
 # Configuración de Logging
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -185,14 +210,18 @@ class IndexManager:
         finally:
             wrapper.close()
 
-    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, props_fabricacion=None, props_bandas=None):
+    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, props_fabricacion=None, props_bandas=None, material=None, tratamiento=None, espesor=None):
         """
         Búsqueda multi-keyword con scoring y filtros múltiples.
         V1.0.7 - Adaptado a PostgreSQL con unaccent.
         """
         logger.info(f"Buscando: '{termino}' | Orígenes: {compañeros}, Años: {años}")
 
-        if ',' in termino:
+        is_and_search = False
+        if ';' in termino:
+            keywords = [k.strip() for k in termino.split(';') if k.strip()]
+            is_and_search = True
+        elif ',' in termino:
             keywords = [k.strip() for k in termino.split(',') if k.strip()]
         else:
             keywords = [termino] if termino.strip() else []
@@ -218,7 +247,8 @@ class IndexManager:
                 params.append(f"%{kw_norm}%")
 
             score_sql = " + ".join(score_cases)
-            where_clause = " OR ".join(
+            logic_op = " AND " if is_and_search else " OR "
+            where_clause = logic_op.join(
                 ["UPPER(unaccent(nombre_archivo)) LIKE %s" for _ in keywords]
             )
             params.extend([f"%{self.normalizar_texto(k)}%" for k in keywords])
@@ -233,40 +263,116 @@ class IndexManager:
         context_clauses = []
         context_params = []
 
-        # Filtro Orígenes (antes "compañeros")
-        if compañeros and len(compañeros) > 0:
-            placeholders = ','.join(['%s' for _ in compañeros])
-            context_clauses.append(f"origen IN ({placeholders})")
-            context_params.extend(compañeros)
+        # Recopilar filtros jerárquicos
+        jerarquicos_clauses = []
+        jerarquicos_params = []
 
-        # Filtro Años
         if años and len(años) > 0:
             placeholders = ','.join(['%s' for _ in años])
-            context_clauses.append(f"anio IN ({placeholders})")
-            context_params.extend([int(a) for a in años])
+            jerarquicos_clauses.append(f"anio IN ({placeholders})")
+            jerarquicos_params.extend([int(a) for a in años])
 
-        # Filtro Extensiones
+        if carpetas and len(carpetas) > 0 and "TODOS" not in carpetas:
+            placeholders = ','.join(['%s' for _ in carpetas])
+            jerarquicos_clauses.append(f"tipo_carpeta IN ({placeholders})")
+            jerarquicos_params.extend(carpetas)
+
+        if clientes and len(clientes) > 0:
+            placeholders = ','.join(['%s' for _ in clientes])
+            jerarquicos_clauses.append(f"cliente IN ({placeholders})")
+            jerarquicos_params.extend(clientes)
+
+        if proyectos and len(proyectos) > 0:
+            placeholders = ','.join(['%s' for _ in proyectos])
+            jerarquicos_clauses.append(f"codigo_proyecto IN ({placeholders})")
+            jerarquicos_params.extend(proyectos)
+            
+        if ordenes:
+            placeholders = ','.join(['%s'] * len(ordenes))
+            jerarquicos_clauses.append(f"nombre_orden IN ({placeholders})")
+            jerarquicos_params.extend(ordenes)
+
+        # Filtro Orígenes combinado con filtros jerárquicos
+        if compañeros and len(compañeros) > 0:
+            origen_conditions = []
+            
+            # Orígenes normales (PROYECTOS) que SÍ se ven afectados por filtros jerárquicos
+            normales = [c for c in compañeros if c not in ("BIBLIOTECA_3D", "ALSI_ESTANDAR")]
+            if normales:
+                placeholders = ','.join(['%s' for _ in normales])
+                cond = f"origen IN ({placeholders})"
+                if jerarquicos_clauses:
+                    j_sql = " AND ".join(jerarquicos_clauses)
+                    cond = f"({cond} AND {j_sql})"
+                    origen_conditions.append(cond)
+                    context_params.extend(normales + jerarquicos_params)
+                else:
+                    origen_conditions.append(cond)
+                    context_params.extend(normales)
+            
+            # Bibliotecas (ignoran filtros jerárquicos, solo obedecen término y propiedades)
+            bibliotecas = [c for c in compañeros if c in ("BIBLIOTECA_3D", "ALSI_ESTANDAR")]
+            if bibliotecas:
+                placeholders = ','.join(['%s' for _ in bibliotecas])
+                origen_conditions.append(f"origen IN ({placeholders})")
+                context_params.extend(bibliotecas)
+                
+            if origen_conditions:
+                origen_sql = " OR ".join(origen_conditions)
+                context_clauses.append(f"({origen_sql})")
+            else:
+                context_clauses.append("1=0")
+
+        # Filtro Extensiones (Aplica a todos)
         if extensiones and len(extensiones) > 0:
             placeholders = ','.join(['%s' for _ in extensiones])
             base_where += f" AND extension IN ({placeholders})"
             params.extend(extensiones)
+            
+        # Filtros de Material, Tratamiento y Espesor (listas multi-selección)
+        if material and len(material) > 0:
+            placeholders = ','.join(['%s' for _ in material])
+            context_clauses.append(f"sw_material IN ({placeholders})")
+            context_params.extend(material)
+        
+        if tratamiento and len(tratamiento) > 0:
+            placeholders = ','.join(['%s' for _ in tratamiento])
+            context_clauses.append(f"sw_tratamiento IN ({placeholders})")
+            context_params.extend(tratamiento)
+        
+        if espesor and len(espesor) > 0:
+            # Espesor UI values are "1mm", "2mm"... extract the number
+            espesor_conditions = []
+            for esp in espesor:
+                num = esp.replace("mm", "")
+                # Match exact number at start of field (e.g. "3" matches "3", "3.0", "3.00")
+                espesor_conditions.append("(sw_espesor = %s OR sw_espesor LIKE %s)")
+                context_params.extend([num, num + ".%"])
+            context_clauses.append(f"({' OR '.join(espesor_conditions)})")
 
-        # Filtro Carpeta
-        if carpetas and len(carpetas) > 0 and "TODOS" not in carpetas:
-            placeholders = ','.join(['%s' for _ in carpetas])
-            context_clauses.append(f"tipo_carpeta IN ({placeholders})")
-            context_params.extend(carpetas)
+        # Filtros de Fabricación (Booleanos)
+        if props_fabricacion:
+            for key, col in [('laser', 'sw_laser'), ('torno', 'sw_torno'), ('fresa', 'sw_fresa'),
+                             ('soldadura', 'sw_soldadura'), ('pintura', 'sw_pintura'), ('montaje', 'sw_montaje')]:
+                if props_fabricacion.get(key):
+                    context_clauses.append(f"({col} ILIKE %s OR {col} ILIKE %s)")
+                    context_params.extend(['%SÍ%', '%SI%'])
 
-        # Filtros Jerárquicos
-        if clientes and len(clientes) > 0:
-            placeholders = ','.join(['%s' for _ in clientes])
-            context_clauses.append(f"cliente IN ({placeholders})")
-            context_params.extend(clientes)
-
-        if proyectos and len(proyectos) > 0:
-            placeholders = ','.join(['%s' for _ in proyectos])
-            context_clauses.append(f"codigo_proyecto IN ({placeholders})")
-            context_params.extend(proyectos)
+        # Filtros de Bandas
+        if props_bandas:
+            cierres = props_bandas.get('cierres')
+            if cierres and len(cierres) > 0:
+                cierre_conditions = []
+                for c in cierres:
+                    cierre_conditions.append("sw_tipo_cierre ILIKE %s")
+                    context_params.append(f"%{c}%")
+                context_clauses.append(f"({' OR '.join(cierre_conditions)})")
+                
+            for key, col in [('filo_guiado', 'sw_filo_guiado'), ('onda', 'sw_onda'), 
+                             ('cangilon', 'sw_cangilon'), ('runer', 'sw_runer')]:
+                if props_bandas.get(key):
+                    context_clauses.append(f"({col} ILIKE %s OR {col} ILIKE %s)")
+                    context_params.extend(['%SÍ%', '%SI%'])
 
         # 3. Construcción final
         query = f"{query_select} WHERE {base_where}"
@@ -342,6 +448,45 @@ class IndexManager:
             query += " ORDER BY codigo_proyecto DESC"
             cursor.execute(query, params)
             return cursor.fetchall()
+        finally:
+            wrapper.close()
+
+    def obtener_materiales(self):
+        wrapper = self.get_connection()
+        try:
+            conn = wrapper._conn
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT sw_material FROM buscador.archivos WHERE sw_material IS NOT NULL AND sw_material != '' ORDER BY sw_material ASC")
+            return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error obteniendo materiales: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def obtener_tratamientos(self):
+        wrapper = self.get_connection()
+        try:
+            conn = wrapper._conn
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT sw_tratamiento FROM buscador.archivos WHERE sw_tratamiento IS NOT NULL AND sw_tratamiento != '' ORDER BY sw_tratamiento ASC")
+            return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error obteniendo tratamientos: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def obtener_espesores(self):
+        wrapper = self.get_connection()
+        try:
+            conn = wrapper._conn
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT sw_espesor FROM buscador.archivos WHERE sw_espesor IS NOT NULL AND sw_espesor != '' ORDER BY sw_espesor ASC")
+            return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Error obteniendo espesores: {e}")
+            return []
         finally:
             wrapper.close()
 
