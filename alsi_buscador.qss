@@ -1,0 +1,309 @@
+/* ============================================================================
+   BUSCADOR DE PIEZAS ALSI — Hoja de estilo Qt (QSS) · Tema oscuro CAD
+   Dirección de diseño 2a/2b · Marca ALSI 2025
+   ----------------------------------------------------------------------------
+   Cómo aplicarla en buscar_piezas.py — ver handoff/SPEC.md §8 para el código completo.
+   Sistema de 3 fuentes:
+       - AG ALSI     → SOLO el H1 (título principal de la app)
+       - Nizzoli Alt → títulos secundarios (H2: diálogos, secciones de panel, grupos)
+       - Poppins     → todo el cuerpo (fuente base de este QSS, ver más abajo)
+   H1 y H2 se aplican con QFont explícito en Python DESPUÉS de setStyleSheet,
+   porque QSS no puede seleccionar familias distintas de forma fiable sin conocer
+   el nombre interno exacto de cada fuente.
+
+   Los colores están tomados del mockup aprobado. Paleta:
+       Naranja marca .............. #E66C32   (hover #D25E28 · tint #3A2C21)
+       Texto principal ............ #F5F5F5
+       Texto secundario ........... #DFDFDF
+       Texto atenuado ............. #999999   (muy atenuado #777777)
+       Base ventana ............... #242424
+       Superficie 1 (paneles) ..... #2E2E2E
+       Superficie 2 (inputs) ...... #1D1D1D
+       Superficie 3 (tarjetas) .... #262626
+       Bordes ..................... #3D3D3D   (borde fuerte #4A4A4A · check off #5A5A5A)
+       Verde estado OK ............ #3BA55D
+   ============================================================================ */
+
+/* ---- Base ---------------------------------------------------------------- */
+QWidget {
+    background-color: #242424;
+    color: #DFDFDF;
+    font-family: "Poppins", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+QMainWindow, QDialog { background-color: #242424; }
+
+QToolTip {
+    background-color: #363636;
+    color: #F5F5F5;
+    border: 1px solid #4A4A4A;
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+}
+
+/* ---- Cabecera / barra superior ------------------------------------------ */
+#Header {
+    background-color: #2E2E2E;
+    border-bottom: 1px solid #3D3D3D;
+}
+#HeaderTitle   { font-size: 17px; font-weight: 800; color: #F5F5F5; }
+#HeaderTitleAccent { color: #E66C32; }
+
+/* ---- Campo de búsqueda --------------------------------------------------- */
+#SearchBox {
+    background-color: #1D1D1D;
+    border: 1.5px solid #4A4A4A;
+    border-radius: 10px;
+    padding: 9px 14px;
+    color: #F5F5F5;
+    font-size: 15px;
+    selection-background-color: #E66C32;
+}
+#SearchBox:focus { border: 1.5px solid #E66C32; }
+#SearchHint { color: #777777; font-size: 12px; }
+
+/* ---- Botones ------------------------------------------------------------- */
+QPushButton {
+    background-color: #2E2E2E;
+    border: 1px solid #4A4A4A;
+    border-radius: 8px;
+    padding: 8px 14px;
+    color: #DFDFDF;
+    font-size: 13px;
+    font-weight: 600;
+}
+QPushButton:hover   { border-color: #E66C32; color: #F5F5F5; }
+QPushButton:pressed { background-color: #262626; }
+QPushButton:disabled{ color: #5A5A5A; border-color: #3D3D3D; }
+
+/* Botón primario (Buscar, Iniciar indexación, Abrir carpeta) */
+QPushButton#Primary {
+    background-color: #E66C32;
+    border: none;
+    color: #FFFFFF;
+    font-weight: 800;
+    padding: 10px 22px;
+}
+QPushButton#Primary:hover   { background-color: #D25E28; }
+QPushButton#Primary:pressed { background-color: #BF5320; }
+
+/* Botón icono cuadrado de la toolbar (34x34) */
+QPushButton#IconBtn {
+    min-width: 34px; max-width: 34px;
+    min-height: 34px; max-height: 34px;
+    padding: 0; border-radius: 8px;
+    background-color: #2E2E2E; border: 1px solid #4A4A4A;
+}
+QPushButton#IconBtn:hover { border-color: #E66C32; }
+
+/* Botón redondo de ayuda/info del pie (?, i) */
+QPushButton#RoundBtn {
+    min-width: 30px; max-width: 30px;
+    min-height: 30px; max-height: 30px;
+    padding: 0; border-radius: 8px;
+    color: #999999; font-weight: 800;
+    background-color: #2E2E2E; border: 1px solid #4A4A4A;
+}
+QPushButton#RoundBtn:hover { border-color: #E66C32; color: #E66C32; }
+
+/* ---- Segmented control (Lista/Galería, Cómoda/Compacta, S/M/L) ----------- */
+/* Implementar con QPushButton checkable dentro de un QButtonGroup exclusivo */
+QPushButton#Segment {
+    background-color: #2E2E2E;
+    border: 1px solid #4A4A4A;
+    border-radius: 0;
+    padding: 7px 14px;
+    color: #999999;
+    font-weight: 700;
+    font-size: 12.5px;
+}
+QPushButton#Segment:checked { background-color: #E66C32; color: #FFFFFF; }
+QPushButton#SegmentFirst { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+QPushButton#SegmentLast  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+
+/* ---- Paneles laterales (filtros / propiedades / preview) ----------------- */
+QFrame#Panel {
+    background-color: #2E2E2E;
+    border: 1px solid #3D3D3D;
+    border-radius: 10px;
+}
+QLabel#PanelTitle {
+    color: #999999;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    /* aplicar .upper() al texto en Python */
+}
+QLabel#GroupTitle { color: #F5F5F5; font-size: 13px; font-weight: 700; }
+QLabel#MetaKey    { color: #777777; font-size: 12px; font-weight: 600; }
+QLabel#MetaVal    { color: #DFDFDF; font-size: 12px; font-weight: 600; }
+QLabel#FileName   { color: #E66C32; font-size: 14px; font-weight: 800; }
+QLabel#LinkAccent { color: #E66C32; font-size: 11px; font-weight: 700; }
+
+/* Tarjeta de grupo de filtro (acordeón abierto) */
+QFrame#FilterCard {
+    background-color: #262626;
+    border: 1px solid #3D3D3D;
+    border-radius: 8px;
+}
+
+/* ---- Checkboxes ---------------------------------------------------------- */
+QCheckBox { color: #DFDFDF; font-size: 13px; spacing: 8px; }
+QCheckBox::indicator {
+    width: 15px; height: 15px;
+    border: 1.5px solid #5A5A5A;
+    border-radius: 4px;
+    background: transparent;
+}
+QCheckBox::indicator:checked {
+    background-color: #E66C32;
+    border-color: #E66C32;
+    image: url(icons/check.svg);
+}
+QCheckBox:disabled { color: #777777; }
+
+/* ---- Chips (años, filtros activos, fabricación) -------------------------- */
+/* Implementar como QPushButton checkable con estos object names */
+QPushButton#Chip {
+    background-color: transparent;
+    border: 1px solid #5A5A5A;
+    border-radius: 999px;
+    padding: 3px 11px;
+    color: #999999;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton#Chip:checked { background-color: #E66C32; border-color: #E66C32; color: #FFFFFF; }
+QPushButton#Chip:hover   { border-color: #E66C32; }
+
+/* Chip de "filtro activo" (con × para quitar) */
+QFrame#ActiveChip {
+    background-color: #3A2C21;
+    border: 1px solid #6B4630;
+    border-radius: 999px;
+}
+QLabel#ActiveChipText { color: #F0A377; font-size: 12px; font-weight: 600; }
+
+/* ---- Tabla de resultados (vista Lista) ----------------------------------- */
+QTableView, QTableWidget {
+    background-color: #1D1D1D;
+    alternate-background-color: #1D1D1D;
+    border: 1px solid #3D3D3D;
+    border-radius: 10px;
+    gridline-color: transparent;
+    color: #DFDFDF;
+    font-size: 12.5px;
+    outline: 0;
+}
+QTableView::item, QTableWidget::item {
+    border-bottom: 1px solid #2A2A2A;
+    padding: 0px 6px;
+    /* Altura de fila 64px (vista Cómoda) → verticalHeader().setDefaultSectionSize(64)
+       Vista Compacta → 40px. Miniatura 56px en la 1ª columna. */
+}
+QTableView::item:hover    { background-color: #33291F; }
+QTableView::item:selected { background-color: #3A2C21; color: #F5F5F5; }
+
+QHeaderView::section {
+    background-color: #2E2E2E;
+    color: #999999;
+    border: none;
+    border-bottom: 2px solid #E66C32;
+    padding: 10px 6px;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    /* texto en mayúsculas desde Python */
+}
+QHeaderView::section:first { border-top-left-radius: 10px; }
+QHeaderView::section:last  { border-top-right-radius: 10px; }
+QHeaderView::down-arrow { image: url(icons/chevron-abajo.svg); width: 10px; height: 10px; }
+
+/* ---- Scrollbars ---------------------------------------------------------- */
+QScrollBar:vertical   { background: transparent; width: 10px; margin: 2px; }
+QScrollBar::handle:vertical   { background: #4A4A4A; border-radius: 5px; min-height: 30px; }
+QScrollBar::handle:vertical:hover { background: #E66C32; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
+QScrollBar::handle:horizontal { background: #4A4A4A; border-radius: 5px; min-width: 30px; }
+QScrollBar::handle:horizontal:hover { background: #E66C32; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+/* ---- Vista Galería (QListView modo IconMode) ----------------------------- */
+QListView#Gallery {
+    background-color: #242424;
+    border: none;
+    /* setViewMode(IconMode); setResizeMode(Adjust); setSpacing(10);
+       setGridSize(QSize ~ ancho/5, 246). Delegado personalizado para pintar
+       miniatura 130px + nombre 2 líneas + meta + chips. */
+}
+QListView#Gallery::item {
+    background-color: #2E2E2E;
+    border: 1px solid #3D3D3D;
+    border-radius: 10px;
+}
+QListView#Gallery::item:hover    { border: 1px solid #E66C32; }
+QListView#Gallery::item:selected { border: 1px solid #E66C32; background-color: #33291F; }
+
+/* ---- Combos / desplegables (Tipos: Todos) -------------------------------- */
+QComboBox {
+    background-color: #2E2E2E;
+    border: 1.5px solid #4A4A4A;
+    border-radius: 10px;
+    padding: 8px 14px;
+    color: #DFDFDF;
+    font-weight: 600;
+}
+QComboBox:hover { border-color: #E66C32; }
+QComboBox::drop-down { border: none; width: 22px; }
+QComboBox::down-arrow { image: url(icons/chevron-abajo.svg); width: 12px; height: 12px; }
+QComboBox QAbstractItemView {
+    background-color: #2E2E2E;
+    border: 1px solid #3D3D3D;
+    border-radius: 8px;
+    selection-background-color: #3A2C21;
+    color: #DFDFDF;
+    outline: 0;
+}
+
+/* ---- Diálogos (Reindexar / Guía / Acerca de) ----------------------------- */
+QDialog { background-color: #2E2E2E; }
+QDialog QFrame#DialogHeader { border-bottom: 1px solid #3D3D3D; }
+QDialog QFrame#DialogFooter { background-color: #262626; border-top: 1px solid #3D3D3D; }
+QLabel#DialogTitle { font-size: 16px; font-weight: 800; color: #F5F5F5; }
+QLabel#DialogSub   { font-size: 12px; color: #999999; }
+
+/* Barra de progreso de la reindexación */
+QProgressBar {
+    background-color: #1D1D1D;
+    border: 1px solid #3D3D3D;
+    border-radius: 6px;
+    text-align: center;
+    color: #DFDFDF;
+    font-size: 11px;
+    height: 14px;
+}
+QProgressBar::chunk { background-color: #E66C32; border-radius: 5px; }
+
+/* Índice lateral de la guía (QListWidget) */
+QListWidget#TocList {
+    background-color: transparent;
+    border: none;
+    border-right: 1px solid #3D3D3D;
+    outline: 0;
+}
+QListWidget#TocList::item {
+    padding: 8px 12px;
+    border-radius: 8px;
+    color: #DFDFDF;
+    font-weight: 600;
+}
+QListWidget#TocList::item:selected { background-color: #E66C32; color: #FFFFFF; }
+QListWidget#TocList::item:hover    { background-color: #262626; }
+
+/* ---- Pie de estado ------------------------------------------------------- */
+#Footer { background-color: #2E2E2E; border-top: 1px solid #3D3D3D; }
+QLabel#StatusOk    { color: #999999; font-size: 12.5px; }
+QLabel#StatusCount { color: #F5F5F5; font-size: 12.5px; font-weight: 700; }
+QLabel#StatusDim   { color: #777777; font-size: 12.5px; }

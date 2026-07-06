@@ -163,6 +163,126 @@ DESCRIPCIONES_EXTENSION = {
     '.iges': 'Archivo IGES', '.igs': 'Archivo IGES',
 }
 
+# ═══════════════════════════════════════════════════════════════════════════
+# V2.0.0 - SISTEMA DE MARCA (fuentes + tema oscuro, ver handoff/SPEC.md)
+#   AG ALSI     → solo H1 (título principal y "Acerca de")
+#   Nizzoli Alt → títulos secundarios H2 (secciones de panel, diálogos)
+#   Poppins     → cuerpo (fuente base de toda la UI)
+# ═══════════════════════════════════════════════════════════════════════════
+FUENTES = {'h1': 'Segoe UI', 'h2': 'Segoe UI', 'body': 'Segoe UI'}
+
+def cargar_fuentes_marca():
+    """Registra las fuentes de fonts/ y guarda el nombre interno real de cada
+    familia en FUENTES. Si falta algún archivo, cae en cascada al siguiente
+    nivel (AG ALSI → Poppins → Segoe UI) sin romper el arranque."""
+    from PyQt5.QtGui import QFontDatabase
+
+    def cargar_familia(archivos, fallback):
+        familia = None
+        for nombre in archivos:
+            ruta = resource_path(os.path.join("fonts", nombre))
+            if os.path.exists(ruta):
+                fid = QFontDatabase.addApplicationFont(ruta)
+                if fid != -1:
+                    familias = QFontDatabase.applicationFontFamilies(fid)
+                    if familias and familia is None:
+                        familia = familias[0]
+            else:
+                logger.warning(f"Fuente no encontrada: {ruta}")
+        return familia if familia else fallback
+
+    FUENTES['body'] = cargar_familia(
+        ["Poppins-Regular.ttf", "Poppins-Medium.ttf",
+         "Poppins-SemiBold.ttf", "Poppins-Bold.ttf"], "Segoe UI")
+    FUENTES['h1'] = cargar_familia(["AG-ALSI.otf"], FUENTES['body'])
+    FUENTES['h2'] = cargar_familia(
+        ["Los Andes - Nizzoli Alt Regular.otf",
+         "Los Andes - Nizzoli Alt SemiBold.otf",
+         "Los Andes - Nizzoli Alt Bold.otf"], FUENTES['body'])
+    logger.info(f"Fuentes de marca: H1='{FUENTES['h1']}' H2='{FUENTES['h2']}' Cuerpo='{FUENTES['body']}'")
+
+
+def aplicar_h1(widget, size=17, color="#F5F5F5"):
+    """Aplica la tipografía H1 (AG ALSI). Se usa stylesheet por-widget porque
+    el font-family del QSS global pisaría un QFont programático."""
+    widget.setStyleSheet(
+        f'font-family: "{FUENTES["h1"]}"; font-size: {size}px; '
+        f'font-weight: 800; color: {color}; background: transparent;')
+
+
+def aplicar_h2(widget, size=11, color="#999999"):
+    """Aplica la tipografía H2 (Nizzoli Alt) a títulos de sección."""
+    widget.setStyleSheet(
+        f'font-family: "{FUENTES["h2"]}"; font-size: {size}px; font-weight: 800; '
+        f'letter-spacing: 1px; color: {color}; background: transparent;')
+
+
+# Ajustes de la app que el QSS del handoff no cubre (se concatenan al cargarlo)
+QSS_EXTRAS = """
+/* ---- Extras específicos de la app (V2.0.0) ---- */
+/* __FONT_H2__ se sustituye en cargar_qss_marca() por el nombre real de Nizzoli Alt */
+QLabel#PanelTitle { font-family: "__FONT_H2__"; }
+QLabel, QCheckBox { background: transparent; }
+QScrollArea { background: transparent; border: none; }
+QScrollArea > QWidget > QWidget { background: transparent; }
+
+QSplitter::handle { background-color: transparent; }
+QSplitter::handle:hover { background-color: #E66C32; }
+
+QPushButton#btn_toggle { padding: 2px 6px; font-size: 10px; border-radius: 5px; }
+QPushButton#btn_cancelar { background-color: #8C3A32; border: none; color: #FFFFFF; }
+QPushButton#btn_cancelar:hover { background-color: #A6443B; }
+
+QFrame#panel_preview { background-color: #2E2E2E; border: 1px solid #3D3D3D; border-radius: 10px; }
+
+QListWidget { background-color: #1D1D1D; border: 1px solid #3D3D3D; border-radius: 8px; outline: 0; }
+QListWidget::item { padding: 3px 4px; border-radius: 4px; color: #DFDFDF; }
+QListWidget::item:hover { background-color: #33291F; }
+QListWidget::item:selected { background-color: #3A2C21; color: #F5F5F5; }
+QListWidget::indicator {
+    width: 14px; height: 14px; border: 1.5px solid #5A5A5A;
+    border-radius: 4px; background: transparent;
+}
+QListWidget::indicator:checked {
+    background-color: #E66C32; border-color: #E66C32; image: url(icons/check.svg);
+}
+
+QMenu { background-color: #2E2E2E; border: 1px solid #3D3D3D; border-radius: 8px; padding: 4px; color: #DFDFDF; }
+QMenu::item { padding: 6px 24px; border-radius: 6px; }
+QMenu::item:selected { background-color: #3A2C21; color: #F5F5F5; }
+QMenu::separator { height: 1px; background: #3D3D3D; margin: 4px 8px; }
+QMenu::indicator { width: 14px; height: 14px; border: 1.5px solid #5A5A5A; border-radius: 4px; margin-left: 6px; }
+QMenu::indicator:checked { background-color: #E66C32; border-color: #E66C32; image: url(icons/check.svg); }
+
+QGroupBox {
+    background-color: #262626; border: 1px solid #3D3D3D; border-radius: 8px;
+    margin-top: 10px; font-weight: 700; color: #DFDFDF;
+}
+QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; color: #999999; }
+
+QMessageBox { background-color: #2E2E2E; }
+QTextBrowser { background-color: #1D1D1D; border: 1px solid #3D3D3D; border-radius: 8px; color: #DFDFDF; }
+"""
+
+
+def cargar_qss_marca():
+    """Lee alsi_buscador.qss + extras, resolviendo url(icons/...) tanto en
+    desarrollo como empaquetado con PyInstaller. Devuelve '' si falla."""
+    ruta_qss = resource_path("alsi_buscador.qss")
+    try:
+        with open(ruta_qss, encoding="utf-8") as fh:
+            qss = fh.read()
+    except Exception as e:
+        logger.error(f"No se pudo cargar el QSS de marca ({ruta_qss}): {e}")
+        return ""
+    qss += QSS_EXTRAS
+    qss = qss.replace("__FONT_H2__", FUENTES['h2'])
+    icons_dir = resource_path("icons").replace("\\", "/")
+    qss = qss.replace("url(icons/", f"url({icons_dir}/")
+    return qss
+
+
+# QSS legacy V1.0.5 — se conserva solo como fallback si falta alsi_buscador.qss
 MODERN_QSS = """
 /* ============================================================
    ESTILOS MODERNOS (V1.0.5) - FLUENT / macOS Inspired
@@ -343,19 +463,15 @@ class DialogIndexacion(QDialog):
         # --- Info ---
         lbl_info = QLabel("⏱ El proceso puede tardar varios minutos según el tamaño del NAS.\n"
                          "Puedes cancelar en cualquier momento.")
-        lbl_info.setStyleSheet("color: #666; font-style: italic; padding: 4px;")
+        lbl_info.setStyleSheet("color: #999999; font-style: italic; padding: 4px;")
         lbl_info.setWordWrap(True)
         layout.addWidget(lbl_info)
         
         # --- Botones ---
         button_box = QDialogButtonBox()
         self.btn_ok = QPushButton("🚀 Iniciar Indexación")
+        self.btn_ok.setObjectName("Primary")
         self.btn_ok.setCursor(Qt.PointingHandCursor)
-        self.btn_ok.setStyleSheet("""
-            QPushButton { background-color: #0078D4; color: white; border: none; 
-                         border-radius: 4px; padding: 10px 20px; font-weight: bold; font-size: 10pt; }
-            QPushButton:hover { background-color: #005A9E; }
-        """)
         self.btn_ok.clicked.connect(self.accept)
         
         btn_cancel = QPushButton("Cancelar")
@@ -366,16 +482,7 @@ class DialogIndexacion(QDialog):
         button_box.addButton(btn_cancel, QDialogButtonBox.RejectRole)
         layout.addWidget(button_box)
         
-        # Estilo del diálogo
-        self.setStyleSheet("""
-            QDialog { background-color: #F5F5F5; }
-            QGroupBox { background-color: white; border: 1px solid #D0D0D0; 
-                        border-radius: 6px; padding: 12px; margin-top: 8px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 6px; }
-            QListWidget { border: 1px solid #D0D0D0; border-radius: 3px; background: white; }
-            QListWidget::item { padding: 3px; }
-            QListWidget::item:hover { background-color: #F0F0F0; }
-        """)
+        # V2.0.0: el tema oscuro global (alsi_buscador.qss) ya estiliza el diálogo
     
     def _toggle(self, list_widget, state):
         for i in range(list_widget.count()):
@@ -688,28 +795,28 @@ class BuscadorPiezas(QMainWindow):
         main_layout.setSpacing(10)
 
         # ═══════════════════════════════════════════
-        # CABECERA (LOGO + BARRA DE BÚSQUEDA)
+        # CABECERA (ISOTIPO + TÍTULO H1 + BARRA DE BÚSQUEDA) - V2.0.0
         # ═══════════════════════════════════════════
-        header_layout = QHBoxLayout()
-        header_layout.setSpacing(20)
-        
-        # Imagotipo Corporativo
+        self.header_frame = QFrame()
+        self.header_frame.setObjectName("Header")
+        header_layout = QHBoxLayout(self.header_frame)
+        header_layout.setContentsMargins(12, 8, 12, 8)
+        header_layout.setSpacing(14)
+
+        # Isotipo corporativo (V2.0.0: precompuesto sobre el fondo oscuro del
+        # header #2E2E2E para evitar franjas por transparencia parcial en Windows)
         self.lbl_logo = QLabel()
         self.lbl_logo.setStyleSheet("background-color: transparent; border: none; padding: 0px; margin: 0px;")
-        if os.path.exists(LOGO_IMAGOTIPO):
-            # Pre-componer sobre fondo blanco para eliminar transparencia parcial
-            # que causa franjas oscuras en Windows
+        if os.path.exists(LOGO_ISOTIPO):
             from PIL import Image as PILImage
-            pil_img = PILImage.open(LOGO_IMAGOTIPO).convert("RGBA")
-            bg = PILImage.new("RGBA", pil_img.size, (255, 255, 255, 255))
+            pil_img = PILImage.open(LOGO_ISOTIPO).convert("RGBA")
+            bg = PILImage.new("RGBA", pil_img.size, (46, 46, 46, 255))  # #2E2E2E
             bg.paste(pil_img, (0, 0), pil_img)
             bg = bg.convert("RGB")
-            # Escalar con PIL (alta calidad) al tamaño final
-            target_h = 60
+            target_h = 38
             aspect = pil_img.width / pil_img.height
             target_w = int(target_h * aspect)
             bg = bg.resize((target_w, target_h), PILImage.LANCZOS)
-            # Convertir a QPixmap
             from io import BytesIO
             buffer = BytesIO()
             bg.save(buffer, format="PNG")
@@ -722,12 +829,18 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_logo.setText("ALSI")
             self.lbl_logo.setStyleSheet(f"color: {RAL_2010_NARANJA}; font-size: 24px; font-weight: bold; background-color: transparent; border: none;")
         header_layout.addWidget(self.lbl_logo)
+
+        # Título principal H1 (AG ALSI, único sitio junto con "Acerca de")
+        self.lbl_titulo_h1 = QLabel('BUSCADOR DE <span style="color:#E66C32;">PIEZAS</span>')
+        self.lbl_titulo_h1.setTextFormat(Qt.RichText)
+        aplicar_h1(self.lbl_titulo_h1, size=17)
+        header_layout.addWidget(self.lbl_titulo_h1)
         
         # Barra de búsqueda
         self.input_buscar = QLineEdit()
+        self.input_buscar.setObjectName("SearchBox")
         self.input_buscar.setPlaceholderText("Buscar: travesaño, cama, inox (separar por comas)")
         self.input_buscar.setToolTip("Introduce palabras separadas por comas para una búsqueda inteligente")
-        self.input_buscar.setFont(QFont("Segoe UI", 10))
         self.input_buscar.setMinimumHeight(40)
         self.input_buscar.returnPressed.connect(self.ejecutar_busqueda)
         header_layout.addWidget(self.input_buscar, stretch=1)
@@ -765,7 +878,7 @@ class BuscadorPiezas(QMainWindow):
         header_layout.addWidget(self.btn_tipos)
 
         self.btn_buscar = QPushButton("🔍 Buscar")
-        self.btn_buscar.setObjectName("btn_buscar")
+        self.btn_buscar.setObjectName("Primary")
         self.btn_buscar.setToolTip("Haz clic para iniciar la búsqueda (o pulsa Enter)")
         self.btn_buscar.setCursor(Qt.PointingHandCursor)
         self.btn_buscar.setMinimumHeight(45)
@@ -773,8 +886,8 @@ class BuscadorPiezas(QMainWindow):
         self.btn_buscar.clicked.connect(self.ejecutar_busqueda)
         # Main Menu
         header_layout.addWidget(self.btn_buscar)
-        
-        main_layout.addLayout(header_layout)
+
+        main_layout.addWidget(self.header_frame)
 
         # Banner de Actualización eliminado en V1.0.7
 
@@ -783,24 +896,22 @@ class BuscadorPiezas(QMainWindow):
         # ═══════════════════════════════════════════
         
         # Splitter Principal (Horizontal) para redimensionar barra lateral
+        # (estilos del handle en QSS_EXTRAS)
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setHandleWidth(4) # Línea sutil
-        self.main_splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #bdc3c7;
-                margin: 2px;
-            }
-            QSplitter::handle:hover {
-                background-color: #e67e22; /* Color corporativo al pasar el ratón */
-            }
-        """)
 
         # --- Panel filtros izquierdo (Scrollable Sidebar) ---
-        panel_izquierdo = QGroupBox("Filtros Avanzados")
+        panel_izquierdo = QFrame()
+        panel_izquierdo.setObjectName("Panel")
         panel_izquierdo.setMinimumWidth(80)
         panel_izquierdo.setMaximumWidth(500)
         izq_outer_layout = QVBoxLayout(panel_izquierdo)
-        izq_outer_layout.setContentsMargins(0, 0, 0, 0)
+        izq_outer_layout.setContentsMargins(10, 10, 10, 10)
+        izq_outer_layout.setSpacing(6)
+
+        lbl_panel_filtros = QLabel("FILTROS AVANZADOS")
+        aplicar_h2(lbl_panel_filtros)
+        izq_outer_layout.addWidget(lbl_panel_filtros)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -811,8 +922,8 @@ class BuscadorPiezas(QMainWindow):
         izq_layout.setSpacing(4)
         
         # 1. ORIGEN (v1.0.7 - antes era Compañeros)
-        lbl_comp = QLabel("Origen:")
-        lbl_comp.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_comp = QLabel("ORIGEN")
+        lbl_comp.setObjectName("PanelTitle")
         izq_layout.addWidget(lbl_comp)
 
         self.list_companeros = QListWidget()
@@ -829,8 +940,8 @@ class BuscadorPiezas(QMainWindow):
         self.add_toggle_buttons(izq_layout, self.list_companeros)
 
         # 2. AÑOS
-        lbl_años = QLabel("Años de Proyecto:")
-        lbl_años.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_años = QLabel("AÑOS DE PROYECTO")
+        lbl_años.setObjectName("PanelTitle")
         izq_layout.addWidget(lbl_años)
         self.list_años = QListWidget()
         self.list_años.setMinimumHeight(80)
@@ -846,8 +957,8 @@ class BuscadorPiezas(QMainWindow):
         self.add_toggle_buttons(izq_layout, self.list_años)
 
         # 3. CARPETAS (MECANICA, LAYOUT...) - V1.2.3
-        lbl_folder = QLabel("Carpetas:")
-        lbl_folder.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_folder = QLabel("CARPETAS")
+        lbl_folder.setObjectName("PanelTitle")
         izq_layout.addWidget(lbl_folder)
         self.list_carpetas = QListWidget()
         self.list_carpetas.setMinimumHeight(80)
@@ -863,8 +974,8 @@ class BuscadorPiezas(QMainWindow):
         self.list_carpetas.itemChanged.connect(self.on_filtro_jerarquico_changed)
 
         # 5. CLIENTES (V1.3.0)
-        lbl_clientes = QLabel("Clientes:")
-        lbl_clientes.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_clientes = QLabel("CLIENTES")
+        lbl_clientes.setObjectName("PanelTitle")
         izq_layout.addWidget(lbl_clientes)
         self.list_clientes = QListWidget()
         self.list_clientes.setMinimumHeight(80)
@@ -873,8 +984,8 @@ class BuscadorPiezas(QMainWindow):
         self.add_toggle_buttons(izq_layout, self.list_clientes)
 
         # 6. PROYECTOS (V1.3.0)
-        lbl_proys = QLabel("Proyectos:")
-        lbl_proys.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_proys = QLabel("PROYECTOS")
+        lbl_proys.setObjectName("PanelTitle")
         izq_layout.addWidget(lbl_proys)
         self.list_proyectos = QListWidget()
         self.list_proyectos.setMinimumHeight(80)
@@ -992,15 +1103,15 @@ class BuscadorPiezas(QMainWindow):
         preview_layout.addWidget(self.lbl_preview_icon)
         
         self.lbl_preview_nombre = QLabel("Seleccione un archivo")
+        self.lbl_preview_nombre.setObjectName("FileName")
         self.lbl_preview_nombre.setAlignment(Qt.AlignCenter)
         self.lbl_preview_nombre.setWordWrap(True)
-        self.lbl_preview_nombre.setStyleSheet(f"color: {RAL_2010_NARANJA}; font-weight: bold; font-size: 14px;")
         preview_layout.addWidget(self.lbl_preview_nombre)
-        
+
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
-        line.setStyleSheet(f"background-color: {RAL_7000_GRIS};")
+        line.setStyleSheet("background-color: #3D3D3D;")
         preview_layout.addWidget(line)
         
         self.lbl_preview_tipo = QLabel("")
@@ -1014,7 +1125,7 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_preview_tamaño.setFont(QFont("Segoe UI", 9))
         self.lbl_preview_ruta = QLabel("")
         self.lbl_preview_ruta.setWordWrap(True)
-        self.lbl_preview_ruta.setStyleSheet("font-size: 10px; color: #666;")
+        self.lbl_preview_ruta.setStyleSheet("font-size: 10px; color: #999999;")
         self.lbl_preview_ruta.setTextInteractionFlags(Qt.TextSelectableByMouse)
         
         preview_layout.addWidget(self.lbl_preview_tipo)
@@ -1026,7 +1137,7 @@ class BuscadorPiezas(QMainWindow):
         preview_layout.addStretch()
         
         tip_drag = QLabel("🖱 Arrastra para abrir en SolidWorks")
-        tip_drag.setStyleSheet(f"color: {RAL_7000_GRIS}; font-style: italic; font-size: 11px;")
+        tip_drag.setStyleSheet("color: #777777; font-style: italic; font-size: 11px;")
         tip_drag.setAlignment(Qt.AlignCenter)
         preview_layout.addWidget(tip_drag)
 
@@ -1035,11 +1146,17 @@ class BuscadorPiezas(QMainWindow):
         self.splitter.setStretchFactor(1, 1)
         
         # --- Panel filtros derecho (Propiedades) ---
-        panel_derecho = QGroupBox("Propiedades SW")
+        panel_derecho = QFrame()
+        panel_derecho.setObjectName("Panel")
         panel_derecho.setMinimumWidth(80)
         panel_derecho.setMaximumWidth(300)
         der_outer_layout = QVBoxLayout(panel_derecho)
-        der_outer_layout.setContentsMargins(0, 0, 0, 0)
+        der_outer_layout.setContentsMargins(10, 10, 10, 10)
+        der_outer_layout.setSpacing(6)
+
+        lbl_panel_props = QLabel("PROPIEDADES SW")
+        aplicar_h2(lbl_panel_props)
+        der_outer_layout.addWidget(lbl_panel_props)
         
         scroll_der = QScrollArea()
         scroll_der.setWidgetResizable(True)
@@ -1050,8 +1167,8 @@ class BuscadorPiezas(QMainWindow):
         der_layout.setSpacing(4)
         
         # --- Fabricación (Checkboxes booleanos) — ARRIBA ---
-        lbl_fabricacion = QLabel("Fabricación:")
-        lbl_fabricacion.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_fabricacion = QLabel("FABRICACIÓN")
+        lbl_fabricacion.setObjectName("PanelTitle")
         der_layout.addWidget(lbl_fabricacion)
         
         self.chk_laser = QCheckBox("Láser")
@@ -1066,8 +1183,8 @@ class BuscadorPiezas(QMainWindow):
             chk.stateChanged.connect(self.ejecutar_busqueda)
         
         # --- Material (QListWidget multi-selección) ---
-        lbl_material = QLabel("Material:")
-        lbl_material.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_material = QLabel("MATERIAL")
+        lbl_material.setObjectName("PanelTitle")
         der_layout.addWidget(lbl_material)
         self.list_materiales = QListWidget()
         self.list_materiales.setMinimumHeight(60)
@@ -1077,8 +1194,8 @@ class BuscadorPiezas(QMainWindow):
         self.list_materiales.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
         
         # --- Tratamiento (QListWidget multi-selección, valores oficiales de plantilla SW) ---
-        lbl_tratamiento = QLabel("Tratamiento:")
-        lbl_tratamiento.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_tratamiento = QLabel("TRATAMIENTO")
+        lbl_tratamiento.setObjectName("PanelTitle")
         der_layout.addWidget(lbl_tratamiento)
         self.list_tratamientos = QListWidget()
         self.list_tratamientos.setMinimumHeight(60)
@@ -1100,8 +1217,8 @@ class BuscadorPiezas(QMainWindow):
         self.list_tratamientos.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
         
         # --- Cierre (QListWidget multi-selección) ---
-        lbl_cierre = QLabel("Cierre:")
-        lbl_cierre.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_cierre = QLabel("CIERRE")
+        lbl_cierre.setObjectName("PanelTitle")
         der_layout.addWidget(lbl_cierre)
         self.list_cierres = QListWidget()
         self.list_cierres.setMinimumHeight(60)
@@ -1116,8 +1233,8 @@ class BuscadorPiezas(QMainWindow):
         self.list_cierres.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
         
         # --- Tipo de Banda (Checkboxes booleanos) ---
-        lbl_banda = QLabel("Tipo de Banda:")
-        lbl_banda.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_banda = QLabel("TIPO DE BANDA")
+        lbl_banda.setObjectName("PanelTitle")
         der_layout.addWidget(lbl_banda)
         
         self.chk_filo_guiado = QCheckBox("Filo Guiado")
@@ -1130,8 +1247,8 @@ class BuscadorPiezas(QMainWindow):
             chk.stateChanged.connect(self.ejecutar_busqueda)
         
         # --- Espesor (QListWidget multi-selección, solo para piezas, 1-20mm) ---
-        lbl_espesor = QLabel("Espesor:")
-        lbl_espesor.setStyleSheet("font-weight: bold; color: #555;")
+        lbl_espesor = QLabel("ESPESOR")
+        lbl_espesor.setObjectName("PanelTitle")
         der_layout.addWidget(lbl_espesor)
         self.list_espesores = QListWidget()
         self.list_espesores.setMinimumHeight(60)
@@ -1166,7 +1283,10 @@ class BuscadorPiezas(QMainWindow):
 
         # PIE DE PÁGINA (Botones y Estado)
         # ═══════════════════════════════════════════
-        footer_layout = QHBoxLayout()
+        self.footer_frame = QFrame()
+        self.footer_frame.setObjectName("Footer")
+        footer_layout = QHBoxLayout(self.footer_frame)
+        footer_layout.setContentsMargins(10, 6, 10, 6)
         footer_layout.setSpacing(10)
         
         # Botones de Acción Rápida (V1.0.0)
@@ -1204,7 +1324,7 @@ class BuscadorPiezas(QMainWindow):
         footer_layout.addWidget(line_sep1)
         
         lbl_densidad = QLabel("Vista:")
-        lbl_densidad.setStyleSheet("color: #555;")
+        lbl_densidad.setObjectName("StatusDim")
         footer_layout.addWidget(lbl_densidad)
         
         self.combo_densidad = QComboBox()
@@ -1251,173 +1371,39 @@ class BuscadorPiezas(QMainWindow):
         footer_layout.addWidget(self.progress_bar)
 
         self.lbl_status = QLabel("Listo")
+        self.lbl_status.setObjectName("StatusOk")
         footer_layout.addWidget(self.lbl_status, stretch=1)
 
-        # Botones de Ayuda e Info (V1.0.0 Polish Round 2)
-        self.btn_ayuda = QPushButton("❓")
-        self.btn_ayuda.setToolTip("Guía de uso rápida") 
-        self.btn_ayuda.setStatusTip("Botón de ayuda") 
+        # Botones de Ayuda e Info (V2.0.0: botones redondos #RoundBtn del QSS)
+        self.btn_ayuda = QPushButton("?")
+        self.btn_ayuda.setObjectName("RoundBtn")
+        self.btn_ayuda.setToolTip("Guía de uso rápida")
+        self.btn_ayuda.setStatusTip("Botón de ayuda")
         self.btn_ayuda.setCursor(Qt.PointingHandCursor)
-        self.btn_ayuda.setFixedSize(42, 42)
         self.btn_ayuda.clicked.connect(self.mostrar_ayuda)
-        self.btn_ayuda.setStyleSheet("""
-            QPushButton { 
-                background-color: #3498db; 
-                color: white;
-                font-size: 20px; 
-                border-radius: 8px;
-                border: 1px solid #2980b9;
-                transition: all 0.3s ease;
-            }
-            QPushButton:hover { 
-                background-color: #2980b9; 
-                border: 1px solid #1c5980;
-                margin-top: -2px;
-            }
-            QPushButton:pressed { 
-                background-color: #1c5980; 
-                margin-top: 0px;
-            }
-        """)
         footer_layout.addWidget(self.btn_ayuda)
 
-        self.btn_info = QPushButton("ℹ️")
+        self.btn_info = QPushButton("i")
+        self.btn_info.setObjectName("RoundBtn")
         self.btn_info.setToolTip("Acerca de") # Tooltip simplificado
         self.btn_info.setStatusTip("Información de la aplicación")
         self.btn_info.setCursor(Qt.PointingHandCursor)
-        self.btn_info.setFixedSize(42, 42)
         self.btn_info.clicked.connect(self.mostrar_info)
-        self.btn_info.setStyleSheet("""
-            QPushButton { 
-                background-color: #95a5a6; 
-                color: white;
-                font-size: 20px; 
-                border-radius: 8px;
-                border: 1px solid #7f8c8d;
-                transition: all 0.3s ease;
-            }
-            QPushButton:hover { 
-                background-color: #7f8c8d; 
-                border: 1px solid #6c7a7d;
-                margin-top: -2px;
-            }
-            QPushButton:pressed { 
-                background-color: #6c7a7d; 
-                margin-top: 0px;
-            }
-        """)
         footer_layout.addWidget(self.btn_info)
-        
+
         self.lbl_count = QLabel("0 resultados")
+        self.lbl_count.setObjectName("StatusCount")
         footer_layout.addWidget(self.lbl_count)
-        
-        main_layout.addLayout(footer_layout)
+
+        main_layout.addWidget(self.footer_frame)
         
         self.actualizar_estilos()
 
     def actualizar_estilos(self):
-        # fuentes corporativas
-        font_body = "Poppins, Segoe UI, Arial"
-        
-        self.setStyleSheet(f"""
-            QMainWindow, QWidget {{
-                background-color: #F8F9FA;
-                font-family: {font_body};
-                font-size: 13px;
-                color: #333;
-            }}
-            QLineEdit {{
-                border: 2px solid {RAL_7000_GRIS};
-                border-radius: 6px;
-                padding: 8px 15px;
-                background-color: {WHITE};
-                font-size: 14px;
-            }}
-            QLineEdit:focus {{
-                border-color: {RAL_2010_NARANJA};
-            }}
-            QPushButton {{
-                background-color: {RAL_7000_GRIS};
-                color: {WHITE};
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-weight: bold;
-                border: none;
-            }}
-            QPushButton#btn_toggle {{
-                padding: 1px 2px;
-                font-size: 9px;
-                border-radius: 4px;
-            }}
-            QPushButton:hover {{
-                background-color: #8C999F;
-            }}
-            QPushButton#btn_buscar {{
-                background-color: {RAL_2010_NARANJA};
-                font-size: 15px;
-            }}
-            QPushButton#btn_buscar:hover {{
-                background-color: #F06A2E;
-            }}
-            QPushButton#btn_indexar {{
-                background-color: {RAL_2010_NARANJA};
-            }}
-            QPushButton#btn_cancelar {{
-                background-color: #D9534F;
-            }}
-            QComboBox {{
-                border: 1px solid {RAL_7000_GRIS};
-                border-radius: 4px;
-                padding: 5px;
-                background-color: {WHITE};
-            }}
-            QTableWidget {{
-                background-color: {WHITE};
-                border: 1px solid {RAL_7000_GRIS};
-                border-radius: 4px;
-                gridline-color: #EEEEEE;
-            }}
-            QTableWidget::item {{
-                padding-top: 2px;
-                padding-bottom: 2px;
-            }}
-            QHeaderView::section {{
-                background-color: {RAL_7000_GRIS};
-                color: {WHITE};
-                padding: 8px;
-                font-weight: bold;
-                border: none;
-            }}
-            QListWidget {{
-                border: 1px solid {RAL_7000_GRIS};
-                border-radius: 4px;
-                background-color: {WHITE};
-            }}
-            QListWidget::item:selected {{
-                background-color: {RAL_2010_NARANJA};
-            }}
-            QGroupBox {{
-                font-weight: bold;
-                border: 1px solid {RAL_7000_GRIS};
-                border-radius: 6px;
-                margin-top: 10px;
-                padding-top: 15px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 3px;
-                color: {RAL_2010_NARANJA};
-            }}
-            QSplitter::handle {{
-                background-color: #DDD;
-            }}
-            QFrame#panel_preview {{
-                background-color: {WHITE};
-                border: 1px solid {RAL_7000_GRIS};
-                border-radius: 8px;
-            }}
-        """)
+        """V2.0.0: el tema vive en alsi_buscador.qss (aplicado a nivel de app
+        en el bloque main). Este método se conserva por compatibilidad y solo
+        garantiza que la ventana no arrastre estilos locales del tema antiguo."""
+        self.setStyleSheet("")
 
     # ═══════════════════════════════════════════
     # PREFERENCIAS
@@ -2275,11 +2261,7 @@ class BuscadorPiezas(QMainWindow):
     def mostrar_menu_contextual(self, pos):
         if self.tabla.currentRow() >= 0:
             menu = QMenu()
-            menu.setStyleSheet("""
-                QMenu { background: white; border: 1px solid #D0D0D0; padding: 4px; }
-                QMenu::item { padding: 6px 24px; }
-                QMenu::item:selected { background: #CCE8FF; }
-            """)
+            # V2.0.0: estilo oscuro heredado del QSS global (QSS_EXTRAS)
             action_open = QAction("📁 Abrir Carpeta", self)
             action_open.triggered.connect(self.abrir_carpeta_seleccionada)
             action_copy = QAction("📋 Copiar Ruta", self)
@@ -2353,7 +2335,7 @@ class BuscadorPiezas(QMainWindow):
                             lines[i] = f"<blockquote>{line_s[2:]}</blockquote>"
                     
                     html = '<br>'.join(lines)
-                    html = html.replace("```markdown", "<pre style='background:#eee; padding:10px;'>").replace("```", "</pre>")
+                    html = html.replace("```markdown", "<pre style='background:#262626; padding:10px;'>").replace("```", "</pre>")
                     html = html.replace("**", "<b>").replace("__", "<b>")
                     
                     # Estilo base Profesional (V1.0.0 Polish R3 - Optimized Fonts)
@@ -2367,26 +2349,26 @@ class BuscadorPiezas(QMainWindow):
                             border-bottom: 2px solid #E15B1E;
                             padding-bottom: 2px;
                         }
-                        h2 { 
-                            color: #2c3e50; 
-                            font-family: 'Segoe UI', sans-serif; 
-                            font-size: 13px; 
-                            margin-top: 10px; 
+                        h2 {
+                            color: #F5F5F5;
+                            font-family: 'Segoe UI', sans-serif;
+                            font-size: 13px;
+                            margin-top: 10px;
                             margin-bottom: 5px;
                             font-weight: bold;
                         }
-                        p, li, body { 
-                            font-family: 'Segoe UI', sans-serif; 
-                            font-size: 11px; 
-                            line-height: 1.4; 
-                            color: #333;
+                        p, li, body {
+                            font-family: 'Segoe UI', sans-serif;
+                            font-size: 11px;
+                            line-height: 1.4;
+                            color: #DFDFDF;
                         }
                         blockquote {
-                            border-left: 3px solid #E15B1E;
-                            background-color: #fff3e0;
+                            border-left: 3px solid #E66C32;
+                            background-color: #3A2C21;
                             padding: 5px;
                             margin: 5px 0;
-                            color: #555;
+                            color: #F0A377;
                             font-style: italic;
                         }
                     </style>
@@ -2435,24 +2417,24 @@ class BuscadorPiezas(QMainWindow):
             # Créditos con RichText forzado (R3 Fix)
             lbl_author = QLabel()
             lbl_author.setAlignment(Qt.AlignCenter)
-            lbl_author.setStyleSheet("font-size: 13px; color: #333;")
+            lbl_author.setStyleSheet("font-size: 13px; color: #DFDFDF;")
             lbl_author.setText("<html>Desarrollado por:<br><b>Francisco Fernández Rodríguez</b></html>")
             layout.addWidget(lbl_author)
             
             lbl_desc = QLabel()
             lbl_desc.setAlignment(Qt.AlignCenter)
-            lbl_desc.setStyleSheet("color: #555; font-size: 12px;")
+            lbl_desc.setStyleSheet("color: #999999; font-size: 12px;")
             lbl_desc.setText("<html>Departamento de Oficina Técnica<br><b>ALSI</b></html>")
             layout.addWidget(lbl_desc)
 
             # Sección de Novedades (Vacía por ahora)
             lbl_updates = QLabel("Notas de Versión:")
-            lbl_updates.setStyleSheet("font-weight: bold; margin-top: 10px; color: #333;")
+            lbl_updates.setStyleSheet("font-weight: bold; margin-top: 10px; color: #DFDFDF;")
             layout.addWidget(lbl_updates)
             
             browser = QTextBrowser()
             browser.setHtml(self._obtener_changelog_html())
-            browser.setStyleSheet("background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 4px;")
+            # V2.0.0: QTextBrowser oscuro heredado del QSS global
             browser.setMaximumHeight(120)
             layout.addWidget(browser)
             
@@ -2516,12 +2498,18 @@ class BuscadorPiezas(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    
-    # Fuente global
-    font = QFont("Segoe UI", 9)
-    app.setFont(font)
-    app.setStyleSheet(MODERN_QSS)
-    
+
+    # V2.0.0 - Fuentes de marca + tema oscuro ALSI
+    cargar_fuentes_marca()
+    app.setFont(QFont(FUENTES['body'], 10))
+    qss_marca = cargar_qss_marca()
+    if qss_marca:
+        app.setStyleSheet(qss_marca)
+    else:
+        # Fallback al tema claro V1.0.5 si falta alsi_buscador.qss
+        app.setFont(QFont("Segoe UI", 9))
+        app.setStyleSheet(MODERN_QSS)
+
     window = BuscadorPiezas()
     window.show()
     sys.exit(app.exec_())
