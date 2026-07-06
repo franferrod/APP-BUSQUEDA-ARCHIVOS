@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QDialog, QDialogButtonBox, QSplitter, QGroupBox, QFrame, QScrollArea,
                              QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser, QFileDialog, QListView, QGraphicsDropShadowEffect)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent
-from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage
+from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage, QPainter, QPen
 from PyQt5.QtWidgets import QFileIconProvider
 import pythoncom
 import logging
@@ -217,6 +217,64 @@ def aplicar_h2(widget, size=11, color="#999999"):
         f'letter-spacing: 1px; color: {color}; background: transparent;')
 
 
+def svg_pixmap(nombre, color="#999999", size=18):
+    """Renderiza icons/<nombre>.svg a QPixmap recoloreado (SPEC §6)."""
+    from PyQt5.QtSvg import QSvgRenderer
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    ruta = resource_path(os.path.join("icons", f"{nombre}.svg"))
+    if os.path.exists(ruta):
+        renderer = QSvgRenderer(ruta)
+        p = QPainter(pm)
+        renderer.render(p)
+        p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        p.fillRect(pm.rect(), QColor(color))
+        p.end()
+    else:
+        logger.warning(f"Icono SVG no encontrado: {ruta}")
+    return pm
+
+
+def svg_icon(nombre, color="#999999", size=18):
+    """QIcon desde SVG recoloreado. Reposo #999999, activo #E66C32, sobre naranja #FFFFFF."""
+    return QIcon(svg_pixmap(nombre, color, size))
+
+
+# Badges de extensión para placeholders de miniatura (SPEC §4)
+COLORES_BADGE = {
+    '.sldprt': '#E66C32', '.sldasm': '#3BA55D',
+    '.slddrw': '#5B8DD9', '.dwg': '#5B8DD9',
+    '.pdf': '#C75450',
+    '.step': '#999999', '.stp': '#999999', '.iges': '#999999', '.igs': '#999999',
+}
+ETIQUETAS_BADGE = {
+    '.sldprt': 'PRT', '.sldasm': 'ASM', '.slddrw': 'DRW', '.dwg': 'DWG',
+    '.pdf': 'PDF', '.step': 'STEP', '.stp': 'STEP', '.iges': 'IGES', '.igs': 'IGES',
+}
+
+
+def pixmap_badge_extension(ext, size=56):
+    """Placeholder cuadrado con la extensión (PRT/ASM/DRW/PDF...) coloreada por tipo."""
+    color = QColor(COLORES_BADGE.get(ext, '#777777'))
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    fondo = QColor(color)
+    fondo.setAlpha(46)
+    p.setBrush(fondo)
+    p.setPen(QPen(color, 1.5))
+    radio = max(4, size // 8)
+    p.drawRoundedRect(1, 1, size - 2, size - 2, radio, radio)
+    p.setPen(QPen(color))
+    f = QFont(FUENTES['body'], max(7, size // 5))
+    f.setBold(True)
+    p.setFont(f)
+    p.drawText(pm.rect(), Qt.AlignCenter, ETIQUETAS_BADGE.get(ext, ext.lstrip('.').upper()[:4]))
+    p.end()
+    return pm
+
+
 # Ajustes de la app que el QSS del handoff no cubre (se concatenan al cargarlo)
 QSS_EXTRAS = """
 /* ---- Extras específicos de la app (V2.0.0) ---- */
@@ -228,6 +286,9 @@ QScrollArea > QWidget > QWidget { background: transparent; }
 
 QSplitter::handle { background-color: transparent; }
 QSplitter::handle:hover { background-color: #E66C32; }
+
+/* Con ::item estilizado, Qt requiere :alternate explícito (sin él usa la paleta clara) */
+QTableWidget::item:alternate, QTableView::item:alternate { background-color: #1D1D1D; }
 
 QPushButton#btn_toggle { padding: 2px 6px; font-size: 10px; border-radius: 5px; }
 QPushButton#btn_cancelar { background-color: #8C3A32; border: none; color: #FFFFFF; }
@@ -393,7 +454,7 @@ class DialogIndexacion(QDialog):
     """Modal para elegir qué orígenes y años indexar (v1.0.7 - NAS nuevo)"""
     def __init__(self, rutas_dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🔄 Configurar Indexación NAS")
+        self.setWindowTitle("Configurar Indexación NAS")
         self.setMinimumSize(420, 480)
         self.setModal(True)
         
@@ -407,7 +468,7 @@ class DialogIndexacion(QDialog):
         layout.addWidget(lbl_titulo)
         
         # --- Orígenes ---
-        group_comp = QGroupBox("📂 Orígenes")
+        group_comp = QGroupBox("Orígenes")
         group_comp.setFont(QFont("Segoe UI", 9))
         comp_layout = QVBoxLayout(group_comp)
         
@@ -424,10 +485,10 @@ class DialogIndexacion(QDialog):
         comp_layout.addWidget(self.list_companeros)
         
         btn_comp_layout = QHBoxLayout()
-        btn_todos = QPushButton("✅ Todos")
+        btn_todos = QPushButton("Todos")
         btn_todos.setCursor(Qt.PointingHandCursor)
         btn_todos.clicked.connect(lambda: self._toggle(self.list_companeros, True))
-        btn_ninguno = QPushButton("❌ Ninguno")
+        btn_ninguno = QPushButton("Ninguno")
         btn_ninguno.setCursor(Qt.PointingHandCursor)
         btn_ninguno.clicked.connect(lambda: self._toggle(self.list_companeros, False))
         btn_comp_layout.addWidget(btn_todos)
@@ -436,7 +497,7 @@ class DialogIndexacion(QDialog):
         layout.addWidget(group_comp)
         
         # --- Años (Añadido V1.2.4 para consistencia) ---
-        group_años = QGroupBox("📅 Años")
+        group_años = QGroupBox("Años")
         group_años.setFont(QFont("Segoe UI", 9))
         años_layout = QVBoxLayout(group_años)
         
@@ -451,9 +512,9 @@ class DialogIndexacion(QDialog):
         años_layout.addWidget(self.list_años)
         
         btn_años_layout = QHBoxLayout()
-        btn_t_años = QPushButton("✅ Todos")
+        btn_t_años = QPushButton("Todos")
         btn_t_años.clicked.connect(lambda: self._toggle(self.list_años, True))
-        btn_n_años = QPushButton("❌ Ninguno")
+        btn_n_años = QPushButton("Ninguno")
         btn_n_años.clicked.connect(lambda: self._toggle(self.list_años, False))
         btn_años_layout.addWidget(btn_t_años)
         btn_años_layout.addWidget(btn_n_años)
@@ -461,7 +522,7 @@ class DialogIndexacion(QDialog):
         layout.addWidget(group_años)
         
         # --- Info ---
-        lbl_info = QLabel("⏱ El proceso puede tardar varios minutos según el tamaño del NAS.\n"
+        lbl_info = QLabel("El proceso puede tardar varios minutos según el tamaño del NAS.\n"
                          "Puedes cancelar en cualquier momento.")
         lbl_info.setStyleSheet("color: #999999; font-style: italic; padding: 4px;")
         lbl_info.setWordWrap(True)
@@ -469,7 +530,8 @@ class DialogIndexacion(QDialog):
         
         # --- Botones ---
         button_box = QDialogButtonBox()
-        self.btn_ok = QPushButton("🚀 Iniciar Indexación")
+        self.btn_ok = QPushButton("Iniciar Indexación")
+        self.btn_ok.setIcon(svg_icon("reindexar-refrescar", color="#FFFFFF"))
         self.btn_ok.setObjectName("Primary")
         self.btn_ok.setCursor(Qt.PointingHandCursor)
         self.btn_ok.clicked.connect(self.accept)
@@ -764,13 +826,13 @@ class BuscadorPiezas(QMainWindow):
         if not hasattr(self, 'tipos_actions'): return
         sel = self.get_selected_tipos()
         if len(sel) == len(self.tipos_actions):
-            self.btn_tipos.setText("📁 Tipos: TODOS")
+            self.btn_tipos.setText("Tipos: TODOS")
         elif len(sel) == 0:
-            self.btn_tipos.setText("📁 Tipos: NINGUNO")
+            self.btn_tipos.setText("Tipos: NINGUNO")
         elif len(sel) == 1:
-            self.btn_tipos.setText(f"📁 Tipos: {sel[0]}")
+            self.btn_tipos.setText(f"Tipos: {sel[0]}")
         else:
-            self.btn_tipos.setText(f"📁 Tipos: ({len(sel)})")
+            self.btn_tipos.setText(f"Tipos: ({len(sel)})")
 
     def toggle_tipos_menu(self, state):
         """Marca o desmarca todos los tipos en el menú"""
@@ -779,7 +841,7 @@ class BuscadorPiezas(QMainWindow):
         self.actualizar_texto_tipos()
 
     def init_ui(self):
-        self.setWindowTitle("🔍 Buscador de Piezas SolidWorks - ALSI")
+        self.setWindowTitle("Buscador de Piezas SolidWorks - ALSI")
         self.resize(1500, 850)
         
         # Cargar Icono de Aplicación Profesional (V1.0.0)
@@ -846,7 +908,8 @@ class BuscadorPiezas(QMainWindow):
         header_layout.addWidget(self.input_buscar, stretch=1)
 
         # 4. TIPOS DE ARCHIVO (V1.0.0 - Reubicado a Barra Superior)
-        self.btn_tipos = QPushButton("📁 Tipos: TODOS")
+        self.btn_tipos = QPushButton("Tipos: TODOS")
+        self.btn_tipos.setIcon(svg_icon("capas-tipos"))
         self.btn_tipos.setMinimumHeight(40)
         self.btn_tipos.setCursor(Qt.PointingHandCursor)
         self.btn_tipos.setFixedWidth(150)
@@ -857,9 +920,9 @@ class BuscadorPiezas(QMainWindow):
         
         self.menu_tipos = CheckableMenu(self)  # Menú que no se cierra al seleccionar (R5)
         
-        action_todos = self.menu_tipos.addAction("✅ Seleccionar Todos")
+        action_todos = self.menu_tipos.addAction(svg_icon("check"), "Seleccionar Todos")
         action_todos.triggered.connect(lambda: self.toggle_tipos_menu(True))
-        action_ninguno = self.menu_tipos.addAction("❌ Deseleccionar Todos")
+        action_ninguno = self.menu_tipos.addAction("Deseleccionar Todos")
         action_ninguno.triggered.connect(lambda: self.toggle_tipos_menu(False))
         self.menu_tipos.addSeparator()
 
@@ -877,7 +940,8 @@ class BuscadorPiezas(QMainWindow):
         self.btn_tipos.setMenu(self.menu_tipos)
         header_layout.addWidget(self.btn_tipos)
 
-        self.btn_buscar = QPushButton("🔍 Buscar")
+        self.btn_buscar = QPushButton("Buscar")
+        self.btn_buscar.setIcon(svg_icon("buscar", color="#FFFFFF"))
         self.btn_buscar.setObjectName("Primary")
         self.btn_buscar.setToolTip("Haz clic para iniciar la búsqueda (o pulsa Enter)")
         self.btn_buscar.setCursor(Qt.PointingHandCursor)
@@ -1026,7 +1090,8 @@ class BuscadorPiezas(QMainWindow):
         ])
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.tabla.setAlternatingRowColors(True)
+        # V2.0.0: sin zebra — el diseño usa fondo uniforme #1D1D1D con separador entre filas
+        self.tabla.setAlternatingRowColors(False)
         self.tabla.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tabla.setFrameStyle(QFrame.NoFrame)
         
@@ -1089,9 +1154,9 @@ class BuscadorPiezas(QMainWindow):
         
         # El botón de ocultar panel fue movido al footer
         
-        self.lbl_preview_icon = QLabel("🔍")
+        self.lbl_preview_icon = QLabel()
+        self.lbl_preview_icon.setPixmap(svg_pixmap("buscar", color="#777777", size=64))
         self.lbl_preview_icon.setAlignment(Qt.AlignCenter)
-        self.lbl_preview_icon.setStyleSheet("font-size: 64px;")
         self.lbl_preview_icon.setMinimumHeight(100)
         
         # Efecto de opacidad para animaciones (V1.3.16)
@@ -1136,10 +1201,17 @@ class BuscadorPiezas(QMainWindow):
         
         preview_layout.addStretch()
         
-        tip_drag = QLabel("🖱 Arrastra para abrir en SolidWorks")
+        tip_drag_layout = QHBoxLayout()
+        tip_drag_layout.setSpacing(6)
+        tip_drag_icon = QLabel()
+        tip_drag_icon.setPixmap(svg_pixmap("arrastrar-solidworks", color="#777777", size=16))
+        tip_drag = QLabel("Arrastra para abrir en SolidWorks")
         tip_drag.setStyleSheet("color: #777777; font-style: italic; font-size: 11px;")
-        tip_drag.setAlignment(Qt.AlignCenter)
-        preview_layout.addWidget(tip_drag)
+        tip_drag_layout.addStretch()
+        tip_drag_layout.addWidget(tip_drag_icon)
+        tip_drag_layout.addWidget(tip_drag)
+        tip_drag_layout.addStretch()
+        preview_layout.addLayout(tip_drag_layout)
 
         self.splitter.addWidget(self.panel_preview)
         self.splitter.setStretchFactor(0, 4)
@@ -1290,28 +1362,32 @@ class BuscadorPiezas(QMainWindow):
         footer_layout.setSpacing(10)
         
         # Botones de Acción Rápida (V1.0.0)
-        self.btn_abrir_carpeta = QPushButton("📁 Abrir Carpeta")
+        self.btn_abrir_carpeta = QPushButton("Abrir Carpeta")
+        self.btn_abrir_carpeta.setIcon(svg_icon("carpeta"))
         self.btn_abrir_carpeta.setToolTip("Abre la carpeta que contiene el archivo")
         self.btn_abrir_carpeta.clicked.connect(self.abrir_carpeta_seleccionada)
         self.btn_abrir_carpeta.setEnabled(False)
         self.btn_abrir_carpeta.setCursor(Qt.PointingHandCursor)
         footer_layout.addWidget(self.btn_abrir_carpeta)
         
-        self.btn_copiar_ruta = QPushButton("📋 Copiar Ruta")
+        self.btn_copiar_ruta = QPushButton("Copiar Ruta")
+        self.btn_copiar_ruta.setIcon(svg_icon("copiar-ruta"))
         self.btn_copiar_ruta.setToolTip("Copia la ruta completa al portapapeles")
         self.btn_copiar_ruta.clicked.connect(self.copiar_ruta_seleccionada)
         self.btn_copiar_ruta.setEnabled(False)
         self.btn_copiar_ruta.setCursor(Qt.PointingHandCursor)
         footer_layout.addWidget(self.btn_copiar_ruta)
         
-        self.btn_copiar_nombre = QPushButton("📝 Copiar Nombre")
+        self.btn_copiar_nombre = QPushButton("Copiar Nombre")
+        self.btn_copiar_nombre.setIcon(svg_icon("copiar-nombre-lapiz"))
         self.btn_copiar_nombre.setToolTip("Copia solo el nombre del archivo (Ctrl+C)")
         self.btn_copiar_nombre.clicked.connect(self.copiar_nombre_seleccionado)
         self.btn_copiar_nombre.setEnabled(False)
         self.btn_copiar_nombre.setCursor(Qt.PointingHandCursor)
         footer_layout.addWidget(self.btn_copiar_nombre)
         
-        self.btn_exportar = QPushButton("📥 Exportar a Excel")
+        self.btn_exportar = QPushButton("Exportar a Excel")
+        self.btn_exportar.setIcon(svg_icon("exportar-descargar"))
         self.btn_exportar.setToolTip("Exportar resultados a Excel (.csv)")
         self.btn_exportar.clicked.connect(self.exportar_excel_completo)
         self.btn_exportar.setCursor(Qt.PointingHandCursor)
@@ -1340,20 +1416,21 @@ class BuscadorPiezas(QMainWindow):
         line_sep.setFrameShadow(QFrame.Sunken)
         footer_layout.addWidget(line_sep)
         # Botón Reindexar NAS (v1.0.7 - sustituye 3 botones anteriores)
-        self.btn_indexar = QPushButton("🔄 Reindexar NAS")
+        self.btn_indexar = QPushButton("Reindexar NAS")
         self.btn_indexar.setToolTip("Abre el diálogo para elegir qué orígenes indexar del NAS")
-        self.btn_indexar.setIcon(QIcon(LOGO_ISOTIPO))
+        self.btn_indexar.setIcon(svg_icon("reindexar-refrescar"))
         self.btn_indexar.setFixedWidth(185)
         self.btn_indexar.clicked.connect(self.confirmar_indexacion)
         footer_layout.addWidget(self.btn_indexar)
         
         # Botón Ocultar/Mostrar panel (Movido desde el panel derecho)
-        self.btn_toggle_preview = QPushButton("👁 Ocultar Previsualizador")
+        self.btn_toggle_preview = QPushButton("Ocultar Previsualizador")
+        self.btn_toggle_preview.setIcon(svg_icon("contraer-panel"))
         self.btn_toggle_preview.setCursor(Qt.PointingHandCursor)
         self.btn_toggle_preview.clicked.connect(self.toggle_preview_panel)
         footer_layout.addWidget(self.btn_toggle_preview)
         
-        self.btn_cancelar = QPushButton("⏹ Cancelar")
+        self.btn_cancelar = QPushButton("Cancelar")
         self.btn_cancelar.setToolTip("Detiene la indexación actual")
         self.btn_cancelar.setCursor(Qt.PointingHandCursor)
         self.btn_cancelar.setMinimumHeight(35)
@@ -2013,14 +2090,14 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_preview_nombre.setText(nombre)
             ext = Path(nombre).suffix.lower()
             tipo_desc = DESCRIPCIONES_EXTENSION.get(ext, 'Archivo')
-            self.lbl_preview_tipo.setText(f"📎 Tipo: {tipo_desc} ({tipo})")
-            self.lbl_preview_comp.setText(f"👤 Compañero: {comp} | AÑO {año}")
-            
+            self.lbl_preview_tipo.setText(f"Tipo: {tipo_desc} ({tipo})")
+            self.lbl_preview_comp.setText(f"Origen: {comp} | AÑO {año}")
+
             proy_str = f"{cod_proy} {nom_proy}" if cod_proy else (nom_proy if nom_proy else proyecto)
             ord_str = f"Orden: {orden_completa}" if orden_completa else ""
-            self.lbl_preview_proyecto.setText(f"🏢 Cliente: {cliente}\n🏗️ Proyecto: {proy_str}\n📄 {ord_str}")
-            self.lbl_preview_ruta.setText(f"📂 {ruta}")
-            self.lbl_preview_tamaño.setText("💾 Tamaño: Cargando...")
+            self.lbl_preview_proyecto.setText(f"Cliente: {cliente}\nProyecto: {proy_str}\n{ord_str}")
+            self.lbl_preview_ruta.setText(ruta)
+            self.lbl_preview_tamaño.setText("Tamaño: Cargando...")
             
             # Mostrar miniatura cacheada inmediatamente o placeholder (V1.0.4 Fix)
             if ruta in self.cache_miniaturas:
@@ -2029,9 +2106,9 @@ class BuscadorPiezas(QMainWindow):
                 self.lbl_preview_icon.setText("")
                 self.preview_opacity.setOpacity(1.0)
             else:
-                icono = ICONOS_EXTENSION.get(ext, '🔍')
-                self.lbl_preview_icon.setPixmap(QPixmap())
-                self.lbl_preview_icon.setText(icono)
+                # V2.0.0: badge de extensión en vez de emoji
+                self.lbl_preview_icon.setText("")
+                self.lbl_preview_icon.setPixmap(pixmap_badge_extension(ext, size=96))
                 self.preview_opacity.setOpacity(0.5)
             
             # 2. DIFERIR RECURSOS PESADOS (Miniatura, os.path.exists, etc.)
@@ -2133,17 +2210,17 @@ class BuscadorPiezas(QMainWindow):
 
             # Verificar existencia (IO Pesado en red)
             if not os.path.exists(ruta):
-                 self.lbl_preview_tamaño.setText("💾 Tamaño: No accesible")
+                 self.lbl_preview_tamaño.setText("Tamaño: No accesible")
                  return
 
             # Tamaño
             size = os.path.getsize(ruta)
             if size < 1024:
-                self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size} B")
+                self.lbl_preview_tamaño.setText(f"Tamaño: {size} B")
             elif size < 1024 * 1024:
-                self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size / 1024:.1f} KB")
+                self.lbl_preview_tamaño.setText(f"Tamaño: {size / 1024:.1f} KB")
             else:
-                self.lbl_preview_tamaño.setText(f"💾 Tamaño: {size / (1024 * 1024):.1f} MB")
+                self.lbl_preview_tamaño.setText(f"Tamaño: {size / (1024 * 1024):.1f} MB")
 
             # Miniatura (Heavy IO)
             pixmap = self.extraer_miniatura(ruta)
@@ -2185,9 +2262,11 @@ class BuscadorPiezas(QMainWindow):
         is_visible = self.panel_preview.isVisible()
         self.panel_preview.setVisible(not is_visible)
         if is_visible:
-            self.btn_toggle_preview.setText("👁 Mostrar Previsualizador")
+            self.btn_toggle_preview.setText("Mostrar Previsualizador")
+            self.btn_toggle_preview.setIcon(svg_icon("expandir-panel"))
         else:
-            self.btn_toggle_preview.setText("👁 Ocultar Previsualizador")
+            self.btn_toggle_preview.setText("Ocultar Previsualizador")
+            self.btn_toggle_preview.setIcon(svg_icon("contraer-panel"))
             sizes = self.splitter.sizes()
             if len(sizes) > 1 and sizes[1] == 0:
                 sizes[1] = 250
@@ -2262,11 +2341,11 @@ class BuscadorPiezas(QMainWindow):
         if self.tabla.currentRow() >= 0:
             menu = QMenu()
             # V2.0.0: estilo oscuro heredado del QSS global (QSS_EXTRAS)
-            action_open = QAction("📁 Abrir Carpeta", self)
+            action_open = QAction(svg_icon("carpeta"), "Abrir Carpeta", self)
             action_open.triggered.connect(self.abrir_carpeta_seleccionada)
-            action_copy = QAction("📋 Copiar Ruta", self)
+            action_copy = QAction(svg_icon("copiar-ruta"), "Copiar Ruta", self)
             action_copy.triggered.connect(self.copiar_ruta_seleccionada)
-            action_copy_name = QAction("📝 Copiar Nombre", self)
+            action_copy_name = QAction(svg_icon("copiar-nombre-lapiz"), "Copiar Nombre", self)
             action_copy_name.triggered.connect(self.copiar_nombre_seleccionado)
             
             menu.addAction(action_open)
@@ -2278,14 +2357,14 @@ class BuscadorPiezas(QMainWindow):
             ruta = item_ruta.text() if item_ruta else ""
             if ruta and os.path.exists(ruta):
                 menu.addSeparator()
-                menu.addAction("🚀 Abrir/Insertar en SolidWorks").triggered.connect(
+                menu.addAction(svg_icon("arrastrar-solidworks"), "Abrir/Insertar en SolidWorks").triggered.connect(
                     lambda: os.startfile(ruta)
                 )
 
             # Export selection option
             if len(self.tabla.selectedItems()) > self.tabla.columnCount(): # Si hay más de 1 fila seleccionada
                 menu.addSeparator()
-                action_export_sel = QAction("📥 Exportar Selección a Excel", self)
+                action_export_sel = QAction(svg_icon("exportar-descargar"), "Exportar Selección a Excel", self)
                 action_export_sel.triggered.connect(self.exportar_excel_seleccion)
                 menu.addAction(action_export_sel)
 
