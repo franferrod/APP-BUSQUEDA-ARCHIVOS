@@ -61,6 +61,10 @@ logger = logging.getLogger("BuscadorALSI")
 def exception_hook(exctype, value, traceback):
     """Captura cualquier excepción no gestionada para que la app no se cierre"""
     logger.error("Excepción no capturada", exc_info=(exctype, value, traceback))
+    # V2.0.0: las carreras benignas de cierre (señal llega a un widget ya
+    # destruido) se registran en el log pero no molestan al usuario con un popup
+    if exctype is RuntimeError and "has been deleted" in str(value):
+        return
     msg = f"Se ha producido un error inesperado:\n\n{value}\n\nLa aplicación intentará seguir funcionando."
     QMessageBox.critical(None, "Error Inesperado", msg)
 
@@ -1954,6 +1958,20 @@ class BuscadorPiezas(QMainWindow):
         self.controller.save_preference("splitter_sizes", f"{sizes[0]},{sizes[1]}")
 
     def closeEvent(self, event):
+        # V2.0.0: parar timers e hilo de miniaturas ANTES de destruir widgets,
+        # evita el "wrapped C/C++ object of type QLabel has been deleted"
+        try:
+            self.timer_filtros.stop()
+            self.timer_preview.stop()
+            if hasattr(self, 'thumb_worker') and self.thumb_worker and self.thumb_worker.isRunning():
+                self.thumb_worker.cancelar()
+                try:
+                    self.thumb_worker.thumbnail_ready.disconnect(self.on_thumbnail_ready)
+                except (TypeError, RuntimeError):
+                    pass
+                self.thumb_worker.wait(1000)
+        except Exception as e:
+            logger.debug(f"Error deteniendo tareas al cerrar: {e}")
         self.save_window_state()
         super().closeEvent(event)
 
