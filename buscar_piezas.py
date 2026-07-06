@@ -22,8 +22,9 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QHeaderView, QStatusBar, QProgressBar, QLabel, QMessageBox, 
                              QMenu, QAction, QAbstractItemView, QListWidget, QListWidgetItem,
                              QDialog, QDialogButtonBox, QSplitter, QGroupBox, QFrame, QScrollArea,
-                             QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser, QFileDialog, QListView, QGraphicsDropShadowEffect)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent
+                             QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser, QFileDialog, QListView, QGraphicsDropShadowEffect,
+                             QStyledItemDelegate, QStyleOptionViewItem, QStyle, QButtonGroup, QStackedWidget)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent, QSettings, QRect
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage, QPainter, QPen
 from PyQt5.QtWidgets import QFileIconProvider
 import pythoncom
@@ -289,6 +290,16 @@ QSplitter::handle:hover { background-color: #E66C32; }
 
 /* Con ::item estilizado, Qt requiere :alternate explícito (sin él usa la paleta clara) */
 QTableWidget::item:alternate, QTableView::item:alternate { background-color: #1D1D1D; }
+
+/* Segmented control por dynamic property (un widget solo admite un objectName) */
+QPushButton[segmento="true"] {
+    background-color: #2E2E2E; border: 1px solid #4A4A4A; border-radius: 0;
+    padding: 6px 14px; color: #999999; font-weight: 700; font-size: 12px;
+}
+QPushButton[segmento="true"]:checked { background-color: #E66C32; color: #FFFFFF; border-color: #E66C32; }
+QPushButton[segmento="true"]:hover:!checked { border-color: #E66C32; color: #DFDFDF; }
+QPushButton[segPos="first"] { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+QPushButton[segPos="last"]  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
 
 QPushButton#btn_toggle { padding: 2px 6px; font-size: 10px; border-radius: 5px; }
 QPushButton#btn_cancelar { background-color: #8C3A32; border: none; color: #FFFFFF; }
@@ -705,6 +716,74 @@ class ToastNotification(QWidget):
         self.show()
         self.timer.start(duration)
 
+class PillDelegate(QStyledItemDelegate):
+    """Pinta el valor de la celda como píldora coloreada (columna Tipo, V2.0.0).
+    Solo afecta al pintado: la ordenación y el texto del item quedan intactos."""
+    COLORES = {
+        'MECANICA': '#E66C32', 'LAYOUT': '#5B8DD9', 'LISTADOS': '#3BA55D',
+        'OFERTAS Y PEDIDOS': '#C7A23F', 'PLIEGO DE CONDICIONES': '#9B6DD6',
+        'BIBLIOTECA': '#3BA55D', 'ESTANDAR': '#999999', 'COMERCIAL': '#999999',
+        'OTRO': '#777777', 'OTROS': '#777777',
+    }
+
+    def paint(self, painter, option, index):
+        texto = index.data() or ""
+        # Fondo de fila (hover/selección) con el estilo base, sin texto
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        estilo = opt.widget.style() if opt.widget else QApplication.style()
+        estilo.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+        if not texto:
+            return
+        color = QColor(self.COLORES.get(texto, '#999999'))
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        f = painter.font()
+        f.setPointSizeF(max(7.0, f.pointSizeF() - 1.5))
+        f.setBold(True)
+        painter.setFont(f)
+        fm = painter.fontMetrics()
+        texto_corto = texto if len(texto) <= 14 else texto[:12] + '…'
+        w = fm.horizontalAdvance(texto_corto) + 16
+        h = fm.height() + 4
+        r = option.rect
+        rect_pill = QRect(r.x() + 6, r.y() + (r.height() - h) // 2, min(w, r.width() - 12), h)
+        fondo = QColor(color)
+        fondo.setAlpha(40)
+        painter.setBrush(fondo)
+        painter.setPen(QPen(color, 1))
+        painter.drawRoundedRect(rect_pill, h // 2, h // 2)
+        painter.setPen(QPen(color))
+        painter.drawText(rect_pill, Qt.AlignCenter, texto_corto)
+        painter.restore()
+
+
+class FabricacionDelegate(QStyledItemDelegate):
+    """Pinta ✓ naranja (valor presente) o · atenuado (vacío) en las columnas
+    de fabricación L/T/F/S/P/M. El texto real del item ("SÍ"/"") se conserva
+    para ordenación y exportación (V2.0.0)."""
+
+    def paint(self, painter, option, index):
+        texto = (index.data() or "").strip()
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        opt.text = ""
+        estilo = opt.widget.style() if opt.widget else QApplication.style()
+        estilo.drawControl(QStyle.CE_ItemViewItem, opt, painter, opt.widget)
+        painter.save()
+        f = painter.font()
+        f.setBold(True)
+        painter.setFont(f)
+        if texto:
+            painter.setPen(QPen(QColor("#E66C32")))
+            painter.drawText(option.rect, Qt.AlignCenter, "✓")
+        else:
+            painter.setPen(QPen(QColor("#777777")))
+            painter.drawText(option.rect, Qt.AlignCenter, "·")
+        painter.restore()
+
+
 # -----------------------------------------------------------------------------
 # INTERFAZ PRINCIPAL
 # -----------------------------------------------------------------------------
@@ -720,6 +799,7 @@ class BuscadorPiezas(QMainWindow):
         self.thread = None  # Referencia al thread de indexación activo
         self.bloqueo_filtros = False 
         self.cache_miniaturas = {} # V1.0.0 Caché de miniaturas (LRU simple)
+        self._badge_cache = {}     # V2.0.0 Caché de badges de extensión (placeholder de Vista)
         
         # Debouncing para filtros (Evitar bloqueos) V1.0.0.2
         self.timer_filtros = QTimer()
@@ -1074,7 +1154,7 @@ class BuscadorPiezas(QMainWindow):
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setHandleWidth(3)
         
-        # Tabla (V1.0.6: 22 columnas)
+        # Tabla (V1.0.6: 21 columnas | V2.0.0: cabeceras fabricación abreviadas)
         self.tabla = TablaArrastrable()
         shadow_effect2 = QGraphicsDropShadowEffect()
         shadow_effect2.setBlurRadius(15)
@@ -1083,11 +1163,24 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setGraphicsEffect(shadow_effect2)
         self.tabla.setColumnCount(21)
         self.tabla.setHorizontalHeaderLabels([
-            "Ruta_Hidden", "Orden_Orig", "Cód. Proy_Hidden", "Nom. Proy_Hidden", "Vista", 
-            "Nombre", "Origen", "Año", "Cliente", "Proyecto", 
-            "Orden", "Material", "Tratamiento", "Espesor", "Láser",
-            "Torno", "Fresa", "Soldadura", "Pintura", "Montaje", "Tipo"
+            "Ruta_Hidden", "Orden_Orig", "Cód. Proy_Hidden", "Nom. Proy_Hidden", "Vista",
+            "Nombre", "Origen", "Año", "Cliente", "Proyecto",
+            "Orden", "Material", "Tratamiento", "Espesor", "L",
+            "T", "F", "S", "P", "M", "Tipo"
         ])
+        # Tooltips con el nombre completo de las columnas de fabricación abreviadas
+        NOMBRES_FABRICACION = {14: "Láser", 15: "Torno", 16: "Fresa", 17: "Soldadura", 18: "Pintura", 19: "Montaje"}
+        for col_idx, nombre_completo in NOMBRES_FABRICACION.items():
+            h_item = self.tabla.horizontalHeaderItem(col_idx)
+            if h_item:
+                h_item.setToolTip(nombre_completo)
+        # Píldora coloreada en la columna Tipo (V2.0.0)
+        self._pill_delegate = PillDelegate(self.tabla)
+        self.tabla.setItemDelegateForColumn(20, self._pill_delegate)
+        # ✓ / · en columnas de fabricación (V2.0.0)
+        self._fab_delegate = FabricacionDelegate(self.tabla)
+        for col_fab in range(14, 20):
+            self.tabla.setItemDelegateForColumn(col_fab, self._fab_delegate)
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
         # V2.0.0: sin zebra — el diseño usa fondo uniforme #1D1D1D con separador entre filas
@@ -1099,9 +1192,9 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setSortingEnabled(False)
         self._sort_state = {"col": -1, "order": Qt.AscendingOrder}
         
-        # Ajuste de tamaño de filas e iconos para las miniaturas
-        self.tabla.setIconSize(QSize(44, 44))
-        self.tabla.verticalHeader().setDefaultSectionSize(46)
+        # Ajuste de tamaño de filas e iconos para las miniaturas (V2.0.0: Cómoda 64px/56px)
+        self.tabla.setIconSize(QSize(56, 56))
+        self.tabla.verticalHeader().setDefaultSectionSize(64)
         
         header = self.tabla.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive) # Todas interactivas 
@@ -1114,9 +1207,9 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setColumnHidden(1, True) # Orden_Orig
         self.tabla.setColumnHidden(2, True) # Cód. Proy_Hidden
         self.tabla.setColumnHidden(3, True) # Nom. Proy_Hidden
-        self.tabla.setColumnWidth(4, 52)  # Vista
+        self.tabla.setColumnWidth(4, 68)  # Vista (miniatura 56px + margen)
         self.tabla.setColumnWidth(5, 250) # Nombre
-        self.tabla.setColumnWidth(6, 95)  # Compañero
+        self.tabla.setColumnWidth(6, 95)  # Origen
         self.tabla.setColumnWidth(7, 55)  # Año
         self.tabla.setColumnWidth(8, 144) # Cliente
         self.tabla.setColumnWidth(9, 200) # Proyecto
@@ -1124,12 +1217,9 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setColumnWidth(11, 100)# Material
         self.tabla.setColumnWidth(12, 100)# Tratamiento
         self.tabla.setColumnWidth(13, 60) # Espesor
-        self.tabla.setColumnWidth(14, 50) # Láser
-        self.tabla.setColumnWidth(15, 50) # Torno
-        self.tabla.setColumnWidth(16, 50) # Fresa
-        self.tabla.setColumnWidth(17, 70) # Soldadura
-        self.tabla.setColumnWidth(18, 70) # Pintura
-        self.tabla.setColumnWidth(19, 70) # Montaje
+        # Columnas de fabricación estrechas (V2.0.0: L T F S P M)
+        for col_fab in range(14, 20):
+            self.tabla.setColumnWidth(col_fab, 28)
         # Columna 20 (Tipo) estira automáticamente
         
         self.tabla.doubleClicked.connect(self.abrir_carpeta_seleccionada)
@@ -1137,7 +1227,94 @@ class BuscadorPiezas(QMainWindow):
         self.tabla.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tabla.customContextMenuRequested.connect(self.mostrar_menu_contextual)
 
-        self.splitter.addWidget(self.tabla)
+        # ═══════════════════════════════════════════
+        # TOOLBAR CENTRAL (V2.0.0): Lista/Galería + Cómoda/Compacta | Columnas + Exportar
+        # ═══════════════════════════════════════════
+        self.qsettings = QSettings("ALSI", "BuscadorPiezas")
+
+        def _crear_segmento(botones, grupo_exclusivo=True):
+            """Crea QPushButtons checkables estilo segmented (dynamic property)."""
+            grupo = QButtonGroup(self)
+            grupo.setExclusive(grupo_exclusivo)
+            widgets = []
+            for i, (texto, icono) in enumerate(botones):
+                btn = QPushButton(texto)
+                if icono:
+                    btn.setIcon(svg_icon(icono, size=15))
+                btn.setCheckable(True)
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.setProperty("segmento", "true")
+                if i == 0:
+                    btn.setProperty("segPos", "first")
+                elif i == len(botones) - 1:
+                    btn.setProperty("segPos", "last")
+                grupo.addButton(btn, i)
+                widgets.append(btn)
+            return grupo, widgets
+
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(10)
+
+        # Segmento Lista/Galería (la galería se conecta en Fase 4)
+        self.grupo_vista, botones_vista = _crear_segmento([("Lista", "vista-lista"), ("Galería", "vista-galeria")])
+        self.btn_vista_lista, self.btn_vista_galeria = botones_vista
+        self.btn_vista_lista.setChecked(True)
+        seg_vista_layout = QHBoxLayout()
+        seg_vista_layout.setSpacing(0)
+        for b in botones_vista:
+            seg_vista_layout.addWidget(b)
+        toolbar_layout.addLayout(seg_vista_layout)
+
+        # Segmento Cómoda/Compacta (drive del combo existente para no romper la señal)
+        self.grupo_densidad, botones_dens = _crear_segmento([("Cómoda", None), ("Compacta", None)])
+        self.btn_dens_comoda, self.btn_dens_compacta = botones_dens
+        self.btn_dens_comoda.setChecked(True)
+        self.grupo_densidad.buttonClicked[int].connect(self._on_densidad_segment)
+        seg_dens_layout = QHBoxLayout()
+        seg_dens_layout.setSpacing(0)
+        for b in botones_dens:
+            seg_dens_layout.addWidget(b)
+        toolbar_layout.addLayout(seg_dens_layout)
+
+        toolbar_layout.addStretch()
+
+        # Botón Columnas (menú checkable, persistido en QSettings)
+        self.btn_columnas = QPushButton("Columnas")
+        self.btn_columnas.setIcon(svg_icon("columnas", size=15))
+        self.btn_columnas.setCursor(Qt.PointingHandCursor)
+        self.menu_columnas = CheckableMenu(self)
+        self.columnas_actions = {}
+        for col_idx in range(5, 21):
+            h_item = self.tabla.horizontalHeaderItem(col_idx)
+            nombre_col = h_item.toolTip() or h_item.text()
+            accion = self.menu_columnas.addAction(nombre_col)
+            accion.setCheckable(True)
+            accion.setChecked(True)
+            accion.toggled.connect(lambda visible, c=col_idx: self._on_columna_toggled(c, visible))
+            self.columnas_actions[col_idx] = accion
+        self.btn_columnas.setMenu(self.menu_columnas)
+        toolbar_layout.addWidget(self.btn_columnas)
+
+        # Exportar (V2.0.0: movido del footer a la toolbar)
+        self.btn_exportar = QPushButton("Exportar")
+        self.btn_exportar.setIcon(svg_icon("exportar-descargar", size=15))
+        self.btn_exportar.setToolTip("Exportar resultados a Excel (.csv)")
+        self.btn_exportar.clicked.connect(self.exportar_excel_completo)
+        self.btn_exportar.setCursor(Qt.PointingHandCursor)
+        toolbar_layout.addWidget(self.btn_exportar)
+
+        # Contenedor central: toolbar + stack de vistas (Fase 4 añade la galería)
+        self.stack_vistas = QStackedWidget()
+        self.stack_vistas.addWidget(self.tabla)
+
+        contenedor_central = QWidget()
+        central_v = QVBoxLayout(contenedor_central)
+        central_v.setContentsMargins(0, 0, 0, 0)
+        central_v.setSpacing(6)
+        central_v.addLayout(toolbar_layout)
+        central_v.addWidget(self.stack_vistas)
+
+        self.splitter.addWidget(contenedor_central)
 
         # Panel Preview
         self.panel_preview = QFrame()
@@ -1386,30 +1563,17 @@ class BuscadorPiezas(QMainWindow):
         self.btn_copiar_nombre.setCursor(Qt.PointingHandCursor)
         footer_layout.addWidget(self.btn_copiar_nombre)
         
-        self.btn_exportar = QPushButton("Exportar a Excel")
-        self.btn_exportar.setIcon(svg_icon("exportar-descargar"))
-        self.btn_exportar.setToolTip("Exportar resultados a Excel (.csv)")
-        self.btn_exportar.clicked.connect(self.exportar_excel_completo)
-        self.btn_exportar.setCursor(Qt.PointingHandCursor)
-        footer_layout.addWidget(self.btn_exportar)
-        
-        # Separador visual
-        line_sep1 = QFrame()
-        line_sep1.setFrameShape(QFrame.VLine)
-        line_sep1.setFrameShadow(QFrame.Sunken)
-        footer_layout.addWidget(line_sep1)
-        
-        lbl_densidad = QLabel("Vista:")
-        lbl_densidad.setObjectName("StatusDim")
-        footer_layout.addWidget(lbl_densidad)
-        
+        # V2.0.0: Exportar vive ahora en la toolbar central (self.btn_exportar).
+        # El combo de densidad se conserva oculto como fuente de verdad; lo
+        # manejan los botones segmentados Cómoda/Compacta de la toolbar.
         self.combo_densidad = QComboBox()
         self.combo_densidad.setView(QListView())
         self.combo_densidad.setMaxVisibleItems(10)
         self.combo_densidad.addItems(["Cómoda", "Compacta"])
         self.combo_densidad.currentIndexChanged.connect(self.cambiar_densidad_tabla)
+        self.combo_densidad.setVisible(False)
         footer_layout.addWidget(self.combo_densidad)
-        
+
         # Separador visual
         line_sep = QFrame()
         line_sep.setFrameShape(QFrame.VLine)
@@ -1473,8 +1637,39 @@ class BuscadorPiezas(QMainWindow):
         footer_layout.addWidget(self.lbl_count)
 
         main_layout.addWidget(self.footer_frame)
-        
+
+        self._restaurar_config_ui()
         self.actualizar_estilos()
+
+    # ═══════════════════════════════════════════
+    # CONFIG UI V2.0.0 (QSettings: densidad, columnas, vista)
+    # ═══════════════════════════════════════════
+    def _on_densidad_segment(self, index):
+        """Los segmentos Cómoda/Compacta manejan el combo oculto (fuente de verdad)."""
+        self.combo_densidad.setCurrentIndex(index)
+        self.qsettings.setValue("densidad", index)
+
+    def _on_columna_toggled(self, col, visible):
+        self.tabla.setColumnHidden(col, not visible)
+        ocultas = [str(c) for c, a in self.columnas_actions.items() if not a.isChecked()]
+        self.qsettings.setValue("columnas_ocultas", ",".join(ocultas))
+
+    def _restaurar_config_ui(self):
+        """Restaura densidad y columnas visibles desde QSettings."""
+        try:
+            densidad = int(self.qsettings.value("densidad", 0))
+            if densidad == 1:
+                self.btn_dens_compacta.setChecked(True)
+                self.combo_densidad.setCurrentIndex(1)
+            ocultas = self.qsettings.value("columnas_ocultas", "")
+            if ocultas:
+                for c_str in str(ocultas).split(','):
+                    col = int(c_str)
+                    if col in self.columnas_actions:
+                        self.columnas_actions[col].setChecked(False)
+                        self.tabla.setColumnHidden(col, True)
+        except Exception as e:
+            logger.debug(f"Error restaurando config UI: {e}")
 
     def actualizar_estilos(self):
         """V2.0.0: el tema vive en alsi_buscador.qss (aplicado a nivel de app
@@ -1757,10 +1952,14 @@ class BuscadorPiezas(QMainWindow):
                 # Columna oculta 3: Nom Proy
                 self.tabla.setItem(row, 3, QTableWidgetItem(str(data[7]) if data[7] else ""))
                 
-                # Columna 4: Vista (Miniatura)
+                # Columna 4: Vista (Miniatura, con badge de extensión como placeholder V2.0.0)
                 thumb_item = QTableWidgetItem()
                 thumb_item.setData(Qt.UserRole, ruta)
                 thumb_item.setTextAlignment(Qt.AlignCenter)
+                ext_badge = Path(str(data[0])).suffix.lower()
+                if ext_badge not in self._badge_cache:
+                    self._badge_cache[ext_badge] = QIcon(pixmap_badge_extension(ext_badge, size=48))
+                thumb_item.setIcon(self._badge_cache[ext_badge])
                 self.tabla.setItem(row, 4, thumb_item)
                 
                 # Resto de columnas visibles:
@@ -2273,12 +2472,13 @@ class BuscadorPiezas(QMainWindow):
                 self.splitter.setSizes(sizes)
 
     def cambiar_densidad_tabla(self, index):
+        # V2.0.0: Cómoda fila 64/miniatura 56 · Compacta fila 40/miniatura 36
         if index == 0:  # Cómoda
-            self.tabla.verticalHeader().setDefaultSectionSize(46)
-            self.tabla.setIconSize(QSize(44, 44))
+            self.tabla.verticalHeader().setDefaultSectionSize(64)
+            self.tabla.setIconSize(QSize(56, 56))
         else:           # Compacta
-            self.tabla.verticalHeader().setDefaultSectionSize(30)
-            self.tabla.setIconSize(QSize(24, 24))
+            self.tabla.verticalHeader().setDefaultSectionSize(40)
+            self.tabla.setIconSize(QSize(36, 36))
 
     def _export_to_csv(self, rows):
         if not rows: return
@@ -2291,7 +2491,9 @@ class BuscadorPiezas(QMainWindow):
                 writer = csv.writer(f, delimiter=';')
                 headers = []
                 for j in range(5, self.tabla.columnCount()):
-                    headers.append(self.tabla.horizontalHeaderItem(j).text())
+                    h_item = self.tabla.horizontalHeaderItem(j)
+                    # V2.0.0: las columnas abreviadas (L/T/F/S/P/M) guardan el nombre completo en el tooltip
+                    headers.append(h_item.toolTip() or h_item.text())
                 writer.writerow(headers)
                 
                 for r in rows:
