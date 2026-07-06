@@ -356,7 +356,9 @@ def cargar_qss_marca():
     qss += QSS_EXTRAS
     qss = qss.replace("__FONT_H2__", FUENTES['h2'])
     icons_dir = resource_path("icons").replace("\\", "/")
-    qss = qss.replace("url(icons/", f"url({icons_dir}/")
+    # URL entre comillas: la ruta puede contener espacios ("OFITEC 4", "BÚSQUEDA PIEZAS")
+    # y sin comillas el parser CSS de Qt falla ("Could not parse application stylesheet")
+    qss = re.sub(r'url\(icons/([^)]+)\)', lambda m: f'url("{icons_dir}/{m.group(1)}")', qss)
     return qss
 
 
@@ -468,118 +470,153 @@ QComboBox::down-arrow { image: none; }
 # DIÁLOGO DE INDEXACIÓN SELECTIVA (Cambio 2)
 # -----------------------------------------------------------------------------
 class DialogIndexacion(QDialog):
-    """Modal para elegir qué orígenes y años indexar (v1.0.7 - NAS nuevo)"""
+    """Modal para elegir qué orígenes y años indexar (V2.0.0 - rediseño 3a).
+    Orígenes como tarjetas #FilterCard y años como chips #Chip."""
     def __init__(self, rutas_dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Configurar Indexación NAS")
-        self.setMinimumSize(420, 480)
+        self.setMinimumSize(480, 520)
         self.setModal(True)
-        
+
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         layout.setContentsMargins(16, 16, 16, 16)
-        
-        # Título descriptivo
-        lbl_titulo = QLabel("Selecciona los orígenes a indexar en el NAS:")
-        lbl_titulo.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        layout.addWidget(lbl_titulo)
-        
-        # --- Orígenes ---
-        group_comp = QGroupBox("Orígenes")
-        group_comp.setFont(QFont("Segoe UI", 9))
-        comp_layout = QVBoxLayout(group_comp)
-        
-        self.list_companeros = QListWidget()
-        self.list_companeros.setMaximumHeight(160)
-        for key in rutas_dict.keys():
-            label = ETIQUETAS_ORIGEN.get(key, key)
-            item = QListWidgetItem(label)
-            item.setData(Qt.UserRole, key)
-            item.setToolTip(rutas_dict[key])
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
-            self.list_companeros.addItem(item)
-        comp_layout.addWidget(self.list_companeros)
-        
+
+        # --- Cabecera ---
+        header = QFrame()
+        header.setObjectName("DialogHeader")
+        h_lay = QHBoxLayout(header)
+        h_lay.setContentsMargins(2, 2, 2, 10)
+        h_lay.setSpacing(10)
+        icono_hdr = QLabel()
+        icono_hdr.setPixmap(svg_pixmap("reindexar-refrescar", color="#E66C32", size=28))
+        h_lay.addWidget(icono_hdr)
+        titulos_lay = QVBoxLayout()
+        titulos_lay.setSpacing(2)
+        lbl_titulo = QLabel("Reindexar NAS")
+        lbl_titulo.setObjectName("DialogTitle")
+        lbl_titulo.setStyleSheet(
+            f'font-family: "{FUENTES["h2"]}"; font-size: 16px; font-weight: 800; '
+            f'color: #F5F5F5; background: transparent;')
+        lbl_sub = QLabel("192.168.1.10 · Oficina Técnica")
+        lbl_sub.setObjectName("DialogSub")
+        titulos_lay.addWidget(lbl_titulo)
+        titulos_lay.addWidget(lbl_sub)
+        h_lay.addLayout(titulos_lay)
+        h_lay.addStretch()
+        layout.addWidget(header)
+
+        # --- Orígenes como tarjetas ---
+        lbl_origenes = QLabel("ORÍGENES")
+        lbl_origenes.setObjectName("PanelTitle")
+        layout.addWidget(lbl_origenes)
+
+        self._checks_origen = {}  # key -> QCheckBox
+        for key, ruta in rutas_dict.items():
+            card = QFrame()
+            card.setObjectName("FilterCard")
+            c_lay = QHBoxLayout(card)
+            c_lay.setContentsMargins(10, 8, 10, 8)
+            chk = QCheckBox(ETIQUETAS_ORIGEN.get(key, key))
+            chk.setChecked(True)
+            chk.setCursor(Qt.PointingHandCursor)
+            lbl_ruta = QLabel(ruta)
+            lbl_ruta.setStyleSheet("color: #777777; font-size: 10px; background: transparent;")
+            c_lay.addWidget(chk)
+            c_lay.addStretch()
+            c_lay.addWidget(lbl_ruta)
+            self._checks_origen[key] = chk
+            layout.addWidget(card)
+
         btn_comp_layout = QHBoxLayout()
         btn_todos = QPushButton("Todos")
         btn_todos.setCursor(Qt.PointingHandCursor)
-        btn_todos.clicked.connect(lambda: self._toggle(self.list_companeros, True))
+        btn_todos.clicked.connect(lambda: self._toggle(self._checks_origen, True))
         btn_ninguno = QPushButton("Ninguno")
         btn_ninguno.setCursor(Qt.PointingHandCursor)
-        btn_ninguno.clicked.connect(lambda: self._toggle(self.list_companeros, False))
+        btn_ninguno.clicked.connect(lambda: self._toggle(self._checks_origen, False))
         btn_comp_layout.addWidget(btn_todos)
         btn_comp_layout.addWidget(btn_ninguno)
-        comp_layout.addLayout(btn_comp_layout)
-        layout.addWidget(group_comp)
-        
-        # --- Años (Añadido V1.2.4 para consistencia) ---
-        group_años = QGroupBox("Años")
-        group_años.setFont(QFont("Segoe UI", 9))
-        años_layout = QVBoxLayout(group_años)
-        
-        self.list_años = QListWidget()
-        self.list_años.setMaximumHeight(150)
+        btn_comp_layout.addStretch()
+        layout.addLayout(btn_comp_layout)
+
+        # --- Años como chips ---
+        lbl_anos_t = QLabel("AÑOS DE PROYECTO")
+        lbl_anos_t.setObjectName("PanelTitle")
+        layout.addWidget(lbl_anos_t)
+
+        self._chips_años = {}  # "2026" -> QPushButton checkable
+        chips_widget = QWidget()
+        from PyQt5.QtWidgets import QGridLayout
+        chips_grid = QGridLayout(chips_widget)
+        chips_grid.setContentsMargins(0, 0, 0, 0)
+        chips_grid.setSpacing(6)
         años_actuales = [str(a) for a in range(datetime.now().year, 2010, -1)]
-        for año in años_actuales:
-            item = QListWidgetItem(año)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
-            self.list_años.addItem(item)
-        años_layout.addWidget(self.list_años)
-        
+        POR_FILA = 8
+        for i, año in enumerate(años_actuales):
+            chip = QPushButton(año)
+            chip.setObjectName("Chip")
+            chip.setCheckable(True)
+            chip.setChecked(True)
+            chip.setCursor(Qt.PointingHandCursor)
+            chips_grid.addWidget(chip, i // POR_FILA, i % POR_FILA)
+            self._chips_años[año] = chip
+        layout.addWidget(chips_widget)
+
         btn_años_layout = QHBoxLayout()
         btn_t_años = QPushButton("Todos")
-        btn_t_años.clicked.connect(lambda: self._toggle(self.list_años, True))
+        btn_t_años.setCursor(Qt.PointingHandCursor)
+        btn_t_años.clicked.connect(lambda: self._toggle(self._chips_años, True))
         btn_n_años = QPushButton("Ninguno")
-        btn_n_años.clicked.connect(lambda: self._toggle(self.list_años, False))
+        btn_n_años.setCursor(Qt.PointingHandCursor)
+        btn_n_años.clicked.connect(lambda: self._toggle(self._chips_años, False))
         btn_años_layout.addWidget(btn_t_años)
         btn_años_layout.addWidget(btn_n_años)
-        años_layout.addLayout(btn_años_layout)
-        layout.addWidget(group_años)
-        
+        btn_años_layout.addStretch()
+        layout.addLayout(btn_años_layout)
+
         # --- Info ---
-        lbl_info = QLabel("El proceso puede tardar varios minutos según el tamaño del NAS.\n"
-                         "Puedes cancelar en cualquier momento.")
-        lbl_info.setStyleSheet("color: #999999; font-style: italic; padding: 4px;")
+        lbl_info = QLabel("El proceso puede tardar varios minutos según el tamaño del NAS. "
+                          "Puedes cancelar en cualquier momento; el índice anterior sigue disponible.")
+        lbl_info.setStyleSheet("color: #999999; font-style: italic; padding: 4px; background: transparent;")
         lbl_info.setWordWrap(True)
         layout.addWidget(lbl_info)
-        
-        # --- Botones ---
-        button_box = QDialogButtonBox()
+        layout.addStretch()
+
+        # --- Footer ---
+        footer = QFrame()
+        footer.setObjectName("DialogFooter")
+        f_lay = QHBoxLayout(footer)
+        f_lay.setContentsMargins(2, 8, 2, 2)
+        f_lay.addStretch()
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.setCursor(Qt.PointingHandCursor)
+        btn_cancel.clicked.connect(self.reject)
         self.btn_ok = QPushButton("Iniciar Indexación")
         self.btn_ok.setIcon(svg_icon("reindexar-refrescar", color="#FFFFFF"))
         self.btn_ok.setObjectName("Primary")
         self.btn_ok.setCursor(Qt.PointingHandCursor)
         self.btn_ok.clicked.connect(self.accept)
-        
-        btn_cancel = QPushButton("Cancelar")
-        btn_cancel.setCursor(Qt.PointingHandCursor)
-        btn_cancel.clicked.connect(self.reject)
-        
-        button_box.addButton(self.btn_ok, QDialogButtonBox.AcceptRole)
-        button_box.addButton(btn_cancel, QDialogButtonBox.RejectRole)
-        layout.addWidget(button_box)
-        
-        # V2.0.0: el tema oscuro global (alsi_buscador.qss) ya estiliza el diálogo
-    
-    def _toggle(self, list_widget, state):
-        for i in range(list_widget.count()):
-            list_widget.item(i).setCheckState(Qt.Checked if state else Qt.Unchecked)
+        f_lay.addWidget(btn_cancel)
+        f_lay.addWidget(self.btn_ok)
+        layout.addWidget(footer)
 
-    def get_selected_items(self, list_widget):
-        sel = []
-        for i in range(list_widget.count()):
-            item = list_widget.item(i)
-            if item.checkState() == Qt.Checked:
-                sel.append(item.text())
-        return sel
+    def _toggle(self, coleccion, state):
+        """Marca/desmarca todos los checkables de un dict {clave: widget}."""
+        for w in coleccion.values():
+            w.setChecked(state)
+
+    def get_selected_items(self, coleccion):
+        """Devuelve las claves de los checkables marcados."""
+        return [clave for clave, w in coleccion.items() if w.isChecked()]
 
     def get_companeros_seleccionados(self):
-        return self.get_selected_items(self.list_companeros)
+        # V2.0.0: devuelve las CLAVES de RUTAS_NAS (antes devolvía etiquetas,
+        # que nunca coincidían con las claves en IndexadorThread — bug de master)
+        return self.get_selected_items(self._checks_origen)
 
     def get_años_seleccionados(self):
-        return self.get_selected_items(self.list_años)
+        return self.get_selected_items(self._chips_años)
     
 
 
@@ -2760,154 +2797,190 @@ class BuscadorPiezas(QMainWindow):
         try:
             dialog = QDialog(self)
             dialog.setWindowTitle("Guía Rápida - Buscador ALSI")
-            dialog.resize(800, 600)
-            layout = QVBoxLayout(dialog)
-            
+            dialog.resize(760, 560)
+            layout_v = QVBoxLayout(dialog)
+            layout_v.setContentsMargins(12, 12, 12, 12)
+            layout_v.setSpacing(8)
+
+            # Estilo HTML compartido de las secciones (tema oscuro V2.0.0)
+            style = """
+            <style>
+                h1 { color: #E66C32; font-size: 16px; margin-bottom: 5px;
+                     border-bottom: 2px solid #E66C32; padding-bottom: 2px; }
+                h2 { color: #F5F5F5; font-size: 13px; margin-top: 10px;
+                     margin-bottom: 5px; font-weight: bold; }
+                p, li, body { font-size: 11px; line-height: 1.5; color: #DFDFDF; }
+                blockquote { border-left: 3px solid #E66C32; background-color: #3A2C21;
+                             padding: 5px; margin: 5px 0; color: #F0A377; font-style: italic; }
+                pre { background: #262626; padding: 10px; }
+            </style>
+            """
+
+            def md_a_html(texto_md):
+                lines = texto_md.split('\n')
+                for i, line in enumerate(lines):
+                    line_s = line.strip()
+                    if line_s.startswith('# 🚀'):
+                        lines[i] = f"<h1>{line_s[4:]}</h1>"
+                    elif line_s.startswith('# '):
+                        lines[i] = f"<h1>{line_s[2:]}</h1>"
+                    elif line_s.startswith('## '):
+                        lines[i] = f"<h2>{line_s[3:]}</h2>"
+                    elif line_s.startswith('*   ') or line_s.startswith('* '):
+                        lines[i] = f"<li>{line_s[2:].strip()}</li>"
+                    elif line_s.startswith('> '):
+                        lines[i] = f"<blockquote>{line_s[2:]}</blockquote>"
+                html = '<br>'.join(lines)
+                html = html.replace("```markdown", "<pre>").replace("```", "</pre>")
+                html = html.replace("**", "<b>").replace("__", "<b>")
+                return style + html
+
+            # Contenido: dividir el MD en secciones por '## ' para el índice lateral
+            cuerpo = QHBoxLayout()
+            cuerpo.setSpacing(10)
+            toc = QListWidget()
+            toc.setObjectName("TocList")
+            toc.setFixedWidth(190)
             browser = QTextBrowser()
             browser.setOpenExternalLinks(True)
-            
-            # Cargar contenido MD
+
+            secciones = []  # (titulo, contenido_md)
             path_md = resource_path(os.path.join("docs", "GUIA_RAPIDA.md"))
             if os.path.exists(path_md):
                 with open(path_md, "r", encoding="utf-8") as f:
                     text = f.read()
-                    # Convertir MD básico a HTML simple para QTextBrowser (Line-by-line R3)
-                    lines = text.split('\n')
-                    for i, line in enumerate(lines):
-                        line_s = line.strip()
-                        if line_s.startswith('# 🚀'):
-                            lines[i] = f"<h1>{line_s[4:]}</h1>"
-                        elif line_s.startswith('# '):
-                            lines[i] = f"<h1>{line_s[2:]}</h1>"
-                        elif line_s.startswith('## '):
-                            lines[i] = f"<h2>{line_s[3:]}</h2>"
-                        elif line_s.startswith('*   ') or line_s.startswith('* '):
-                            lines[i] = f"<li>{line_s[2:].strip()}</li>"
-                        elif line_s.startswith('> '):
-                            lines[i] = f"<blockquote>{line_s[2:]}</blockquote>"
-                    
-                    html = '<br>'.join(lines)
-                    html = html.replace("```markdown", "<pre style='background:#262626; padding:10px;'>").replace("```", "</pre>")
-                    html = html.replace("**", "<b>").replace("__", "<b>")
-                    
-                    # Estilo base Profesional (V1.0.0 Polish R3 - Optimized Fonts)
-                    style = """
-                    <style>
-                        h1 { 
-                            color: #E15B1E; 
-                            font-family: 'Segoe UI', sans-serif; 
-                            font-size: 16px; 
-                            margin-bottom: 5px; 
-                            border-bottom: 2px solid #E15B1E;
-                            padding-bottom: 2px;
-                        }
-                        h2 {
-                            color: #F5F5F5;
-                            font-family: 'Segoe UI', sans-serif;
-                            font-size: 13px;
-                            margin-top: 10px;
-                            margin-bottom: 5px;
-                            font-weight: bold;
-                        }
-                        p, li, body {
-                            font-family: 'Segoe UI', sans-serif;
-                            font-size: 11px;
-                            line-height: 1.4;
-                            color: #DFDFDF;
-                        }
-                        blockquote {
-                            border-left: 3px solid #E66C32;
-                            background-color: #3A2C21;
-                            padding: 5px;
-                            margin: 5px 0;
-                            color: #F0A377;
-                            font-style: italic;
-                        }
-                    </style>
-                    """
-                    browser.setHtml(style + html)
+                actual_titulo = "Introducción"
+                actual_lineas = []
+                for line in text.split('\n'):
+                    if line.strip().startswith('## '):
+                        if actual_lineas:
+                            secciones.append((actual_titulo, '\n'.join(actual_lineas)))
+                        actual_titulo = line.strip()[3:].strip()
+                        actual_lineas = [line]
+                    else:
+                        actual_lineas.append(line)
+                if actual_lineas:
+                    secciones.append((actual_titulo, '\n'.join(actual_lineas)))
+
+            if secciones:
+                for titulo, _ in secciones:
+                    toc.addItem(titulo)
+
+                def mostrar_seccion(idx):
+                    if 0 <= idx < len(secciones):
+                        browser.setHtml(md_a_html(secciones[idx][1]))
+
+                toc.currentRowChanged.connect(mostrar_seccion)
+                toc.setCurrentRow(0)
             else:
+                toc.setVisible(False)
                 browser.setText("No se encontró el archivo de ayuda.")
-                
-            layout.addWidget(browser)
-            
+
+            cuerpo.addWidget(toc)
+            cuerpo.addWidget(browser, stretch=1)
+            layout_v.addLayout(cuerpo, stretch=1)
+
+            # Footer con atajos siempre visibles
+            footer = QFrame()
+            footer.setObjectName("DialogFooter")
+            f_lay = QHBoxLayout(footer)
+            f_lay.setContentsMargins(8, 6, 8, 6)
+            lbl_atajos = QLabel("Enter Buscar   ·   Ctrl+C Copiar nombre   ·   Doble clic Abrir carpeta   ·   Arrastrar → SolidWorks")
+            lbl_atajos.setStyleSheet("color: #999999; font-size: 11px; background: transparent;")
+            f_lay.addWidget(lbl_atajos)
+            f_lay.addStretch()
             btn_close = QPushButton("Cerrar")
+            btn_close.setCursor(Qt.PointingHandCursor)
             btn_close.clicked.connect(dialog.accept)
-            layout.addWidget(btn_close, alignment=Qt.AlignCenter)
-            
+            f_lay.addWidget(btn_close)
+            layout_v.addWidget(footer)
+
             dialog.exec_()
         except Exception as e:
             logger.error(f"Error mostrando ayuda: {e}")
 
     def mostrar_info(self):
-        """Muestra créditos y versión (Fixed HTML & Empty Notes R3)"""
+        """Muestra créditos y versión (V2.0.0 - rediseño 3c)"""
         try:
             dialog = QDialog(self)
             dialog.setWindowTitle("Acerca de - Buscador ALSI")
-            dialog.setFixedSize(450, 480) # Un poco más alto para las notas
+            dialog.setFixedSize(440, 520)
             layout = QVBoxLayout(dialog)
             layout.setSpacing(10)
-            layout.setContentsMargins(20, 20, 20, 20)
-            
-            # Cabecera
-            lbl_title = QLabel("Buscador de Piezas ALSI")
-            lbl_title.setStyleSheet("font-size: 22px; font-weight: bold; color: #E15B1E;")
-            lbl_title.setAlignment(Qt.AlignCenter)
-            layout.addWidget(lbl_title)
-            
-            lbl_ver = QLabel("Versión 1.0.7 (Migración NAS Nuevo)")
-            lbl_ver.setStyleSheet("font-size: 14px; color: #7f8c8d; font-weight: 500;")
-            lbl_ver.setAlignment(Qt.AlignCenter)
-            layout.addWidget(lbl_ver)
-            
-            # Separador
-            line = QFrame()
-            line.setFrameShape(QFrame.HLine)
-            line.setFrameShadow(QFrame.Sunken)
-            layout.addWidget(line)
-            
-            # Créditos con RichText forzado (R3 Fix)
-            lbl_author = QLabel()
-            lbl_author.setAlignment(Qt.AlignCenter)
-            lbl_author.setStyleSheet("font-size: 13px; color: #DFDFDF;")
-            lbl_author.setText("<html>Desarrollado por:<br><b>Francisco Fernández Rodríguez</b></html>")
-            layout.addWidget(lbl_author)
-            
-            lbl_desc = QLabel()
-            lbl_desc.setAlignment(Qt.AlignCenter)
-            lbl_desc.setStyleSheet("color: #999999; font-size: 12px;")
-            lbl_desc.setText("<html>Departamento de Oficina Técnica<br><b>ALSI</b></html>")
-            layout.addWidget(lbl_desc)
+            layout.setContentsMargins(0, 0, 0, 16)
 
-            # Sección de Novedades (Vacía por ahora)
-            lbl_updates = QLabel("Notas de Versión:")
-            lbl_updates.setStyleSheet("font-weight: bold; margin-top: 10px; color: #DFDFDF;")
+            # Cabecera con degradado de marca + isotipo
+            header = QFrame()
+            header.setStyleSheet(
+                "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+                "stop:0 #E66C32, stop:1 #BF5320); border: none;")
+            header.setFixedHeight(120)
+            h_lay = QVBoxLayout(header)
+            h_lay.setContentsMargins(16, 14, 16, 14)
+            h_lay.setSpacing(4)
+            lbl_iso = QLabel()
+            if os.path.exists(LOGO_ISOTIPO):
+                lbl_iso.setPixmap(QPixmap(LOGO_ISOTIPO).scaled(
+                    40, 40, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            lbl_iso.setStyleSheet("background: transparent;")
+            lbl_iso.setAlignment(Qt.AlignCenter)
+            h_lay.addWidget(lbl_iso)
+            lbl_title = QLabel("BUSCADOR DE PIEZAS")
+            lbl_title.setStyleSheet(
+                f'font-family: "{FUENTES["h1"]}"; font-size: 19px; font-weight: 800; '
+                f'color: #FFFFFF; background: transparent;')
+            lbl_title.setAlignment(Qt.AlignCenter)
+            h_lay.addWidget(lbl_title)
+            lbl_ver = QLabel("Versión 2.0.0 · Rediseño UI ALSI")
+            lbl_ver.setStyleSheet("font-size: 12px; color: #FFE3D2; font-weight: 600; background: transparent;")
+            lbl_ver.setAlignment(Qt.AlignCenter)
+            h_lay.addWidget(lbl_ver)
+            layout.addWidget(header)
+
+            # Datos clave-valor
+            datos = QFrame()
+            d_lay = QVBoxLayout(datos)
+            d_lay.setContentsMargins(20, 4, 20, 4)
+            d_lay.setSpacing(6)
+            for clave, valor in [
+                ("Desarrollador", "Francisco Fernández Rodríguez"),
+                ("Departamento", "Oficina Técnica · ALSI"),
+                ("Base de datos", "PostgreSQL · NAS 192.168.1.10"),
+            ]:
+                fila = QHBoxLayout()
+                lbl_k = QLabel(clave)
+                lbl_k.setObjectName("MetaKey")
+                lbl_v = QLabel(valor)
+                lbl_v.setObjectName("MetaVal")
+                lbl_v.setAlignment(Qt.AlignRight)
+                fila.addWidget(lbl_k)
+                fila.addStretch()
+                fila.addWidget(lbl_v)
+                d_lay.addLayout(fila)
+            layout.addWidget(datos)
+
+            # Notas de versión (dinámicas desde CHANGELOG.md)
+            lbl_updates = QLabel("NOTAS DE VERSIÓN")
+            lbl_updates.setObjectName("PanelTitle")
+            lbl_updates.setContentsMargins(20, 4, 20, 0)
             layout.addWidget(lbl_updates)
-            
+
             browser = QTextBrowser()
             browser.setHtml(self._obtener_changelog_html())
-            # V2.0.0: QTextBrowser oscuro heredado del QSS global
-            browser.setMaximumHeight(120)
-            layout.addWidget(browser)
-            
+            browser.setMaximumHeight(160)
+            cont_browser = QHBoxLayout()
+            cont_browser.setContentsMargins(20, 0, 20, 0)
+            cont_browser.addWidget(browser)
+            layout.addLayout(cont_browser)
+
             layout.addStretch()
 
             btn_close = QPushButton("Cerrar")
             btn_close.setCursor(Qt.PointingHandCursor)
-            btn_close.setFixedSize(110, 38)
-            btn_close.setStyleSheet("""
-                QPushButton {
-                    background-color: #7f8c8d;
-                    color: white;
-                    border-radius: 5px;
-                    font-weight: bold;
-                    font-size: 13px;
-                }
-                QPushButton:hover { background-color: #6c7a7d; }
-            """)
+            btn_close.setFixedSize(110, 36)
             btn_close.clicked.connect(dialog.accept)
             layout.addWidget(btn_close, alignment=Qt.AlignCenter)
-            
+
             dialog.exec_()
         except Exception as e:
             logger.error(f"Error mostrando info: {e}")
@@ -2927,7 +3000,7 @@ class BuscadorPiezas(QMainWindow):
             for line in lines:
                 l = line.strip()
                 if l.startswith('## ['):
-                    html_lines.append(f"<h3 style='color:#E15B1E;'>{l.replace('#', '').strip()}</h3>")
+                    html_lines.append(f"<h3 style='color:#E66C32;'>{l.replace('#', '').strip()}</h3>")
                 elif l.startswith('- '):
                     # Manejar negritas básicas
                     processed = l[2:].replace('**', '<b>').replace('**', '</b>')
@@ -2948,6 +3021,12 @@ class BuscadorPiezas(QMainWindow):
     # Eliminadas funciones duplicadas y closeEvent que sobreescribía el original.
 
 if __name__ == "__main__":
+    # V2.0.0: registrar avisos de Qt (p.ej. detalles de parseo QSS) en el log
+    from PyQt5.QtCore import qInstallMessageHandler
+    def _qt_msg_handler(mode, ctx, msg):
+        logger.warning(f"Qt: {msg}")
+    qInstallMessageHandler(_qt_msg_handler)
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
