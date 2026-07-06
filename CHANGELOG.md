@@ -1,5 +1,16 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.0] - 2026-07-06 (Rediseño visual completo - Marca ALSI 2025)
+- **Tema oscuro CAD**: Nueva interfaz oscura de marca (naranja #E66C32) aplicada con hoja de estilo QSS global.
+- **Tipografía de marca**: AG ALSI en títulos principales, Nizzoli Alt en títulos de sección y Poppins como fuente de toda la interfaz.
+- **Iconos SVG**: Sustituidos todos los emojis por iconografía vectorial monocroma recoloreable.
+- **Vista Galería**: Nueva vista de tarjetas con miniaturas grandes (tamaños S/M/L), conmutable con la vista Lista y con el mismo arrastrar-a-SolidWorks.
+- **Vista Lista mejorada**: Miniaturas de 56px, columnas de fabricación compactas (L·T·F·S·P·M con ✓), columna Tipo como píldora coloreada y densidad Cómoda/Compacta.
+- **Columnas configurables**: Botón "Columnas" para mostrar/ocultar columnas; la configuración, la vista y la densidad se recuerdan entre sesiones.
+- **Diálogos renovados**: Reindexar NAS (orígenes como tarjetas y años como chips), Guía rápida con índice lateral y Acerca de con cabecera de marca.
+- **Fix Reindexar**: Corregido un error por el que el diálogo de indexación no lanzaba la indexación de ningún origen (etiquetas vs claves internas).
+- **Placeholder de miniaturas**: Badge de extensión coloreado (PRT/ASM/DRW/PDF...) mientras carga la miniatura real.
+
 ## [1.1.0] - 2026-07-03 (Rediseño Completo UI/UX y Fix Logo)
 - **Fix Logo Definitivo**: Solucionado el problema visual ("franja negra") del logo ALSI al arrancar, procesando la imagen con PIL (LANCZOS) sobre fondo blanco puro, eliminando los píxeles de anti-aliasing con transparencia alfa.
 - **Rediseño Panel Propiedades SW**: Cambio completo del paradigma de filtrado en el panel derecho. Sustitución de `QComboBox` por `QListWidget` para permitir selección múltiple en Material, Tratamiento, Cierre y Espesor.

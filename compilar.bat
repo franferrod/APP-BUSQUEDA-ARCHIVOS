@@ -1,6 +1,6 @@
 @echo off
 echo ======================================================
-echo COMPILANDO BUSCADOR DE PIEZAS (ALSI) - V1.0.7
+echo COMPILANDO BUSCADOR DE PIEZAS (ALSI) - V2.0.0
 echo ======================================================
 echo Instalando dependencias necesarias...
 pip install -r requirements.txt
