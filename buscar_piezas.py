@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser, QFileDialog, QListView, QGraphicsDropShadowEffect,
                              QStyledItemDelegate, QStyleOptionViewItem, QStyle, QButtonGroup, QStackedWidget)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent, QSettings, QRect
-from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage, QPainter, QPen
+from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage, QPainter, QPen, QPalette
 from PyQt5.QtWidgets import QFileIconProvider
 import pythoncom
 import logging
@@ -290,6 +290,12 @@ QSplitter::handle:hover { background-color: #E66C32; }
 
 /* Con ::item estilizado, Qt requiere :alternate explícito (sin él usa la paleta clara) */
 QTableWidget::item:alternate, QTableView::item:alternate { background-color: #1D1D1D; }
+
+/* Cubrir la paleta Highlight (azul Fusion) en rutas de pintado con delegados */
+QTableWidget, QTableView, QListWidget {
+    selection-background-color: #3A2C21;
+    selection-color: #F5F5F5;
+}
 
 /* Segmented control por dynamic property (un widget solo admite un objectName) */
 QPushButton[segmento="true"] {
@@ -638,6 +644,39 @@ class TablaArrastrable(QTableWidget):
         
         return mime
         
+# -----------------------------------------------------------------------------
+# VISTA GALERÍA (V2.0.0 - Tarjetas con drag & drop a SolidWorks)
+# -----------------------------------------------------------------------------
+class GaleriaArrastrable(QListWidget):
+    """QListWidget en IconMode con el mismo drag & drop a SolidWorks que la tabla.
+    La ruta completa de cada archivo viaja en Qt.UserRole."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Gallery")
+        self.setViewMode(QListView.IconMode)
+        self.setResizeMode(QListView.Adjust)
+        self.setMovement(QListView.Static)
+        self.setSpacing(10)
+        self.setWordWrap(True)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragOnly)
+        self.setDefaultDropAction(Qt.CopyAction)
+        self.setUniformItemSizes(True)
+
+    def mimeData(self, items):
+        """file:/// URLs para arrastrar a SolidWorks (idéntico a TablaArrastrable)."""
+        mime = QMimeData()
+        urls = []
+        for item in items:
+            ruta = item.data(Qt.UserRole)
+            if ruta:
+                urls.append(QUrl.fromLocalFile(ruta))
+        if urls:
+            mime.setUrls(urls)
+        return mime
+
+
 # -----------------------------------------------------------------------------
 # THUMBNAIL WORKER (V1.0.3 - Extracción asíncrona)
 # -----------------------------------------------------------------------------
@@ -1181,6 +1220,14 @@ class BuscadorPiezas(QMainWindow):
         self._fab_delegate = FabricacionDelegate(self.tabla)
         for col_fab in range(14, 20):
             self.tabla.setItemDelegateForColumn(col_fab, self._fab_delegate)
+
+        # V2.0.0: selección naranja tint también con la tabla sin foco y bajo delegados
+        # (la paleta Fusion pone azul en activo y gris claro en inactivo)
+        pal_tabla = self.tabla.palette()
+        for grupo_pal in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
+            pal_tabla.setColor(grupo_pal, QPalette.Highlight, QColor("#3A2C21"))
+            pal_tabla.setColor(grupo_pal, QPalette.HighlightedText, QColor("#F5F5F5"))
+        self.tabla.setPalette(pal_tabla)
         self.tabla.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
         # V2.0.0: sin zebra — el diseño usa fondo uniforme #1D1D1D con separador entre filas
@@ -1255,10 +1302,11 @@ class BuscadorPiezas(QMainWindow):
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setSpacing(10)
 
-        # Segmento Lista/Galería (la galería se conecta en Fase 4)
+        # Segmento Lista/Galería (V2.0.0)
         self.grupo_vista, botones_vista = _crear_segmento([("Lista", "vista-lista"), ("Galería", "vista-galeria")])
         self.btn_vista_lista, self.btn_vista_galeria = botones_vista
         self.btn_vista_lista.setChecked(True)
+        self.grupo_vista.buttonClicked[int].connect(self._cambiar_vista)
         seg_vista_layout = QHBoxLayout()
         seg_vista_layout.setSpacing(0)
         for b in botones_vista:
@@ -1275,6 +1323,20 @@ class BuscadorPiezas(QMainWindow):
         for b in botones_dens:
             seg_dens_layout.addWidget(b)
         toolbar_layout.addLayout(seg_dens_layout)
+
+        # Segmento S/M/L: tamaño de tarjeta en galería (solo activo en vista Galería)
+        self.grupo_tam_galeria, botones_tam = _crear_segmento([("S", None), ("M", None), ("L", None)])
+        self.btn_tam_s, self.btn_tam_m, self.btn_tam_l = botones_tam
+        self.btn_tam_m.setChecked(True)
+        self.grupo_tam_galeria.buttonClicked[int].connect(self._cambiar_tam_galeria)
+        self.seg_tam_container = QWidget()
+        seg_tam_layout = QHBoxLayout(self.seg_tam_container)
+        seg_tam_layout.setContentsMargins(0, 0, 0, 0)
+        seg_tam_layout.setSpacing(0)
+        for b in botones_tam:
+            seg_tam_layout.addWidget(b)
+        self.seg_tam_container.setVisible(False)  # Solo visible en vista Galería
+        toolbar_layout.addWidget(self.seg_tam_container)
 
         toolbar_layout.addStretch()
 
@@ -1303,9 +1365,26 @@ class BuscadorPiezas(QMainWindow):
         self.btn_exportar.setCursor(Qt.PointingHandCursor)
         toolbar_layout.addWidget(self.btn_exportar)
 
-        # Contenedor central: toolbar + stack de vistas (Fase 4 añade la galería)
+        # Contenedor central: toolbar + stack de vistas (Lista / Galería)
         self.stack_vistas = QStackedWidget()
         self.stack_vistas.addWidget(self.tabla)
+
+        # Vista Galería (V2.0.0)
+        self.galeria = GaleriaArrastrable()
+        pal_gal = self.galeria.palette()
+        for grupo_pal in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
+            pal_gal.setColor(grupo_pal, QPalette.Highlight, QColor("#3A2C21"))
+            pal_gal.setColor(grupo_pal, QPalette.HighlightedText, QColor("#F5F5F5"))
+        self.galeria.setPalette(pal_gal)
+        self.galeria.setIconSize(QSize(128, 128))
+        self.galeria.setGridSize(QSize(180, 210))
+        self.galeria.currentItemChanged.connect(self._on_galeria_seleccion)
+        self.galeria.doubleClicked.connect(self.abrir_carpeta_seleccionada)
+        self.galeria.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.galeria.customContextMenuRequested.connect(
+            lambda pos: self.mostrar_menu_contextual(pos, origen_widget=self.galeria))
+        self._galeria_items = {}  # ruta -> QListWidgetItem (para actualizar miniaturas)
+        self.stack_vistas.addWidget(self.galeria)
 
         contenedor_central = QWidget()
         central_v = QVBoxLayout(contenedor_central)
@@ -1655,7 +1734,7 @@ class BuscadorPiezas(QMainWindow):
         self.qsettings.setValue("columnas_ocultas", ",".join(ocultas))
 
     def _restaurar_config_ui(self):
-        """Restaura densidad y columnas visibles desde QSettings."""
+        """Restaura densidad, columnas visibles, vista y tamaño galería desde QSettings."""
         try:
             densidad = int(self.qsettings.value("densidad", 0))
             if densidad == 1:
@@ -1668,8 +1747,86 @@ class BuscadorPiezas(QMainWindow):
                     if col in self.columnas_actions:
                         self.columnas_actions[col].setChecked(False)
                         self.tabla.setColumnHidden(col, True)
+            tam = int(self.qsettings.value("galeria_tam", 1))
+            [self.btn_tam_s, self.btn_tam_m, self.btn_tam_l][max(0, min(tam, 2))].setChecked(True)
+            self._aplicar_tam_galeria(tam)
+            if int(self.qsettings.value("vista_modo", 0)) == 1:
+                self.btn_vista_galeria.setChecked(True)
+                self._cambiar_vista(1)
         except Exception as e:
             logger.debug(f"Error restaurando config UI: {e}")
+
+    # ═══════════════════════════════════════════
+    # VISTA GALERÍA (V2.0.0)
+    # ═══════════════════════════════════════════
+    def _cambiar_vista(self, index):
+        """Conmuta Lista (0) / Galería (1)."""
+        self.stack_vistas.setCurrentIndex(index)
+        self.seg_tam_container.setVisible(index == 1)
+        if index == 1:
+            self._sincronizar_galeria()
+        self.qsettings.setValue("vista_modo", index)
+
+    TAM_GALERIA = [(96, (150, 175)), (128, (180, 210)), (160, (220, 250))]  # S, M, L
+
+    def _aplicar_tam_galeria(self, index):
+        icono, grid = self.TAM_GALERIA[max(0, min(index, 2))]
+        self.galeria.setIconSize(QSize(icono, icono))
+        self.galeria.setGridSize(QSize(*grid))
+
+    def _cambiar_tam_galeria(self, index):
+        self._aplicar_tam_galeria(index)
+        self.qsettings.setValue("galeria_tam", index)
+
+    def _sincronizar_galeria(self):
+        """Reconstruye las tarjetas de la galería a partir de la tabla (fuente de verdad).
+        La miniatura usa la caché si existe; si no, el badge de extensión."""
+        try:
+            self.galeria.blockSignals(True)
+            self.galeria.clear()
+            self._galeria_items = {}
+            for r in range(self.tabla.rowCount()):
+                item_ruta = self.tabla.item(r, 0)
+                item_nombre = self.tabla.item(r, 5)
+                if not item_ruta or not item_nombre:
+                    continue
+                ruta = item_ruta.text()
+                nombre = item_nombre.text()
+                cliente = self.tabla.item(r, 8).text() if self.tabla.item(r, 8) else ""
+                año = self.tabla.item(r, 7).text() if self.tabla.item(r, 7) else ""
+                material = self.tabla.item(r, 11).text() if self.tabla.item(r, 11) else ""
+                meta = " · ".join([p for p in (cliente, año, material) if p])
+                card = QListWidgetItem(f"{nombre}\n{meta}")
+                card.setData(Qt.UserRole, ruta)
+                card.setToolTip(f"{nombre}\n{meta}\n{ruta}")
+                card.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
+                if ruta in self.cache_miniaturas:
+                    card.setIcon(QIcon(self.cache_miniaturas[ruta]))
+                else:
+                    ext = Path(nombre).suffix.lower()
+                    if ext not in self._badge_cache:
+                        self._badge_cache[ext] = QIcon(pixmap_badge_extension(ext, size=48))
+                    card.setIcon(self._badge_cache[ext])
+                self.galeria.addItem(card)
+                self._galeria_items[ruta] = card
+            self.galeria.blockSignals(False)
+        except Exception as e:
+            self.galeria.blockSignals(False)
+            logger.debug(f"Error sincronizando galería: {e}")
+
+    def _on_galeria_seleccion(self, current, previous=None):
+        """Selección en galería → selecciona la fila equivalente en la tabla
+        (dispara actualizar_preview y habilita los botones del footer)."""
+        if not current:
+            return
+        ruta = current.data(Qt.UserRole)
+        if not ruta:
+            return
+        for r in range(self.tabla.rowCount()):
+            item = self.tabla.item(r, 0)
+            if item and item.text() == ruta:
+                self.tabla.selectRow(r)
+                return
 
     def actualizar_estilos(self):
         """V2.0.0: el tema vive en alsi_buscador.qss (aplicado a nivel de app
@@ -2011,6 +2168,10 @@ class BuscadorPiezas(QMainWindow):
             
             # Re-activar ordenación después de cargar datos
             self.tabla.setSortingEnabled(True)
+
+            # V2.0.0: refrescar galería si es la vista activa
+            if self.stack_vistas.currentIndex() == 1:
+                self._sincronizar_galeria()
             
             if len(resultados) >= 5000:
                 self.lbl_status.setText("⚠ Mostrando 5000 de 5000+ resultados. Refina tu búsqueda.")
@@ -2356,9 +2517,17 @@ class BuscadorPiezas(QMainWindow):
 
             if pixmap and not pixmap.isNull():
                 self.cache_miniaturas[ruta] = pixmap
-                
+
                 # Poner miniatura en la celda correcta (busca por ruta, no por row)
                 self.set_cell_thumbnail(ruta, pixmap)
+
+                # V2.0.0: actualizar también la tarjeta de la galería si existe
+                try:
+                    card = self._galeria_items.get(ruta)
+                    if card:
+                        card.setIcon(QIcon(pixmap))
+                except RuntimeError:
+                    pass
                 
                 # Si la fila seleccionada tiene esta ruta, actualizar el panel derecho
                 try:
@@ -2539,7 +2708,9 @@ class BuscadorPiezas(QMainWindow):
         else:
             super().keyPressEvent(event)
 
-    def mostrar_menu_contextual(self, pos):
+    def mostrar_menu_contextual(self, pos, origen_widget=None):
+        # V2.0.0: origen_widget permite invocarlo desde la galería (posición correcta del popup)
+        widget_menu = origen_widget if origen_widget is not None else self.tabla
         if self.tabla.currentRow() >= 0:
             menu = QMenu()
             # V2.0.0: estilo oscuro heredado del QSS global (QSS_EXTRAS)
@@ -2570,7 +2741,7 @@ class BuscadorPiezas(QMainWindow):
                 action_export_sel.triggered.connect(self.exportar_excel_seleccion)
                 menu.addAction(action_export_sel)
 
-            menu.exec_(self.tabla.mapToGlobal(pos))
+            menu.exec_(widget_menu.mapToGlobal(pos))
 
     def copiar_nombre_seleccionado(self):
         """Acción proactiva: copiar solo el nombre del archivo"""
