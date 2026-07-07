@@ -831,11 +831,15 @@ class ToastNotification(QWidget):
             }
         """)
         self.layout.addWidget(self.label)
-        
+
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.hide)
-        
+
+        # V2.0.1: oculto hasta que haya un mensaje. Sin esto, el toast vacío se
+        # renderizaba en (0,0) sobre el logo como un recuadro oscuro con borde.
+        self.hide()
+
     def show_message(self, text, duration=2000):
         self.label.setText(text)
         self.adjustSize()
@@ -1590,6 +1594,12 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_preview_icon = QLabel()
         self.lbl_preview_icon.setPixmap(svg_pixmap("buscar", color="#777777", size=56))
         self.lbl_preview_icon.setAlignment(Qt.AlignCenter)
+        self.lbl_preview_icon.setScaledContents(False)
+        # SizePolicy Ignored: el label no impone el tamaño del pixmap al layout,
+        # así la imagen nunca desborda el card aunque el panel sea estrecho (V2.0.1)
+        self.lbl_preview_icon.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self._preview_pm_original = None  # pixmap sin escalar (para reescalar en resize)
+        self.preview_image_card.installEventFilter(self)  # capturar Resize
         img_card_lay.addWidget(self.lbl_preview_icon)
 
         # Efecto de opacidad para animaciones (V1.3.16)
@@ -2006,6 +2016,27 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             self.galeria.blockSignals(False)
             logger.debug(f"Error sincronizando galería: {e}")
+
+    def eventFilter(self, source, event):
+        # V2.0.1: reescalar la miniatura del preview cuando el card cambia de tamaño
+        if source is getattr(self, 'preview_image_card', None) and event.type() == QEvent.Resize:
+            self._ajustar_preview_imagen()
+        return super().eventFilter(source, event)
+
+    def _set_preview_imagen(self, pixmap):
+        """Guarda el pixmap original de la miniatura y lo muestra escalado al card."""
+        self._preview_pm_original = pixmap
+        self._ajustar_preview_imagen()
+
+    def _ajustar_preview_imagen(self):
+        """Escala la miniatura al tamaño disponible del card (responsive, sin desborde)."""
+        pm = self._preview_pm_original
+        if pm is None or pm.isNull():
+            return
+        card = self.preview_image_card
+        w = max(40, card.width() - 20)
+        h = max(40, card.height() - 20)
+        self.lbl_preview_icon.setPixmap(pm.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def _on_galeria_seleccion(self, current, previous=None):
         """Selección en galería → selecciona la fila equivalente en la tabla
@@ -2952,14 +2983,13 @@ class BuscadorPiezas(QMainWindow):
 
             # Mostrar miniatura cacheada inmediatamente o placeholder (V1.0.4 Fix)
             if ruta in self.cache_miniaturas:
-                cached = self.cache_miniaturas[ruta]
-                self.lbl_preview_icon.setPixmap(cached.scaled(230, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self._set_preview_imagen(self.cache_miniaturas[ruta])
                 self.lbl_preview_icon.setText("")
                 self.preview_opacity.setOpacity(1.0)
             else:
                 # V2.0.0: badge de extensión en vez de emoji
                 self.lbl_preview_icon.setText("")
-                self.lbl_preview_icon.setPixmap(pixmap_badge_extension(ext, size=96))
+                self._set_preview_imagen(pixmap_badge_extension(ext, size=96))
                 self.preview_opacity.setOpacity(0.5)
             
             # 2. DIFERIR RECURSOS PESADOS (Miniatura, os.path.exists, etc.)
@@ -3026,7 +3056,7 @@ class BuscadorPiezas(QMainWindow):
                     if current_row >= 0:
                         current_item = self.tabla.item(current_row, 4)
                         if current_item and current_item.data(Qt.UserRole) == ruta:
-                            self.lbl_preview_icon.setPixmap(pixmap.scaled(230, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                            self._set_preview_imagen(pixmap)
                             self.lbl_preview_icon.setText("")
                 except RuntimeError:
                     pass  # Widget eliminado durante búsqueda rápida
@@ -3084,7 +3114,7 @@ class BuscadorPiezas(QMainWindow):
             # Miniatura (Heavy IO)
             pixmap = self.extraer_miniatura(ruta)
             if pixmap and not pixmap.isNull():
-                self.lbl_preview_icon.setPixmap(pixmap.scaled(230, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self._set_preview_imagen(pixmap)
                 self.lbl_preview_icon.setText("")
                 self.anim_opacity.stop()
                 self.preview_opacity.setOpacity(0.0)
