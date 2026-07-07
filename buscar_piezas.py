@@ -326,7 +326,7 @@ QPushButton#btn_cancelar:hover { background-color: #A6443B; }
 
 QFrame#panel_preview { background-color: #2E2E2E; border: 1px solid #3D3D3D; border-radius: 10px; }
 /* Tarjeta lightbox de la miniatura en el preview (V2.0.1) */
-QFrame#PreviewImage { background-color: #F5F5F5; border: 1px solid #3D3D3D; border-radius: 8px; }
+QFrame#PreviewImage { background-color: #1D1D1D; border: 1px solid #3D3D3D; border-radius: 8px; }
 
 QListWidget { background-color: #1D1D1D; border: 1px solid #3D3D3D; border-radius: 8px; outline: 0; }
 QListWidget::item { padding: 3px 4px; border-radius: 4px; color: #DFDFDF; }
