@@ -312,6 +312,9 @@ QPushButton[segmento="true"]:hover:!checked { border-color: #E66C32; color: #DFD
 QPushButton[segPos="first"] { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
 QPushButton[segPos="last"]  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
 
+/* Barra de contexto bajo el header (V2.0.1) */
+QFrame#ContextBar { background-color: #242424; border-bottom: 1px solid #333333; }
+
 /* Todos/Ninguno como enlaces de texto compactos (V2.0.1) */
 QPushButton#btn_toggle {
     background: transparent; border: none; padding: 0 2px;
@@ -322,6 +325,8 @@ QPushButton#btn_cancelar { background-color: #8C3A32; border: none; color: #FFFF
 QPushButton#btn_cancelar:hover { background-color: #A6443B; }
 
 QFrame#panel_preview { background-color: #2E2E2E; border: 1px solid #3D3D3D; border-radius: 10px; }
+/* Tarjeta lightbox de la miniatura en el preview (V2.0.1) */
+QFrame#PreviewImage { background-color: #F5F5F5; border: 1px solid #3D3D3D; border-radius: 8px; }
 
 QListWidget { background-color: #1D1D1D; border: 1px solid #3D3D3D; border-radius: 8px; outline: 0; }
 QListWidget::item { padding: 3px 4px; border-radius: 4px; color: #DFDFDF; }
@@ -1058,8 +1063,10 @@ class BuscadorPiezas(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(15, 10, 15, 10)
-        main_layout.setSpacing(10)
+        # V2.0.1: layout a sangre — header y footer edge-to-edge (sin franja oscura
+        # del fondo #242424 rodeando el header). El padding va en la zona central.
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         # ═══════════════════════════════════════════
         # CABECERA (ISOTIPO + TÍTULO H1 + BARRA DE BÚSQUEDA) - V2.0.0
@@ -1162,8 +1169,9 @@ class BuscadorPiezas(QMainWindow):
         # BARRA DE CONTEXTO (V2.0.1): filtros activos + Limpiar | Recientes + Guardadas
         # ═══════════════════════════════════════════
         self.context_frame = QFrame()
+        self.context_frame.setObjectName("ContextBar")
         ctx_lay = QHBoxLayout(self.context_frame)
-        ctx_lay.setContentsMargins(12, 0, 12, 0)
+        ctx_lay.setContentsMargins(14, 6, 14, 6)
         ctx_lay.setSpacing(6)
 
         self.chips_activos_lay = QHBoxLayout()
@@ -1255,8 +1263,8 @@ class BuscadorPiezas(QMainWindow):
         # 1. ORIGEN
         sec_origen = _acordeon('origen', 'ORIGEN', 'carpeta')
         self.list_companeros = QListWidget()
-        self.list_companeros.setMinimumHeight(60)
-        self.list_companeros.setMaximumHeight(120)
+        self.list_companeros.setMinimumHeight(100)
+        self.list_companeros.setMaximumHeight(140)
         for key, label in ETIQUETAS_ORIGEN.items():
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, key)  # Internamente usamos la key
@@ -1287,6 +1295,7 @@ class BuscadorPiezas(QMainWindow):
         chips_grid = QGridLayout(chips_años_w)
         chips_grid.setContentsMargins(0, 0, 0, 0)
         chips_grid.setSpacing(4)
+        AÑOS_POR_FILA = 3
         for i in range(self.list_años.count()):
             item = self.list_años.item(i)
             chip = QPushButton(item.text())
@@ -1294,9 +1303,10 @@ class BuscadorPiezas(QMainWindow):
             chip.setCheckable(True)
             chip.setChecked(item.checkState() == Qt.Checked)
             chip.setCursor(Qt.PointingHandCursor)
+            chip.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             chip.toggled.connect(
                 lambda on, it=item: it.setCheckState(Qt.Checked if on else Qt.Unchecked))
-            chips_grid.addWidget(chip, i // 4, i % 4)
+            chips_grid.addWidget(chip, i // AÑOS_POR_FILA, i % AÑOS_POR_FILA)
             self.chips_años[item.text()] = chip
         sec_años.lay.addWidget(chips_años_w)
         self.list_años.itemChanged.connect(self._sync_chip_anio)
@@ -1305,8 +1315,8 @@ class BuscadorPiezas(QMainWindow):
         # 3. CARPETAS (MECANICA, LAYOUT...)
         sec_carpetas = _acordeon('carpetas', 'CARPETAS', 'capas-tipos')
         self.list_carpetas = QListWidget()
-        self.list_carpetas.setMinimumHeight(80)
-        self.list_carpetas.setMaximumHeight(180)
+        self.list_carpetas.setMinimumHeight(140)
+        self.list_carpetas.setMaximumHeight(220)
         for folder in FILTRO_CARPETAS:
             if folder == 'TODOS': continue
             item = QListWidgetItem(folder)
@@ -1320,16 +1330,16 @@ class BuscadorPiezas(QMainWindow):
         # 5. CLIENTES
         sec_clientes = _acordeon('clientes', 'CLIENTES', 'clientes')
         self.list_clientes = QListWidget()
-        self.list_clientes.setMinimumHeight(80)
-        self.list_clientes.setMaximumHeight(200)
+        self.list_clientes.setMinimumHeight(160)
+        self.list_clientes.setMaximumHeight(300)
         sec_clientes.lay.addWidget(self.list_clientes)
         self.add_toggle_buttons(sec_clientes.lay, self.list_clientes)
 
         # 6. PROYECTOS
         sec_proyectos = _acordeon('proyectos', 'PROYECTOS', 'proyectos-maletin')
         self.list_proyectos = QListWidget()
-        self.list_proyectos.setMinimumHeight(80)
-        self.list_proyectos.setMaximumHeight(200)
+        self.list_proyectos.setMinimumHeight(160)
+        self.list_proyectos.setMaximumHeight(300)
         sec_proyectos.lay.addWidget(self.list_proyectos)
         self.add_toggle_buttons(sec_proyectos.lay, self.list_proyectos)
 
@@ -1567,56 +1577,79 @@ class BuscadorPiezas(QMainWindow):
         shadow_effect.setOffset(0, 4)
         self.panel_preview.setGraphicsEffect(shadow_effect)
         preview_layout = QVBoxLayout(self.panel_preview)
-        preview_layout.setContentsMargins(15, 5, 15, 20)
-        preview_layout.setSpacing(8)
-        
-        # El botón de ocultar panel fue movido al footer
-        
+        preview_layout.setContentsMargins(14, 14, 14, 14)
+        preview_layout.setSpacing(10)
+
+        # --- Tarjeta de imagen (lightbox) con altura fija: la miniatura de
+        #     SolidWorks (fondo claro) queda enmarcada intencionalmente V2.0.1 ---
+        self.preview_image_card = QFrame()
+        self.preview_image_card.setObjectName("PreviewImage")
+        self.preview_image_card.setFixedHeight(210)
+        img_card_lay = QVBoxLayout(self.preview_image_card)
+        img_card_lay.setContentsMargins(8, 8, 8, 8)
         self.lbl_preview_icon = QLabel()
-        self.lbl_preview_icon.setPixmap(svg_pixmap("buscar", color="#777777", size=64))
+        self.lbl_preview_icon.setPixmap(svg_pixmap("buscar", color="#777777", size=56))
         self.lbl_preview_icon.setAlignment(Qt.AlignCenter)
-        self.lbl_preview_icon.setMinimumHeight(100)
-        
+        img_card_lay.addWidget(self.lbl_preview_icon)
+
         # Efecto de opacidad para animaciones (V1.3.16)
         self.preview_opacity = QGraphicsOpacityEffect()
         self.lbl_preview_icon.setGraphicsEffect(self.preview_opacity)
         self.anim_opacity = QPropertyAnimation(self.preview_opacity, b"opacity")
         self.anim_opacity.setDuration(400)
-        
-        preview_layout.addWidget(self.lbl_preview_icon)
-        
+        preview_layout.addWidget(self.preview_image_card)
+
+        # --- Nombre del archivo ---
         self.lbl_preview_nombre = QLabel("Seleccione un archivo")
         self.lbl_preview_nombre.setObjectName("FileName")
-        self.lbl_preview_nombre.setAlignment(Qt.AlignCenter)
+        self.lbl_preview_nombre.setAlignment(Qt.AlignLeft)
         self.lbl_preview_nombre.setWordWrap(True)
         preview_layout.addWidget(self.lbl_preview_nombre)
 
-        line = QFrame()
-        line.setFrameShape(QFrame.HLine)
-        line.setFrameShadow(QFrame.Sunken)
-        line.setStyleSheet("background-color: #3D3D3D;")
-        preview_layout.addWidget(line)
-        
-        self.lbl_preview_tipo = QLabel("")
-        self.lbl_preview_tipo.setFont(QFont("Segoe UI", 9))
-        self.lbl_preview_comp = QLabel("")
-        self.lbl_preview_comp.setFont(QFont("Segoe UI", 9))
-        self.lbl_preview_proyecto = QLabel("")
-        self.lbl_preview_proyecto.setFont(QFont("Segoe UI", 9))
-        self.lbl_preview_proyecto.setWordWrap(True)
-        self.lbl_preview_tamaño = QLabel("")
-        self.lbl_preview_tamaño.setFont(QFont("Segoe UI", 9))
+        # Píldora de tipo (Pieza/Ensamblaje/Plano/PDF)
+        self.lbl_preview_pill = QLabel("")
+        self.lbl_preview_pill.setVisible(False)
+        preview_layout.addWidget(self.lbl_preview_pill, alignment=Qt.AlignLeft)
+
+        # --- Metadatos como filas clave-valor ---
+        self.meta_grid = QGridLayout()
+        self.meta_grid.setContentsMargins(0, 4, 0, 4)
+        self.meta_grid.setHorizontalSpacing(10)
+        self.meta_grid.setVerticalSpacing(6)
+        self.meta_grid.setColumnStretch(1, 1)
+        self._meta_vals = {}
+        for fila, (clave, etiqueta) in enumerate([
+            ('origen', 'Origen'), ('anio', 'Año'), ('cliente', 'Cliente'),
+            ('proyecto', 'Proyecto'), ('orden', 'Orden'), ('tamano', 'Tamaño')]):
+            lbl_k = QLabel(etiqueta)
+            lbl_k.setObjectName("MetaKey")
+            lbl_v = QLabel("—")
+            lbl_v.setObjectName("MetaVal")
+            lbl_v.setWordWrap(True)
+            self.meta_grid.addWidget(lbl_k, fila, 0, Qt.AlignTop)
+            self.meta_grid.addWidget(lbl_v, fila, 1, Qt.AlignTop)
+            self._meta_vals[clave] = lbl_v
+        self.meta_widget = QWidget()
+        self.meta_widget.setLayout(self.meta_grid)
+        self.meta_widget.setVisible(False)
+        preview_layout.addWidget(self.meta_widget)
+
+        # Ruta completa (discreta, seleccionable)
         self.lbl_preview_ruta = QLabel("")
         self.lbl_preview_ruta.setWordWrap(True)
-        self.lbl_preview_ruta.setStyleSheet("font-size: 10px; color: #999999;")
+        self.lbl_preview_ruta.setStyleSheet("font-size: 9px; color: #6E6E6E;")
         self.lbl_preview_ruta.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        
-        preview_layout.addWidget(self.lbl_preview_tipo)
-        preview_layout.addWidget(self.lbl_preview_comp)
-        preview_layout.addWidget(self.lbl_preview_proyecto)
-        preview_layout.addWidget(self.lbl_preview_tamaño)
         preview_layout.addWidget(self.lbl_preview_ruta)
-        
+
+        # Compatibilidad: labels legacy que aún referencian otros métodos
+        self.lbl_preview_tipo = QLabel("")
+        self.lbl_preview_tipo.setVisible(False)
+        self.lbl_preview_comp = QLabel("")
+        self.lbl_preview_comp.setVisible(False)
+        self.lbl_preview_proyecto = QLabel("")
+        self.lbl_preview_proyecto.setVisible(False)
+        self.lbl_preview_tamaño = self._meta_vals['tamano']
+
         preview_layout.addStretch()
         
         tip_drag_layout = QHBoxLayout()
@@ -1635,47 +1668,37 @@ class BuscadorPiezas(QMainWindow):
         self.splitter.setStretchFactor(0, 4)
         self.splitter.setStretchFactor(1, 1)
         
-        # ═══ V2.0.1 - Propiedades SW y Fabricación como acordeones del sidebar único ═══
+        # ═══ V2.0.1 - Cada grupo de Propiedades SW es un acordeón independiente ═══
+        # (antes iban apelotonados; ahora cada uno se expande/colapsa por separado
+        #  y las listas muestran más filas)
         izq_layout = self._sidebar_layout
 
-        # --- Fabricación (Checkboxes booleanos) ---
-        sec_fabricacion = SeccionAcordeon('FABRICACIÓN', 'fabricacion', expandido=False)
-        izq_layout.addWidget(sec_fabricacion)
-        self.acordeones['fabricacion'] = sec_fabricacion
-
+        # --- Fabricación (Láser/Torno/Fresa/Soldadura/Pintura/Montaje) ---
+        sec_fabricacion = _acordeon('fabricacion', 'FABRICACIÓN', 'fabricacion', expandido=False)
         self.chk_laser = QCheckBox("Láser")
         self.chk_torno = QCheckBox("Torno")
         self.chk_fresa = QCheckBox("Fresa")
         self.chk_soldadura = QCheckBox("Soldadura")
         self.chk_pintura = QCheckBox("Pintura")
         self.chk_montaje = QCheckBox("Montaje")
-
         for chk in [self.chk_laser, self.chk_torno, self.chk_fresa, self.chk_soldadura, self.chk_pintura, self.chk_montaje]:
             sec_fabricacion.lay.addWidget(chk)
             chk.stateChanged.connect(self.ejecutar_busqueda)
 
-        # --- Propiedades SW (Material, Tratamiento, Cierre, Banda, Espesor) ---
-        sec_props = SeccionAcordeon('PROPIEDADES SW', 'propiedades-sliders', expandido=False)
-        izq_layout.addWidget(sec_props)
-        self.acordeones['propiedades'] = sec_props
-
-        lbl_material = QLabel("MATERIAL")
-        lbl_material.setObjectName("PanelTitle")
-        sec_props.lay.addWidget(lbl_material)
+        # --- Material ---
+        sec_material = _acordeon('material', 'MATERIAL', 'propiedades-sliders', expandido=False)
         self.list_materiales = QListWidget()
-        self.list_materiales.setMinimumHeight(60)
-        self.list_materiales.setMaximumHeight(150)
-        sec_props.lay.addWidget(self.list_materiales)
-        self.add_toggle_buttons(sec_props.lay, self.list_materiales)
+        self.list_materiales.setMinimumHeight(120)
+        self.list_materiales.setMaximumHeight(240)
+        sec_material.lay.addWidget(self.list_materiales)
+        self.add_toggle_buttons(sec_material.lay, self.list_materiales)
         self.list_materiales.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
 
-        lbl_tratamiento = QLabel("TRATAMIENTO")
-        lbl_tratamiento.setObjectName("PanelTitle")
-        sec_props.lay.addWidget(lbl_tratamiento)
+        # --- Tratamiento (valores oficiales de template_PZ.prtprp) ---
+        sec_tratamiento = _acordeon('tratamiento', 'TRATAMIENTO', 'propiedades-sliders', expandido=False)
         self.list_tratamientos = QListWidget()
-        self.list_tratamientos.setMinimumHeight(60)
-        self.list_tratamientos.setMaximumHeight(150)
-        # Valores oficiales de template_PZ.prtprp
+        self.list_tratamientos.setMinimumHeight(120)
+        self.list_tratamientos.setMaximumHeight(260)
         TRATAMIENTOS_OFICIALES = [
             "ZINCADO", "CROMADO", "GRANALLADO", "VULCANIZADO", "VULCANIZADO ALIMENTARIO",
             "RAL 2010", "RAL 7000", "RAL 9003", "RAL 9006", "RAL 3020",
@@ -1687,51 +1710,46 @@ class BuscadorPiezas(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.list_tratamientos.addItem(item)
-        sec_props.lay.addWidget(self.list_tratamientos)
-        self.add_toggle_buttons(sec_props.lay, self.list_tratamientos)
+        sec_tratamiento.lay.addWidget(self.list_tratamientos)
+        self.add_toggle_buttons(sec_tratamiento.lay, self.list_tratamientos)
         self.list_tratamientos.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
 
-        lbl_cierre = QLabel("CIERRE")
-        lbl_cierre.setObjectName("PanelTitle")
-        sec_props.lay.addWidget(lbl_cierre)
+        # --- Cierre ---
+        sec_cierre = _acordeon('cierre', 'CIERRE', 'propiedades-sliders', expandido=False)
         self.list_cierres = QListWidget()
-        self.list_cierres.setMinimumHeight(60)
-        self.list_cierres.setMaximumHeight(120)
+        self.list_cierres.setMinimumHeight(100)
+        self.list_cierres.setMaximumHeight(180)
         for cierre in ["SIN FIN", "CON GRAPA", "CON GRAPA OCULTA", "ABIERTA", "CON GRAPA EN UN LADO"]:
             item = QListWidgetItem(cierre)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.list_cierres.addItem(item)
-        sec_props.lay.addWidget(self.list_cierres)
-        self.add_toggle_buttons(sec_props.lay, self.list_cierres)
+        sec_cierre.lay.addWidget(self.list_cierres)
+        self.add_toggle_buttons(sec_cierre.lay, self.list_cierres)
         self.list_cierres.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
 
-        lbl_banda = QLabel("TIPO DE BANDA")
-        lbl_banda.setObjectName("PanelTitle")
-        sec_props.lay.addWidget(lbl_banda)
-
+        # --- Tipo de Banda (independiente) ---
+        sec_banda = _acordeon('banda', 'TIPO DE BANDA', 'propiedades-sliders', expandido=False)
         self.chk_filo_guiado = QCheckBox("Filo Guiado")
         self.chk_onda = QCheckBox("Onda")
         self.chk_cangilon = QCheckBox("Cangilón")
         self.chk_runer = QCheckBox("Runer")
-
         for chk in [self.chk_filo_guiado, self.chk_onda, self.chk_cangilon, self.chk_runer]:
-            sec_props.lay.addWidget(chk)
+            sec_banda.lay.addWidget(chk)
             chk.stateChanged.connect(self.ejecutar_busqueda)
 
-        lbl_espesor = QLabel("ESPESOR")
-        lbl_espesor.setObjectName("PanelTitle")
-        sec_props.lay.addWidget(lbl_espesor)
+        # --- Espesor (independiente, 1-20mm) ---
+        sec_espesor = _acordeon('espesor', 'ESPESOR', 'propiedades-sliders', expandido=False)
         self.list_espesores = QListWidget()
-        self.list_espesores.setMinimumHeight(60)
-        self.list_espesores.setMaximumHeight(150)
+        self.list_espesores.setMinimumHeight(120)
+        self.list_espesores.setMaximumHeight(240)
         for mm in range(1, 21):
             item = QListWidgetItem(f"{mm}mm")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.list_espesores.addItem(item)
-        sec_props.lay.addWidget(self.list_espesores)
-        self.add_toggle_buttons(sec_props.lay, self.list_espesores)
+        sec_espesor.lay.addWidget(self.list_espesores)
+        self.add_toggle_buttons(sec_espesor.lay, self.list_espesores)
         self.list_espesores.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
 
         izq_layout.addStretch()
@@ -1769,7 +1787,13 @@ class BuscadorPiezas(QMainWindow):
         else:
              self.main_splitter.setSizes([240, 1200, 200]) # Default original
 
-        main_layout.addWidget(self.main_splitter, stretch=1)
+        # Zona central con su propio padding (el main_layout va a sangre V2.0.1)
+        zona_central = QWidget()
+        zona_central_lay = QVBoxLayout(zona_central)
+        zona_central_lay.setContentsMargins(12, 8, 12, 8)
+        zona_central_lay.setSpacing(0)
+        zona_central_lay.addWidget(self.main_splitter)
+        main_layout.addWidget(zona_central, stretch=1)
 
         # PIE DE PÁGINA (Botones y Estado)
         # ═══════════════════════════════════════════
@@ -2900,23 +2924,36 @@ class BuscadorPiezas(QMainWindow):
             self.btn_copiar_ruta.setEnabled(True)
             self.btn_copiar_nombre.setEnabled(True)
 
-            # 1. ACTUALIZACIÓN INSTANTÁNEA (Solo Texto)
+            # 1. ACTUALIZACIÓN INSTANTÁNEA (Solo Texto) — V2.0.1: filas clave-valor
             self.lbl_preview_nombre.setText(nombre)
             ext = Path(nombre).suffix.lower()
             tipo_desc = DESCRIPCIONES_EXTENSION.get(ext, 'Archivo')
-            self.lbl_preview_tipo.setText(f"Tipo: {tipo_desc} ({tipo})")
-            self.lbl_preview_comp.setText(f"Origen: {comp} | AÑO {año}")
+
+            # Píldora de tipo (reutiliza colores de PillDelegate)
+            tipo_pill = {'.sldprt': ('Pieza', '#E66C32'), '.sldasm': ('Ensamblaje', '#3BA55D'),
+                         '.slddrw': ('Plano', '#5B8DD9'), '.dwg': ('Plano', '#5B8DD9'),
+                         '.pdf': ('PDF', '#C75450')}.get(ext, (tipo_desc, '#999999'))
+            self.lbl_preview_pill.setText(tipo_pill[0])
+            self.lbl_preview_pill.setStyleSheet(
+                f"background-color: {tipo_pill[1]}33; color: {tipo_pill[1]}; "
+                f"border: 1px solid {tipo_pill[1]}; border-radius: 9px; "
+                f"padding: 2px 10px; font-size: 11px; font-weight: 700;")
+            self.lbl_preview_pill.setVisible(True)
 
             proy_str = f"{cod_proy} {nom_proy}" if cod_proy else (nom_proy if nom_proy else proyecto)
-            ord_str = f"Orden: {orden_completa}" if orden_completa else ""
-            self.lbl_preview_proyecto.setText(f"Cliente: {cliente}\nProyecto: {proy_str}\n{ord_str}")
+            self._meta_vals['origen'].setText(comp or "—")
+            self._meta_vals['anio'].setText(str(año) if año else "—")
+            self._meta_vals['cliente'].setText(cliente or "—")
+            self._meta_vals['proyecto'].setText(proy_str or "—")
+            self._meta_vals['orden'].setText(orden_completa or "—")
+            self._meta_vals['tamano'].setText("Cargando…")
+            self.meta_widget.setVisible(True)
             self.lbl_preview_ruta.setText(ruta)
-            self.lbl_preview_tamaño.setText("Tamaño: Cargando...")
-            
+
             # Mostrar miniatura cacheada inmediatamente o placeholder (V1.0.4 Fix)
             if ruta in self.cache_miniaturas:
                 cached = self.cache_miniaturas[ruta]
-                self.lbl_preview_icon.setPixmap(cached.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.lbl_preview_icon.setPixmap(cached.scaled(230, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 self.lbl_preview_icon.setText("")
                 self.preview_opacity.setOpacity(1.0)
             else:
@@ -2989,7 +3026,7 @@ class BuscadorPiezas(QMainWindow):
                     if current_row >= 0:
                         current_item = self.tabla.item(current_row, 4)
                         if current_item and current_item.data(Qt.UserRole) == ruta:
-                            self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                            self.lbl_preview_icon.setPixmap(pixmap.scaled(230, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                             self.lbl_preview_icon.setText("")
                 except RuntimeError:
                     pass  # Widget eliminado durante búsqueda rápida
@@ -3032,22 +3069,22 @@ class BuscadorPiezas(QMainWindow):
 
             # Verificar existencia (IO Pesado en red)
             if not os.path.exists(ruta):
-                 self.lbl_preview_tamaño.setText("Tamaño: No accesible")
+                 self.lbl_preview_tamaño.setText("No accesible")
                  return
 
-            # Tamaño
+            # Tamaño (V2.0.1: solo el valor, la etiqueta "Tamaño" ya está en el grid)
             size = os.path.getsize(ruta)
             if size < 1024:
-                self.lbl_preview_tamaño.setText(f"Tamaño: {size} B")
+                self.lbl_preview_tamaño.setText(f"{size} B")
             elif size < 1024 * 1024:
-                self.lbl_preview_tamaño.setText(f"Tamaño: {size / 1024:.1f} KB")
+                self.lbl_preview_tamaño.setText(f"{size / 1024:.1f} KB")
             else:
-                self.lbl_preview_tamaño.setText(f"Tamaño: {size / (1024 * 1024):.1f} MB")
+                self.lbl_preview_tamaño.setText(f"{size / (1024 * 1024):.1f} MB")
 
             # Miniatura (Heavy IO)
             pixmap = self.extraer_miniatura(ruta)
             if pixmap and not pixmap.isNull():
-                self.lbl_preview_icon.setPixmap(pixmap.scaled(250, 250, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                self.lbl_preview_icon.setPixmap(pixmap.scaled(230, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation))
                 self.lbl_preview_icon.setText("")
                 self.anim_opacity.stop()
                 self.preview_opacity.setOpacity(0.0)
