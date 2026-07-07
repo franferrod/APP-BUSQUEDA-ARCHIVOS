@@ -30,6 +30,7 @@ from PyQt5.QtWidgets import QFileIconProvider
 import pythoncom
 import logging
 import uuid
+import json
 from win32com.shell import shell, shellcon
 from PyQt5.QtWinExtras import QtWin
 
@@ -311,7 +312,12 @@ QPushButton[segmento="true"]:hover:!checked { border-color: #E66C32; color: #DFD
 QPushButton[segPos="first"] { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
 QPushButton[segPos="last"]  { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
 
-QPushButton#btn_toggle { padding: 2px 6px; font-size: 10px; border-radius: 5px; }
+/* Todos/Ninguno como enlaces de texto compactos (V2.0.1) */
+QPushButton#btn_toggle {
+    background: transparent; border: none; padding: 0 2px;
+    font-size: 10px; font-weight: 700; color: #999999;
+}
+QPushButton#btn_toggle:hover { color: #E66C32; }
 QPushButton#btn_cancelar { background-color: #8C3A32; border: none; color: #FFFFFF; }
 QPushButton#btn_cancelar:hover { background-color: #A6443B; }
 
@@ -719,6 +725,49 @@ class GaleriaArrastrable(QListWidget):
 
 
 # -----------------------------------------------------------------------------
+# SECCIÓN ACORDEÓN (V2.0.1 - Sidebar única de filtros)
+# -----------------------------------------------------------------------------
+class SeccionAcordeon(QFrame):
+    """Grupo de filtro colapsable: cabecera clicable con icono + chevron
+    y un contenido que se muestra/oculta. Añadir widgets via self.lay."""
+    def __init__(self, titulo, icono=None, expandido=True, parent=None):
+        super().__init__(parent)
+        self.setObjectName("FilterCard")
+        self.titulo = titulo
+        self.icono = icono
+        v = QVBoxLayout(self)
+        v.setContentsMargins(6, 4, 6, 6)
+        v.setSpacing(4)
+
+        self.btn_header = QPushButton(f" {titulo}  ▾")
+        if icono:
+            self.btn_header.setIcon(svg_icon(icono, size=14))
+        self.btn_header.setCheckable(True)
+        self.btn_header.setChecked(expandido)
+        self.btn_header.setCursor(Qt.PointingHandCursor)
+        self.btn_header.setStyleSheet(
+            f'QPushButton {{ background: transparent; border: none; text-align: left; '
+            f'font-family: "{FUENTES["h2"]}"; font-size: 11px; font-weight: 800; '
+            f'letter-spacing: 1px; color: #DFDFDF; padding: 4px 2px; }} '
+            f'QPushButton:hover {{ color: #E66C32; }}')
+
+        self.contenido = QWidget()
+        self.lay = QVBoxLayout(self.contenido)
+        self.lay.setContentsMargins(2, 0, 2, 0)
+        self.lay.setSpacing(4)
+
+        self.btn_header.toggled.connect(self._on_toggle)
+        v.addWidget(self.btn_header)
+        v.addWidget(self.contenido)
+        self._on_toggle(expandido)
+
+    def _on_toggle(self, abierto):
+        self.contenido.setVisible(abierto)
+        flecha = "▾" if abierto else "▸"
+        self.btn_header.setText(f" {self.titulo}  {flecha}")
+
+
+# -----------------------------------------------------------------------------
 # THUMBNAIL WORKER (V1.0.3 - Extracción asíncrona)
 # -----------------------------------------------------------------------------
 class ThumbnailWorker(QThread):
@@ -897,6 +946,7 @@ class BuscadorPiezas(QMainWindow):
         self.refrescar_filtros_jerarquicos()  # Carga inicial V1.0.0
         self.cargar_filtros_propiedades()
         self.cargar_preferencias()
+        self._actualizar_chips_contexto()  # V2.0.1: estado inicial de la barra de contexto
         
         # Diagnóstico de red (V1.0.7)
         QTimer.singleShot(1000, self.verificar_rutas_red)
@@ -936,31 +986,26 @@ class BuscadorPiezas(QMainWindow):
         return sel
 
     def add_toggle_buttons(self, layout, list_widget):
-        """Añade botones de Todos/Ninguno a un layout para un list_widget dado (Optimizado V1.0.0)"""
+        """Añade enlaces Todos/Ninguno compactos bajo un list_widget (V2.0.1)"""
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(8)
-        btn_layout.setContentsMargins(0, 5, 0, 5) 
-        
-        # Estilo para permitir encogimiento máximo (V1.0.0)
+        btn_layout.setSpacing(10)
+        btn_layout.setContentsMargins(2, 0, 0, 2)
 
         btn_todos = QPushButton("Todos")
-        btn_todos.setObjectName("btn_toggle")  # Para que el global CSS no pise el padding
+        btn_todos.setObjectName("btn_toggle")
         btn_todos.setCursor(Qt.PointingHandCursor)
-        btn_todos.setFixedHeight(28)
-        btn_todos.setMinimumWidth(30)
-        btn_todos.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_todos.setFixedHeight(18)
         btn_todos.clicked.connect(lambda: self.toggle_checkboxes(list_widget, True))
-        
+
         btn_ninguno = QPushButton("Ninguno")
-        btn_ninguno.setObjectName("btn_toggle")  # Para que el global CSS no pise el padding
+        btn_ninguno.setObjectName("btn_toggle")
         btn_ninguno.setCursor(Qt.PointingHandCursor)
-        btn_ninguno.setFixedHeight(28)
-        btn_ninguno.setMinimumWidth(30)
-        btn_ninguno.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn_ninguno.setFixedHeight(18)
         btn_ninguno.clicked.connect(lambda: self.toggle_checkboxes(list_widget, False))
-        
+
         btn_layout.addWidget(btn_todos)
         btn_layout.addWidget(btn_ninguno)
+        btn_layout.addStretch()
         layout.addLayout(btn_layout)
 
     def get_companeros_seleccionados(self):
@@ -1113,6 +1158,43 @@ class BuscadorPiezas(QMainWindow):
 
         main_layout.addWidget(self.header_frame)
 
+        # ═══════════════════════════════════════════
+        # BARRA DE CONTEXTO (V2.0.1): filtros activos + Limpiar | Recientes + Guardadas
+        # ═══════════════════════════════════════════
+        self.context_frame = QFrame()
+        ctx_lay = QHBoxLayout(self.context_frame)
+        ctx_lay.setContentsMargins(12, 0, 12, 0)
+        ctx_lay.setSpacing(6)
+
+        self.chips_activos_lay = QHBoxLayout()
+        self.chips_activos_lay.setSpacing(6)
+        ctx_lay.addLayout(self.chips_activos_lay)
+
+        self.btn_limpiar = QPushButton("Limpiar")
+        self.btn_limpiar.setObjectName("btn_toggle")
+        self.btn_limpiar.setCursor(Qt.PointingHandCursor)
+        self.btn_limpiar.clicked.connect(self._limpiar_filtros)
+        self.btn_limpiar.setVisible(False)  # Solo visible con filtros activos
+        ctx_lay.addWidget(self.btn_limpiar)
+
+        ctx_lay.addStretch()
+
+        lbl_recientes = QLabel("Recientes:")
+        lbl_recientes.setObjectName("StatusDim")
+        ctx_lay.addWidget(lbl_recientes)
+        self.recientes_lay = QHBoxLayout()
+        self.recientes_lay.setSpacing(4)
+        ctx_lay.addLayout(self.recientes_lay)
+
+        self.btn_guardadas = QPushButton("★ Guardadas")
+        self.btn_guardadas.setObjectName("Chip")
+        self.btn_guardadas.setCursor(Qt.PointingHandCursor)
+        self.menu_guardadas = QMenu(self)
+        self.btn_guardadas.setMenu(self.menu_guardadas)
+        ctx_lay.addWidget(self.btn_guardadas)
+
+        main_layout.addWidget(self.context_frame)
+
         # Banner de Actualización eliminado en V1.0.7
 
         # ═══════════════════════════════════════════
@@ -1124,7 +1206,7 @@ class BuscadorPiezas(QMainWindow):
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setHandleWidth(4) # Línea sutil
 
-        # --- Panel filtros izquierdo (Scrollable Sidebar) ---
+        # --- Panel filtros izquierdo (Scrollable Sidebar, colapsable a raíl V2.0.1) ---
         panel_izquierdo = QFrame()
         panel_izquierdo.setObjectName("Panel")
         panel_izquierdo.setMinimumWidth(80)
@@ -1132,10 +1214,25 @@ class BuscadorPiezas(QMainWindow):
         izq_outer_layout = QVBoxLayout(panel_izquierdo)
         izq_outer_layout.setContentsMargins(10, 10, 10, 10)
         izq_outer_layout.setSpacing(6)
+        self._panel_izquierdo = panel_izquierdo
+        self._izq_outer_layout = izq_outer_layout
 
+        sidebar_header = QHBoxLayout()
         lbl_panel_filtros = QLabel("FILTROS AVANZADOS")
         aplicar_h2(lbl_panel_filtros)
-        izq_outer_layout.addWidget(lbl_panel_filtros)
+        self._lbl_panel_filtros = lbl_panel_filtros
+        sidebar_header.addWidget(lbl_panel_filtros)
+        sidebar_header.addStretch()
+        self.btn_colapsar_sidebar = QPushButton()
+        self.btn_colapsar_sidebar.setIcon(svg_icon("contraer-panel", size=14))
+        self.btn_colapsar_sidebar.setToolTip("Contraer panel de filtros")
+        self.btn_colapsar_sidebar.setCursor(Qt.PointingHandCursor)
+        self.btn_colapsar_sidebar.setFixedSize(24, 24)
+        self.btn_colapsar_sidebar.setStyleSheet(
+            "QPushButton { background: transparent; border: none; padding: 0; }")
+        self.btn_colapsar_sidebar.clicked.connect(lambda: self._toggle_sidebar())
+        sidebar_header.addWidget(self.btn_colapsar_sidebar)
+        izq_outer_layout.addLayout(sidebar_header)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1145,11 +1242,18 @@ class BuscadorPiezas(QMainWindow):
         izq_layout.setContentsMargins(4, 4, 4, 4)
         izq_layout.setSpacing(4)
         
-        # 1. ORIGEN (v1.0.7 - antes era Compañeros)
-        lbl_comp = QLabel("ORIGEN")
-        lbl_comp.setObjectName("PanelTitle")
-        izq_layout.addWidget(lbl_comp)
+        # ═══ V2.0.1 - SIDEBAR ÚNICA CON ACORDEONES ═══
+        self._sidebar_layout = izq_layout
+        self.acordeones = {}
 
+        def _acordeon(clave, titulo, icono, expandido=True):
+            sec = SeccionAcordeon(titulo, icono, expandido)
+            izq_layout.addWidget(sec)
+            self.acordeones[clave] = sec
+            return sec
+
+        # 1. ORIGEN
+        sec_origen = _acordeon('origen', 'ORIGEN', 'carpeta')
         self.list_companeros = QListWidget()
         self.list_companeros.setMinimumHeight(60)
         self.list_companeros.setMaximumHeight(120)
@@ -1160,16 +1264,13 @@ class BuscadorPiezas(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
             self.list_companeros.addItem(item)
-        izq_layout.addWidget(self.list_companeros)
-        self.add_toggle_buttons(izq_layout, self.list_companeros)
+        sec_origen.lay.addWidget(self.list_companeros)
+        self.add_toggle_buttons(sec_origen.lay, self.list_companeros)
 
-        # 2. AÑOS
-        lbl_años = QLabel("AÑOS DE PROYECTO")
-        lbl_años.setObjectName("PanelTitle")
-        izq_layout.addWidget(lbl_años)
+        # 2. AÑOS (V2.0.1: chips sincronizados con list_años oculto,
+        # que sigue siendo la fuente de verdad para búsqueda y preferencias)
+        sec_años = _acordeon('años', 'AÑOS DE PROYECTO', 'calendario-anos')
         self.list_años = QListWidget()
-        self.list_años.setMinimumHeight(80)
-        self.list_años.setMaximumHeight(200)
         año_actual = datetime.now().year
         for año in range(año_actual + 1, 2012, -1):
             item = QListWidgetItem(str(año))
@@ -1177,13 +1278,32 @@ class BuscadorPiezas(QMainWindow):
             # Marcar por defecto hasta 2022 (o todo)
             item.setCheckState(Qt.Checked if año >= 2022 else Qt.Unchecked)
             self.list_años.addItem(item)
-        izq_layout.addWidget(self.list_años)
-        self.add_toggle_buttons(izq_layout, self.list_años)
+        self.list_años.setVisible(False)
+        sec_años.lay.addWidget(self.list_años)
 
-        # 3. CARPETAS (MECANICA, LAYOUT...) - V1.2.3
-        lbl_folder = QLabel("CARPETAS")
-        lbl_folder.setObjectName("PanelTitle")
-        izq_layout.addWidget(lbl_folder)
+        self.chips_años = {}
+        chips_años_w = QWidget()
+        from PyQt5.QtWidgets import QGridLayout
+        chips_grid = QGridLayout(chips_años_w)
+        chips_grid.setContentsMargins(0, 0, 0, 0)
+        chips_grid.setSpacing(4)
+        for i in range(self.list_años.count()):
+            item = self.list_años.item(i)
+            chip = QPushButton(item.text())
+            chip.setObjectName("Chip")
+            chip.setCheckable(True)
+            chip.setChecked(item.checkState() == Qt.Checked)
+            chip.setCursor(Qt.PointingHandCursor)
+            chip.toggled.connect(
+                lambda on, it=item: it.setCheckState(Qt.Checked if on else Qt.Unchecked))
+            chips_grid.addWidget(chip, i // 4, i % 4)
+            self.chips_años[item.text()] = chip
+        sec_años.lay.addWidget(chips_años_w)
+        self.list_años.itemChanged.connect(self._sync_chip_anio)
+        self.add_toggle_buttons(sec_años.lay, self.list_años)
+
+        # 3. CARPETAS (MECANICA, LAYOUT...)
+        sec_carpetas = _acordeon('carpetas', 'CARPETAS', 'capas-tipos')
         self.list_carpetas = QListWidget()
         self.list_carpetas.setMinimumHeight(80)
         self.list_carpetas.setMaximumHeight(180)
@@ -1193,40 +1313,38 @@ class BuscadorPiezas(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked)
             self.list_carpetas.addItem(item)
-        izq_layout.addWidget(self.list_carpetas)
-        self.add_toggle_buttons(izq_layout, self.list_carpetas)
+        sec_carpetas.lay.addWidget(self.list_carpetas)
+        self.add_toggle_buttons(sec_carpetas.lay, self.list_carpetas)
         self.list_carpetas.itemChanged.connect(self.on_filtro_jerarquico_changed)
 
-        # 5. CLIENTES (V1.3.0)
-        lbl_clientes = QLabel("CLIENTES")
-        lbl_clientes.setObjectName("PanelTitle")
-        izq_layout.addWidget(lbl_clientes)
+        # 5. CLIENTES
+        sec_clientes = _acordeon('clientes', 'CLIENTES', 'clientes')
         self.list_clientes = QListWidget()
         self.list_clientes.setMinimumHeight(80)
         self.list_clientes.setMaximumHeight(200)
-        izq_layout.addWidget(self.list_clientes)
-        self.add_toggle_buttons(izq_layout, self.list_clientes)
+        sec_clientes.lay.addWidget(self.list_clientes)
+        self.add_toggle_buttons(sec_clientes.lay, self.list_clientes)
 
-        # 6. PROYECTOS (V1.3.0)
-        lbl_proys = QLabel("PROYECTOS")
-        lbl_proys.setObjectName("PanelTitle")
-        izq_layout.addWidget(lbl_proys)
+        # 6. PROYECTOS
+        sec_proyectos = _acordeon('proyectos', 'PROYECTOS', 'proyectos-maletin')
         self.list_proyectos = QListWidget()
         self.list_proyectos.setMinimumHeight(80)
         self.list_proyectos.setMaximumHeight(200)
-        izq_layout.addWidget(self.list_proyectos)
-        self.add_toggle_buttons(izq_layout, self.list_proyectos)
-        
+        sec_proyectos.lay.addWidget(self.list_proyectos)
+        self.add_toggle_buttons(sec_proyectos.lay, self.list_proyectos)
+
         # Conectar señales para Cascada (V1.0.0 - Completo)
         self.list_companeros.itemChanged.connect(self.on_filtro_jerarquico_changed)
         self.list_años.itemChanged.connect(self.on_filtro_jerarquico_changed)
         self.list_clientes.itemChanged.connect(self.on_filtro_jerarquico_changed)
         self.list_proyectos.itemChanged.connect(self.on_filtro_jerarquico_changed)
-        
-        izq_layout.addStretch()
+
+        # Las secciones de Propiedades SW y Fabricación se añaden más abajo
+        # (V2.0.1: sidebar única, ya no hay panel derecho separado)
         scroll.setWidget(scroll_widget)
         izq_outer_layout.addWidget(scroll)
-        
+        self._scroll_filtros = scroll
+
         # Añadir panel izquierdo al splitter principal
         self.main_splitter.addWidget(panel_izquierdo)
 
@@ -1355,15 +1473,18 @@ class BuscadorPiezas(QMainWindow):
         toolbar_layout.addLayout(seg_vista_layout)
 
         # Segmento Cómoda/Compacta (drive del combo existente para no romper la señal)
+        # V2.0.0: solo visible en vista Lista — en Galería la densidad no aplica
         self.grupo_densidad, botones_dens = _crear_segmento([("Cómoda", None), ("Compacta", None)])
         self.btn_dens_comoda, self.btn_dens_compacta = botones_dens
         self.btn_dens_comoda.setChecked(True)
         self.grupo_densidad.buttonClicked[int].connect(self._on_densidad_segment)
-        seg_dens_layout = QHBoxLayout()
+        self.seg_dens_container = QWidget()
+        seg_dens_layout = QHBoxLayout(self.seg_dens_container)
+        seg_dens_layout.setContentsMargins(0, 0, 0, 0)
         seg_dens_layout.setSpacing(0)
         for b in botones_dens:
             seg_dens_layout.addWidget(b)
-        toolbar_layout.addLayout(seg_dens_layout)
+        toolbar_layout.addWidget(self.seg_dens_container)
 
         # Segmento S/M/L: tamaño de tarjeta en galería (solo activo en vista Galería)
         self.grupo_tam_galeria, botones_tam = _crear_segmento([("S", None), ("M", None), ("L", None)])
@@ -1514,58 +1635,43 @@ class BuscadorPiezas(QMainWindow):
         self.splitter.setStretchFactor(0, 4)
         self.splitter.setStretchFactor(1, 1)
         
-        # --- Panel filtros derecho (Propiedades) ---
-        panel_derecho = QFrame()
-        panel_derecho.setObjectName("Panel")
-        panel_derecho.setMinimumWidth(80)
-        panel_derecho.setMaximumWidth(300)
-        der_outer_layout = QVBoxLayout(panel_derecho)
-        der_outer_layout.setContentsMargins(10, 10, 10, 10)
-        der_outer_layout.setSpacing(6)
+        # ═══ V2.0.1 - Propiedades SW y Fabricación como acordeones del sidebar único ═══
+        izq_layout = self._sidebar_layout
 
-        lbl_panel_props = QLabel("PROPIEDADES SW")
-        aplicar_h2(lbl_panel_props)
-        der_outer_layout.addWidget(lbl_panel_props)
-        
-        scroll_der = QScrollArea()
-        scroll_der.setWidgetResizable(True)
-        scroll_der.setFrameShape(QFrame.NoFrame)
-        scroll_widget_der = QWidget()
-        der_layout = QVBoxLayout(scroll_widget_der)
-        der_layout.setContentsMargins(4, 4, 4, 4)
-        der_layout.setSpacing(4)
-        
-        # --- Fabricación (Checkboxes booleanos) — ARRIBA ---
-        lbl_fabricacion = QLabel("FABRICACIÓN")
-        lbl_fabricacion.setObjectName("PanelTitle")
-        der_layout.addWidget(lbl_fabricacion)
-        
+        # --- Fabricación (Checkboxes booleanos) ---
+        sec_fabricacion = SeccionAcordeon('FABRICACIÓN', 'fabricacion', expandido=False)
+        izq_layout.addWidget(sec_fabricacion)
+        self.acordeones['fabricacion'] = sec_fabricacion
+
         self.chk_laser = QCheckBox("Láser")
         self.chk_torno = QCheckBox("Torno")
         self.chk_fresa = QCheckBox("Fresa")
         self.chk_soldadura = QCheckBox("Soldadura")
         self.chk_pintura = QCheckBox("Pintura")
         self.chk_montaje = QCheckBox("Montaje")
-        
+
         for chk in [self.chk_laser, self.chk_torno, self.chk_fresa, self.chk_soldadura, self.chk_pintura, self.chk_montaje]:
-            der_layout.addWidget(chk)
+            sec_fabricacion.lay.addWidget(chk)
             chk.stateChanged.connect(self.ejecutar_busqueda)
-        
-        # --- Material (QListWidget multi-selección) ---
+
+        # --- Propiedades SW (Material, Tratamiento, Cierre, Banda, Espesor) ---
+        sec_props = SeccionAcordeon('PROPIEDADES SW', 'propiedades-sliders', expandido=False)
+        izq_layout.addWidget(sec_props)
+        self.acordeones['propiedades'] = sec_props
+
         lbl_material = QLabel("MATERIAL")
         lbl_material.setObjectName("PanelTitle")
-        der_layout.addWidget(lbl_material)
+        sec_props.lay.addWidget(lbl_material)
         self.list_materiales = QListWidget()
         self.list_materiales.setMinimumHeight(60)
         self.list_materiales.setMaximumHeight(150)
-        der_layout.addWidget(self.list_materiales)
-        self.add_toggle_buttons(der_layout, self.list_materiales)
+        sec_props.lay.addWidget(self.list_materiales)
+        self.add_toggle_buttons(sec_props.lay, self.list_materiales)
         self.list_materiales.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
-        
-        # --- Tratamiento (QListWidget multi-selección, valores oficiales de plantilla SW) ---
+
         lbl_tratamiento = QLabel("TRATAMIENTO")
         lbl_tratamiento.setObjectName("PanelTitle")
-        der_layout.addWidget(lbl_tratamiento)
+        sec_props.lay.addWidget(lbl_tratamiento)
         self.list_tratamientos = QListWidget()
         self.list_tratamientos.setMinimumHeight(60)
         self.list_tratamientos.setMaximumHeight(150)
@@ -1581,14 +1687,13 @@ class BuscadorPiezas(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.list_tratamientos.addItem(item)
-        der_layout.addWidget(self.list_tratamientos)
-        self.add_toggle_buttons(der_layout, self.list_tratamientos)
+        sec_props.lay.addWidget(self.list_tratamientos)
+        self.add_toggle_buttons(sec_props.lay, self.list_tratamientos)
         self.list_tratamientos.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
-        
-        # --- Cierre (QListWidget multi-selección) ---
+
         lbl_cierre = QLabel("CIERRE")
         lbl_cierre.setObjectName("PanelTitle")
-        der_layout.addWidget(lbl_cierre)
+        sec_props.lay.addWidget(lbl_cierre)
         self.list_cierres = QListWidget()
         self.list_cierres.setMinimumHeight(60)
         self.list_cierres.setMaximumHeight(120)
@@ -1597,28 +1702,26 @@ class BuscadorPiezas(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.list_cierres.addItem(item)
-        der_layout.addWidget(self.list_cierres)
-        self.add_toggle_buttons(der_layout, self.list_cierres)
+        sec_props.lay.addWidget(self.list_cierres)
+        self.add_toggle_buttons(sec_props.lay, self.list_cierres)
         self.list_cierres.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
-        
-        # --- Tipo de Banda (Checkboxes booleanos) ---
+
         lbl_banda = QLabel("TIPO DE BANDA")
         lbl_banda.setObjectName("PanelTitle")
-        der_layout.addWidget(lbl_banda)
-        
+        sec_props.lay.addWidget(lbl_banda)
+
         self.chk_filo_guiado = QCheckBox("Filo Guiado")
         self.chk_onda = QCheckBox("Onda")
         self.chk_cangilon = QCheckBox("Cangilón")
         self.chk_runer = QCheckBox("Runer")
-        
+
         for chk in [self.chk_filo_guiado, self.chk_onda, self.chk_cangilon, self.chk_runer]:
-            der_layout.addWidget(chk)
+            sec_props.lay.addWidget(chk)
             chk.stateChanged.connect(self.ejecutar_busqueda)
-        
-        # --- Espesor (QListWidget multi-selección, solo para piezas, 1-20mm) ---
+
         lbl_espesor = QLabel("ESPESOR")
         lbl_espesor.setObjectName("PanelTitle")
-        der_layout.addWidget(lbl_espesor)
+        sec_props.lay.addWidget(lbl_espesor)
         self.list_espesores = QListWidget()
         self.list_espesores.setMinimumHeight(60)
         self.list_espesores.setMaximumHeight(150)
@@ -1627,19 +1730,37 @@ class BuscadorPiezas(QMainWindow):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             self.list_espesores.addItem(item)
-        der_layout.addWidget(self.list_espesores)
-        self.add_toggle_buttons(der_layout, self.list_espesores)
+        sec_props.lay.addWidget(self.list_espesores)
+        self.add_toggle_buttons(sec_props.lay, self.list_espesores)
         self.list_espesores.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
-            
-        der_layout.addStretch()
-        scroll_der.setWidget(scroll_widget_der)
-        der_outer_layout.addWidget(scroll_der)
 
-        # Añadir splitter derecho al splitter principal
+        izq_layout.addStretch()
+
+        # Raíl de iconos para el sidebar contraído (V2.0.1)
+        self.rail_widget = QWidget()
+        rail_lay = QVBoxLayout(self.rail_widget)
+        rail_lay.setContentsMargins(0, 4, 0, 4)
+        rail_lay.setSpacing(8)
+        for clave, sec in self.acordeones.items():
+            if not sec.icono:
+                continue
+            btn_rail = QPushButton()
+            btn_rail.setIcon(svg_icon(sec.icono, size=18))
+            btn_rail.setToolTip(sec.titulo.title())
+            btn_rail.setCursor(Qt.PointingHandCursor)
+            btn_rail.setFixedSize(32, 32)
+            btn_rail.setStyleSheet(
+                "QPushButton { background: transparent; border: none; border-radius: 8px; padding: 0; } "
+                "QPushButton:hover { background: #3A2C21; }")
+            btn_rail.clicked.connect(lambda _, s=sec: self._abrir_desde_rail(s))
+            rail_lay.addWidget(btn_rail, alignment=Qt.AlignHCenter)
+        rail_lay.addStretch()
+        self.rail_widget.setVisible(False)
+        self._izq_outer_layout.addWidget(self.rail_widget)
+
+        # Splitter principal: sidebar + zona central (ya sin panel derecho)
         self.main_splitter.addWidget(self.splitter)
-        self.main_splitter.addWidget(panel_derecho)
         self.main_splitter.setStretchFactor(1, 1)
-        self.main_splitter.setStretchFactor(2, 0)
         
         # Restaurar ancho guardado (Persistencia)
         saved_width = self.controller.load_preference('sidebar_width')
@@ -1794,6 +1915,11 @@ class BuscadorPiezas(QMainWindow):
             if int(self.qsettings.value("vista_modo", 0)) == 1:
                 self.btn_vista_galeria.setChecked(True)
                 self._cambiar_vista(1)
+            # V2.0.1: barra de contexto y estado del sidebar
+            self._refrescar_recientes()
+            self._refrescar_guardadas()
+            if int(self.qsettings.value("sidebar_colapsado", 0)) == 1:
+                self._toggle_sidebar(True)
         except Exception as e:
             logger.debug(f"Error restaurando config UI: {e}")
 
@@ -1803,6 +1929,8 @@ class BuscadorPiezas(QMainWindow):
     def _cambiar_vista(self, index):
         """Conmuta Lista (0) / Galería (1)."""
         self.stack_vistas.setCurrentIndex(index)
+        # Cómoda/Compacta solo aplica a la Lista; S/M/L solo a la Galería
+        self.seg_dens_container.setVisible(index == 0)
         self.seg_tam_container.setVisible(index == 1)
         if index == 1:
             self._sincronizar_galeria()
@@ -1868,6 +1996,259 @@ class BuscadorPiezas(QMainWindow):
             if item and item.text() == ruta:
                 self.tabla.selectRow(r)
                 return
+
+    # ═══════════════════════════════════════════
+    # BARRA DE CONTEXTO (V2.0.1): chips activos, Limpiar, Recientes, Guardadas
+    # ═══════════════════════════════════════════
+    # ═══════════════════════════════════════════
+    # SIDEBAR COLAPSABLE A RAÍL (V2.0.1)
+    # ═══════════════════════════════════════════
+    def _toggle_sidebar(self, colapsar=None):
+        """Contrae el sidebar a un raíl de iconos de 56px o lo expande."""
+        try:
+            actual = not self._scroll_filtros.isVisible()
+            colapsar = (not actual) if colapsar is None else colapsar
+            if colapsar:
+                self._scroll_filtros.setVisible(False)
+                self._lbl_panel_filtros.setVisible(False)
+                self.rail_widget.setVisible(True)
+                self._panel_izquierdo.setMinimumWidth(56)
+                self._panel_izquierdo.setMaximumWidth(56)
+                self.btn_colapsar_sidebar.setIcon(svg_icon("expandir-panel", size=14))
+                self.btn_colapsar_sidebar.setToolTip("Expandir panel de filtros")
+            else:
+                self.rail_widget.setVisible(False)
+                self._scroll_filtros.setVisible(True)
+                self._lbl_panel_filtros.setVisible(True)
+                self._panel_izquierdo.setMinimumWidth(80)
+                self._panel_izquierdo.setMaximumWidth(500)
+                sizes = self.main_splitter.sizes()
+                if sizes and sizes[0] < 200:
+                    sizes[0] = 256
+                    self.main_splitter.setSizes(sizes)
+                self.btn_colapsar_sidebar.setIcon(svg_icon("contraer-panel", size=14))
+                self.btn_colapsar_sidebar.setToolTip("Contraer panel de filtros")
+            self.qsettings.setValue("sidebar_colapsado", 1 if colapsar else 0)
+        except Exception as e:
+            logger.debug(f"Error conmutando sidebar: {e}")
+
+    def _abrir_desde_rail(self, seccion):
+        """Clic en un icono del raíl: expande el sidebar y abre esa sección."""
+        self._toggle_sidebar(False)
+        seccion.btn_header.setChecked(True)
+
+    def _vaciar_layout(self, lay):
+        while lay.count():
+            it = lay.takeAt(0)
+            w = it.widget()
+            if w:
+                w.deleteLater()
+
+    def _chip_activo(self, texto, on_reset):
+        """Chip de filtro activo con botón × para quitarlo."""
+        marco = QFrame()
+        marco.setObjectName("ActiveChip")
+        lay = QHBoxLayout(marco)
+        lay.setContentsMargins(10, 2, 6, 2)
+        lay.setSpacing(4)
+        lbl = QLabel(texto)
+        lbl.setObjectName("ActiveChipText")
+        btn = QPushButton("×")
+        btn.setFixedSize(16, 16)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #F0A377; "
+            "font-weight: 800; font-size: 13px; padding: 0; } "
+            "QPushButton:hover { color: #FFFFFF; }")
+        btn.clicked.connect(on_reset)
+        lay.addWidget(lbl)
+        lay.addWidget(btn)
+        return marco
+
+    def _set_all_items(self, list_widget, checked):
+        """Marca/desmarca todos los items de golpe y dispara una sola cascada."""
+        list_widget.blockSignals(True)
+        estado = Qt.Checked if checked else Qt.Unchecked
+        for i in range(list_widget.count()):
+            list_widget.item(i).setCheckState(estado)
+        list_widget.blockSignals(False)
+        if list_widget is self.list_años:
+            for chip in self.chips_años.values():
+                chip.blockSignals(True)
+                chip.setChecked(checked)
+                chip.blockSignals(False)
+        self.on_filtro_jerarquico_changed(None)
+
+    def _actualizar_chips_contexto(self):
+        """Reconstruye los chips de filtros activos bajo el buscador."""
+        try:
+            self._vaciar_layout(self.chips_activos_lay)
+            chips = []
+
+            def contar(lw):
+                total = lw.count()
+                marcados = sum(1 for i in range(total) if lw.item(i).checkState() == Qt.Checked)
+                return total, marcados
+
+            t, m = contar(self.list_companeros)
+            if m < t:
+                chips.append((f"Origen: {m}/{t}", lambda: self._set_all_items(self.list_companeros, True)))
+
+            t, m = contar(self.list_años)
+            if 0 < m < t:
+                años_sel = [self.list_años.item(i).text() for i in range(t)
+                            if self.list_años.item(i).checkState() == Qt.Checked]
+                etiqueta = f"Años: {años_sel[-1]}–{años_sel[0]}" if len(años_sel) > 1 else f"Año: {años_sel[0]}"
+                chips.append((etiqueta, lambda: self._set_all_items(self.list_años, True)))
+
+            t, m = contar(self.list_carpetas)
+            if m < t:
+                chips.append((f"Carpetas: {m}/{t}", lambda: self._set_all_items(self.list_carpetas, True)))
+
+            tipos_total = len(self.tipos_actions)
+            tipos_sel = sum(1 for a in self.tipos_actions.values() if a.isChecked())
+            if tipos_sel < tipos_total:
+                chips.append((f"Tipos: {tipos_sel}/{tipos_total}", self._reset_tipos))
+
+            for lw, nombre in ((self.list_clientes, "Clientes"), (self.list_proyectos, "Proyectos")):
+                t, m = contar(lw)
+                if m > 0:
+                    chips.append((f"{nombre}: {m}", lambda lw=lw: self._set_all_items(lw, False)))
+
+            for lw, nombre in ((self.list_materiales, "Material"), (self.list_tratamientos, "Tratamiento"),
+                               (self.list_cierres, "Cierre"), (self.list_espesores, "Espesor")):
+                t, m = contar(lw)
+                if m > 0:
+                    chips.append((f"{nombre}: {m}", lambda lw=lw: self._reset_lista_propiedades(lw)))
+
+            chks_fab = [self.chk_laser, self.chk_torno, self.chk_fresa,
+                        self.chk_soldadura, self.chk_pintura, self.chk_montaje]
+            n_fab = sum(1 for c in chks_fab if c.isChecked())
+            if n_fab:
+                chips.append((f"Fabricación: {n_fab}", lambda: self._reset_checks(chks_fab)))
+
+            chks_banda = [self.chk_filo_guiado, self.chk_onda, self.chk_cangilon, self.chk_runer]
+            n_banda = sum(1 for c in chks_banda if c.isChecked())
+            if n_banda:
+                chips.append((f"Banda: {n_banda}", lambda: self._reset_checks(chks_banda)))
+
+            for texto, cb in chips[:8]:
+                self.chips_activos_lay.addWidget(self._chip_activo(texto, cb))
+            self.btn_limpiar.setVisible(bool(chips))
+        except Exception as e:
+            logger.debug(f"Error actualizando chips de contexto: {e}")
+
+    def _reset_tipos(self):
+        for a in self.tipos_actions.values():
+            a.setChecked(True)
+        self.actualizar_texto_tipos()
+        self.on_filtro_jerarquico_changed(None)
+
+    def _reset_checks(self, checks):
+        for c in checks:
+            c.blockSignals(True)
+            c.setChecked(False)
+            c.blockSignals(False)
+        self.ejecutar_busqueda(auto=True)
+
+    def _reset_lista_propiedades(self, lw):
+        lw.blockSignals(True)
+        for i in range(lw.count()):
+            lw.item(i).setCheckState(Qt.Unchecked)
+        lw.blockSignals(False)
+        self.ejecutar_busqueda(auto=True)
+
+    def _limpiar_filtros(self):
+        """Devuelve todos los filtros al estado por defecto y relanza una única búsqueda."""
+        try:
+            for lw, marcado in ((self.list_companeros, True), (self.list_años, True),
+                                (self.list_carpetas, True), (self.list_clientes, False),
+                                (self.list_proyectos, False), (self.list_materiales, False),
+                                (self.list_tratamientos, False), (self.list_cierres, False),
+                                (self.list_espesores, False)):
+                lw.blockSignals(True)
+                estado = Qt.Checked if marcado else Qt.Unchecked
+                for i in range(lw.count()):
+                    lw.item(i).setCheckState(estado)
+                lw.blockSignals(False)
+            for chip in self.chips_años.values():
+                chip.blockSignals(True)
+                chip.setChecked(True)
+                chip.blockSignals(False)
+            for c in (self.chk_laser, self.chk_torno, self.chk_fresa, self.chk_soldadura,
+                      self.chk_pintura, self.chk_montaje, self.chk_filo_guiado,
+                      self.chk_onda, self.chk_cangilon, self.chk_runer):
+                c.blockSignals(True)
+                c.setChecked(False)
+                c.blockSignals(False)
+            for a in self.tipos_actions.values():
+                a.setChecked(True)
+            self.actualizar_texto_tipos()
+            self._refrescar_real_jerarquico()
+        except Exception as e:
+            logger.debug(f"Error limpiando filtros: {e}")
+
+    def _push_reciente(self, termino):
+        try:
+            rec = json.loads(str(self.qsettings.value("busquedas_recientes", "[]")))
+            if termino in rec:
+                rec.remove(termino)
+            rec.insert(0, termino)
+            self.qsettings.setValue("busquedas_recientes", json.dumps(rec[:3]))
+            self._refrescar_recientes()
+        except Exception as e:
+            logger.debug(f"Error guardando búsqueda reciente: {e}")
+
+    def _refrescar_recientes(self):
+        try:
+            self._vaciar_layout(self.recientes_lay)
+            rec = json.loads(str(self.qsettings.value("busquedas_recientes", "[]")))
+            for term in rec[:3]:
+                chip = QPushButton(term if len(term) <= 18 else term[:16] + "…")
+                chip.setObjectName("Chip")
+                chip.setToolTip(term)
+                chip.setCursor(Qt.PointingHandCursor)
+                chip.clicked.connect(lambda _, t=term: self._aplicar_busqueda(t))
+                self.recientes_lay.addWidget(chip)
+        except Exception as e:
+            logger.debug(f"Error refrescando recientes: {e}")
+
+    def _aplicar_busqueda(self, termino):
+        self.input_buscar.setText(termino)
+        self.ejecutar_busqueda()
+
+    def _refrescar_guardadas(self):
+        try:
+            self.menu_guardadas.clear()
+            accion_guardar = self.menu_guardadas.addAction(svg_icon("check"), "Guardar búsqueda actual")
+            accion_guardar.triggered.connect(self._guardar_busqueda_actual)
+            guardadas = json.loads(str(self.qsettings.value("busquedas_guardadas", "[]")))
+            if guardadas:
+                self.menu_guardadas.addSeparator()
+                for term in guardadas:
+                    accion = self.menu_guardadas.addAction(svg_icon("buscar"), term)
+                    accion.triggered.connect(lambda _, t=term: self._aplicar_busqueda(t))
+                self.menu_guardadas.addSeparator()
+                accion_vaciar = self.menu_guardadas.addAction("Vaciar guardadas")
+                accion_vaciar.triggered.connect(self._vaciar_guardadas)
+        except Exception as e:
+            logger.debug(f"Error refrescando guardadas: {e}")
+
+    def _guardar_busqueda_actual(self):
+        term = self.input_buscar.text().strip()
+        if not term:
+            self.toast.show_message("Escribe un término antes de guardar")
+            return
+        guardadas = json.loads(str(self.qsettings.value("busquedas_guardadas", "[]")))
+        if term not in guardadas:
+            guardadas.insert(0, term)
+            self.qsettings.setValue("busquedas_guardadas", json.dumps(guardadas[:10]))
+        self._refrescar_guardadas()
+        self.toast.show_message(f"Búsqueda guardada:\n{term}")
+
+    def _vaciar_guardadas(self):
+        self.qsettings.setValue("busquedas_guardadas", "[]")
+        self._refrescar_guardadas()
 
     def actualizar_estilos(self):
         """V2.0.0: el tema vive en alsi_buscador.qss (aplicado a nivel de app
@@ -1975,12 +2356,25 @@ class BuscadorPiezas(QMainWindow):
         self.save_window_state()
         super().closeEvent(event)
 
+    def _sync_chip_anio(self, item):
+        """Mantiene el chip visual del año sincronizado con list_años (V2.0.1)."""
+        try:
+            chip = self.chips_años.get(item.text())
+            if chip:
+                estado = item.checkState() == Qt.Checked
+                if chip.isChecked() != estado:
+                    chip.blockSignals(True)
+                    chip.setChecked(estado)
+                    chip.blockSignals(False)
+        except (RuntimeError, AttributeError):
+            pass
+
     def on_filtro_jerarquico_changed(self, item):
         """Manejador con debouncing para la cascada de filtros (V1.0.0.2)"""
         if self.bloqueo_filtros:
             return
-        
-        # Reiniciar el timer. Solo dispararemos la búsqueda pesada 
+
+        # Reiniciar el timer. Solo dispararemos la búsqueda pesada
         # tras 300ms de inactividad
         self.timer_filtros.start(300)
 
@@ -2237,6 +2631,11 @@ class BuscadorPiezas(QMainWindow):
             if not resultados and termino:
                 txt = f"No se encontraron resultados para '{termino}'"
                 self.lbl_status.setText(txt)
+
+            # V2.0.1: refrescar barra de contexto y recientes
+            self._actualizar_chips_contexto()
+            if not auto and termino and resultados:
+                self._push_reciente(termino)
                 
         except Exception as e:
             self.lbl_status.setText("❌ Error en la búsqueda")
