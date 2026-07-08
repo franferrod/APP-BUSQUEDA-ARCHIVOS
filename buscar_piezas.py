@@ -773,6 +773,46 @@ class SeccionAcordeon(QFrame):
 
 
 # -----------------------------------------------------------------------------
+# LABEL DE IMAGEN AUTO-CONTENIDA (V2.0.1)
+# -----------------------------------------------------------------------------
+class PreviewImagenLabel(QLabel):
+    """QLabel que pinta su imagen en el propio paintEvent, escalada al rect
+    actual (KeepAspectRatio) y sin ampliar más allá del tamaño original.
+    Al pintar dentro de contentsRect() es IMPOSIBLE que desborde el contenedor,
+    sea cual sea el DPI del monitor o el timing de carga de la miniatura."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._pm = None
+        self.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.setMinimumSize(1, 1)
+
+    def set_imagen(self, pixmap):
+        self._pm = pixmap
+        self.update()
+
+    def setPixmap(self, pixmap):
+        # Compatibilidad: cualquier setPixmap externo pasa por el pintado contenido
+        self.set_imagen(pixmap)
+
+    def paintEvent(self, event):
+        if self._pm is None or self._pm.isNull():
+            return super().paintEvent(event)
+        r = self.contentsRect()
+        # escalar a caber en el rect, pero nunca ampliar por encima del original
+        destino = self._pm.size().scaled(r.size(), Qt.KeepAspectRatio)
+        destino.setWidth(min(destino.width(), self._pm.width()))
+        destino.setHeight(min(destino.height(), self._pm.height()))
+        escalado = self._pm.scaled(destino, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        x = r.x() + (r.width() - escalado.width()) // 2
+        y = r.y() + (r.height() - escalado.height()) // 2
+        p = QPainter(self)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.drawPixmap(x, y, escalado)
+        p.end()
+
+
+# -----------------------------------------------------------------------------
 # THUMBNAIL WORKER (V1.0.3 - Extracción asíncrona)
 # -----------------------------------------------------------------------------
 class ThumbnailWorker(QThread):
@@ -1591,15 +1631,11 @@ class BuscadorPiezas(QMainWindow):
         self.preview_image_card.setFixedHeight(210)
         img_card_lay = QVBoxLayout(self.preview_image_card)
         img_card_lay.setContentsMargins(8, 8, 8, 8)
-        self.lbl_preview_icon = QLabel()
-        self.lbl_preview_icon.setPixmap(svg_pixmap("buscar", color="#777777", size=56))
-        self.lbl_preview_icon.setAlignment(Qt.AlignCenter)
-        self.lbl_preview_icon.setScaledContents(False)
-        # SizePolicy Ignored: el label no impone el tamaño del pixmap al layout,
-        # así la imagen nunca desborda el card aunque el panel sea estrecho (V2.0.1)
-        self.lbl_preview_icon.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-        self._preview_pm_original = None  # pixmap sin escalar (para reescalar en resize)
-        self.preview_image_card.installEventFilter(self)  # capturar Resize
+        # V2.0.1: label que pinta la imagen en su paintEvent → nunca desborda el
+        # card, independiente del DPI del monitor (causa del desborde en pantallas
+        # con escalado de Windows al 125/150%)
+        self.lbl_preview_icon = PreviewImagenLabel()
+        self.lbl_preview_icon.set_imagen(svg_pixmap("buscar", color="#777777", size=56))
         img_card_lay.addWidget(self.lbl_preview_icon)
 
         # Efecto de opacidad para animaciones (V1.3.16)
@@ -2017,26 +2053,9 @@ class BuscadorPiezas(QMainWindow):
             self.galeria.blockSignals(False)
             logger.debug(f"Error sincronizando galería: {e}")
 
-    def eventFilter(self, source, event):
-        # V2.0.1: reescalar la miniatura del preview cuando el card cambia de tamaño
-        if source is getattr(self, 'preview_image_card', None) and event.type() == QEvent.Resize:
-            self._ajustar_preview_imagen()
-        return super().eventFilter(source, event)
-
     def _set_preview_imagen(self, pixmap):
-        """Guarda el pixmap original de la miniatura y lo muestra escalado al card."""
-        self._preview_pm_original = pixmap
-        self._ajustar_preview_imagen()
-
-    def _ajustar_preview_imagen(self):
-        """Escala la miniatura al tamaño disponible del card (responsive, sin desborde)."""
-        pm = self._preview_pm_original
-        if pm is None or pm.isNull():
-            return
-        card = self.preview_image_card
-        w = max(40, card.width() - 20)
-        h = max(40, card.height() - 20)
-        self.lbl_preview_icon.setPixmap(pm.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        """Muestra la miniatura en el label auto-contenido (paintEvent la ajusta)."""
+        self.lbl_preview_icon.set_imagen(pixmap)
 
     def _on_galeria_seleccion(self, current, previous=None):
         """Selección en galería → selecciona la fila equivalente en la tabla
