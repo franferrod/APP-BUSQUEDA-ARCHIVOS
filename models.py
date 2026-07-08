@@ -154,6 +154,23 @@ class IndexManager:
                 )
             ''')
 
+            # V2.1.0 - Placas CE: relación nº de placa <-> código de plano/ensamblaje
+            # alimentada desde los Excel de \\NAS\Oficina Tecnica\NÚMEROS DE SERIE
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS buscador.placas_ce (
+                    num_placa      TEXT PRIMARY KEY,
+                    codigo_tipo    TEXT,
+                    descripcion    TEXT,
+                    cliente        TEXT,
+                    anio           INTEGER,
+                    proyecto       TEXT,
+                    orden          TEXT,
+                    num_plano      TEXT,
+                    archivo_origen TEXT,
+                    indexado_en    TIMESTAMP DEFAULT NOW()
+                )
+            ''')
+
             # Índices
             indices = [
                 'CREATE INDEX IF NOT EXISTS idx_ba_nombre ON buscador.archivos(nombre_archivo)',
@@ -165,6 +182,7 @@ class IndexManager:
                 'CREATE INDEX IF NOT EXISTS idx_ba_cod_proy ON buscador.archivos(codigo_proyecto)',
                 'CREATE INDEX IF NOT EXISTS idx_ba_cod_ord ON buscador.archivos(codigo_orden)',
                 'CREATE INDEX IF NOT EXISTS idx_ba_origen_anio ON buscador.archivos(origen, anio)',
+                'CREATE INDEX IF NOT EXISTS idx_placas_plano ON buscador.placas_ce(num_plano)',
             ]
             for idx_sql in indices:
                 cursor.execute(idx_sql)
@@ -210,10 +228,72 @@ class IndexManager:
         finally:
             wrapper.close()
 
-    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, props_fabricacion=None, props_bandas=None, material=None, tratamiento=None, espesor=None):
+    # ═══════════════════════════════════════════════════════════════════
+    # PLACAS CE (V2.1.0)
+    # ═══════════════════════════════════════════════════════════════════
+    def guardar_placas_ce(self, filas):
+        """Reemplaza el contenido de buscador.placas_ce con las filas escaneadas
+        de los Excel de NÚMEROS DE SERIE. filas = lista de tuplas:
+        (num_placa, codigo_tipo, descripcion, cliente, anio, proyecto, orden, num_plano, archivo_origen)"""
+        wrapper = self.get_connection()
+        try:
+            conn = wrapper._conn
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM buscador.placas_ce")
+            cursor.executemany('''
+                INSERT INTO buscador.placas_ce
+                    (num_placa, codigo_tipo, descripcion, cliente, anio, proyecto, orden, num_plano, archivo_origen)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (num_placa) DO UPDATE SET
+                    codigo_tipo = EXCLUDED.codigo_tipo, descripcion = EXCLUDED.descripcion,
+                    cliente = EXCLUDED.cliente, anio = EXCLUDED.anio, proyecto = EXCLUDED.proyecto,
+                    orden = EXCLUDED.orden, num_plano = EXCLUDED.num_plano,
+                    archivo_origen = EXCLUDED.archivo_origen, indexado_en = NOW()
+            ''', filas)
+            conn.commit()
+            logger.info(f"Placas CE indexadas: {len(filas)}")
+            return len(filas)
+        finally:
+            wrapper.close()
+
+    def contar_placas_ce(self):
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM buscador.placas_ce")
+            return cursor.fetchone()[0]
+        except Exception:
+            return 0
+        finally:
+            wrapper.close()
+
+    def buscar_planos_por_placa(self, termino):
+        """Si el término coincide con un nº de placa CE (ej. '26-0006'),
+        devuelve los num_plano asociados para expandir la búsqueda."""
+        kw = (termino or "").strip().upper()
+        if not kw or len(kw) < 3:
+            return []
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute(
+                "SELECT DISTINCT num_plano FROM buscador.placas_ce "
+                "WHERE UPPER(num_placa) = %s AND num_plano IS NOT NULL AND num_plano != ''",
+                (kw,))
+            return [r[0] for r in cursor.fetchall()]
+        except Exception as e:
+            logger.debug(f"Error buscando placa '{kw}': {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def buscar(self, termino, compañeros=None, años=None, extensiones=None, carpetas=None, clientes=None, proyectos=None, ordenes=None, props_fabricacion=None, props_bandas=None, material=None, tratamiento=None, espesor=None, solo_placa_ce=False):
         """
         Búsqueda multi-keyword con scoring y filtros múltiples.
         V1.0.7 - Adaptado a PostgreSQL con unaccent.
+        V2.1.0 - solo_placa_ce: restringe a archivos cuyo código de plano tiene
+                 placa CE registrada; y si un keyword es un nº de placa, expande
+                 la búsqueda a su ensamblaje.
         """
         logger.info(f"Buscando: '{termino}' | Orígenes: {compañeros}, Años: {años}")
 
@@ -232,6 +312,12 @@ class IndexManager:
                        ruta_completa, sw_material, sw_tratamiento, sw_espesor,
                        sw_laser, sw_torno, sw_fresa, sw_soldadura, sw_pintura, sw_montaje"""
 
+        # V2.1.0: expansión por nº de placa CE — si algún keyword es una placa
+        # registrada (ej. "26-0006"), buscamos también por su código de plano
+        planos_de_placas = []
+        for kw in keywords:
+            planos_de_placas.extend(self.buscar_planos_por_placa(kw))
+
         # 1. Construcción de Scores y WHERE base (Keywords)
         if not keywords:
             query_select = f"SELECT {base_cols}, 0 as score FROM buscador.archivos"
@@ -246,6 +332,11 @@ class IndexManager:
                 )
                 params.append(f"%{kw_norm}%")
 
+            # Los planos que vienen de un nº de placa puntúan por encima de todo
+            for plano in planos_de_placas:
+                score_cases.append("CASE WHEN UPPER(nombre_archivo) LIKE %s THEN 10000 ELSE 0 END")
+                params.append(f"{plano.upper()}%")
+
             score_sql = " + ".join(score_cases)
             logic_op = " AND " if is_and_search else " OR "
             where_clause = logic_op.join(
@@ -253,8 +344,23 @@ class IndexManager:
             )
             params.extend([f"%{self.normalizar_texto(k)}%" for k in keywords])
 
+            # La coincidencia por placa siempre entra en OR (aunque la búsqueda sea AND)
+            if planos_de_placas:
+                placa_clause = " OR ".join(["UPPER(nombre_archivo) LIKE %s" for _ in planos_de_placas])
+                where_clause = f"({where_clause}) OR ({placa_clause})"
+                params.extend([f"{p.upper()}%" for p in planos_de_placas])
+
             query_select = f"SELECT {base_cols}, ({score_sql}) as score FROM buscador.archivos"
             base_where = f"({where_clause})"
+
+        # V2.1.0 - Filtro "Solo máquinas con placa CE": el prefijo del nombre de
+        # archivo (ej. "26047.E107") debe existir como num_plano en placas_ce
+        if solo_placa_ce:
+            base_where += (
+                " AND UPPER(SUBSTRING(nombre_archivo FROM '^[0-9]{4,6}\\.E[0-9]+'))"
+                " IN (SELECT UPPER(num_plano) FROM buscador.placas_ce"
+                "     WHERE num_plano IS NOT NULL AND num_plano != '')"
+            )
 
         # Filtro Global contra Temporales
         base_where += " AND SUBSTRING(nombre_archivo, 1, 1) != '~'"

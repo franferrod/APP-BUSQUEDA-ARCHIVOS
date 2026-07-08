@@ -10,7 +10,7 @@ a = Analysis(
            ('SwPropExtractor.exe', '.'), ('SolidWorks.Interop.swdocumentmgr.dll', '.'),
            # V2.0.0 - Rediseño UI: fuentes de marca, iconos SVG y hoja de estilo
            ('fonts', 'fonts'), ('icons', 'icons'), ('alsi_buscador.qss', '.')],
-    hiddenimports=['PyQt5.QtSvg'],
+    hiddenimports=['PyQt5.QtSvg', 'xlrd', 'openpyxl'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

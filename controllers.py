@@ -12,6 +12,99 @@ import xml.etree.ElementTree as ET
 _MATERIALES_VALIDOS_CACHE = None
 
 # v1.0.7 - Carpetas a excluir durante indexación
+# V2.1.0 - Excels de números de serie (relación placa CE <-> código de plano)
+RUTA_NUMEROS_SERIE = "\\\\192.168.1.10\\Oficina Tecnica\\NÚMEROS DE SERIE"
+
+
+def escanear_placas_ce(ruta_base=RUTA_NUMEROS_SERIE):
+    """Recorre los Excel de NÚMEROS DE SERIE (cualquier subcarpeta/año) y devuelve
+    las filas placa CE <-> nº de plano. Parser dirigido por cabecera: busca la fila
+    con 'Nº PLACA' y 'Nº PLANO' y mapea las columnas por nombre, tolerando cambios
+    de orden entre años. Soporta .xls (xlrd) y .xlsx (openpyxl)."""
+    import unicodedata
+
+    def norm(txt):
+        txt = unicodedata.normalize('NFKD', str(txt or ""))
+        return "".join(c for c in txt if not unicodedata.combining(c)).upper().strip()
+
+    filas = {}  # num_placa -> tupla (los años recientes pisan a los antiguos)
+    archivos_xls = []
+    for root, dirs, files in os.walk(ruta_base):
+        for f in files:
+            if f.lower().endswith(('.xls', '.xlsx')) and not f.startswith('~$'):
+                archivos_xls.append(os.path.join(root, f))
+
+    def procesar_hoja(nombre_archivo, matriz):
+        """matriz: lista de filas (listas de celdas). Detecta cabecera y extrae."""
+        idx_cab = None
+        cols = {}
+        for i, fila in enumerate(matriz[:10]):
+            normadas = [norm(c) for c in fila]
+            if any("PLACA" in c for c in normadas) and any("PLANO" in c for c in normadas):
+                idx_cab = i
+                for j, c in enumerate(normadas):
+                    if "PLACA" in c: cols['placa'] = j
+                    elif c == "CODIGO": cols['codigo'] = j
+                    elif "DESCRIPCION" in c: cols['descripcion'] = j
+                    elif "CLIENTE" in c: cols['cliente'] = j
+                    elif c == "ANO": cols['anio'] = j
+                    elif "PROYECTO" in c: cols['proyecto'] = j
+                    elif "ORDEN" in c: cols['orden'] = j
+                    elif "PLANO" in c: cols['plano'] = j
+                break
+        if idx_cab is None or 'placa' not in cols or 'plano' not in cols:
+            return 0
+        n = 0
+        for fila in matriz[idx_cab + 1:]:
+            def celda(clave):
+                j = cols.get(clave)
+                if j is None or j >= len(fila):
+                    return ""
+                v = fila[j]
+                if isinstance(v, float) and v == int(v):
+                    v = int(v)
+                return str(v).strip()
+            placa = celda('placa')
+            plano = celda('plano')
+            if not placa or not plano:
+                continue
+            anio_txt = celda('anio')
+            try:
+                anio = int(float(anio_txt)) if anio_txt else None
+            except ValueError:
+                anio = None
+            filas[placa.upper()] = (
+                placa.upper(), celda('codigo'), celda('descripcion'), celda('cliente'),
+                anio, celda('proyecto'), celda('orden'), plano.upper(), os.path.basename(nombre_archivo))
+            n += 1
+        return n
+
+    for ruta in archivos_xls:
+        try:
+            if ruta.lower().endswith('.xls'):
+                import xlrd
+                wb = xlrd.open_workbook(ruta)
+                for hoja in wb.sheets():
+                    if hoja.nrows == 0:
+                        continue
+                    matriz = [[hoja.cell_value(r, c) for c in range(hoja.ncols)]
+                              for r in range(hoja.nrows)]
+                    procesar_hoja(ruta, matriz)
+            else:
+                import openpyxl
+                wb = openpyxl.load_workbook(ruta, read_only=True, data_only=True)
+                for hoja in wb.worksheets:
+                    matriz = [[('' if c is None else c) for c in fila]
+                              for fila in hoja.iter_rows(values_only=True)]
+                    procesar_hoja(ruta, matriz)
+                wb.close()
+            logger.info(f"Placas CE: procesado {os.path.basename(ruta)} (acumuladas {len(filas)})")
+        except Exception as e:
+            logger.warning(f"Placas CE: no se pudo leer {ruta}: {e}")
+
+    return list(filas.values())
+
+
 CARPETAS_EXCLUIDAS = {
     'ARCHIVOS REPETIDOS', 'REVISION MIGRACION', '__pycache__',
     'BACKUPS', 'build', 'dist', '.git', 'D:\\MIGRACION_NAS_BACKUPS',
@@ -216,6 +309,18 @@ class IndexadorThread(QThread):
             finally:
                 wrapper.close()
             
+            # V2.1.0 - Paso final: indexar placas CE desde NÚMEROS DE SERIE
+            # (no bloquea la indexación de archivos si falla)
+            if not self._cancelar:
+                try:
+                    self.status.emit("Indexando placas CE (números de serie)...")
+                    filas_placas = escanear_placas_ce()
+                    if filas_placas:
+                        n = self.db.guardar_placas_ce(filas_placas)
+                        self.status.emit(f"Placas CE indexadas: {n}")
+                except Exception as e:
+                    logger.warning(f"No se pudieron indexar las placas CE: {e}")
+
             duration = (datetime.datetime.now() - start_time).total_seconds()
             logger.info(f"Indexación completada: {total_indexados} archivos en {duration:.2f}s")
             self.finished.emit(total_indexados, duration)
@@ -384,8 +489,8 @@ class SearchController:
         self.db = db
 
     def perform_search(self, term, companions, years, extensiones=None, folder_type="TODOS",
-                      clientes=None, proyectos=None, ordenes=None, props_fabricacion=None, props_bandas=None, material=None, tratamiento=None, espesor=None):
-        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes, props_fabricacion, props_bandas, material, tratamiento, espesor)
+                      clientes=None, proyectos=None, ordenes=None, props_fabricacion=None, props_bandas=None, material=None, tratamiento=None, espesor=None, solo_placa_ce=False):
+        return self.db.buscar(term, companions, years, extensiones, folder_type, clientes, proyectos, ordenes, props_fabricacion, props_bandas, material, tratamiento, espesor, solo_placa_ce)
 
     def save_preference(self, key, value):
         self.db.guardar_preferencia(key, value)

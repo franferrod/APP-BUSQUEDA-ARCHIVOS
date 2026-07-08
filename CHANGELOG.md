@@ -1,5 +1,11 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.1.0] - 2026-07-08 (Placas CE + fixes de preview)
+- **Nuevo filtro "Placa CE"**: botón junto al buscador que restringe los resultados a máquinas con placa CE registrada (ej. buscar "CINTA A450" muestra solo las cintas reales, no todas las patas y travesaños con nombre parecido).
+- **Búsqueda por nº de placa**: escribir un número de placa (ej. "26-0006") en el buscador encuentra directamente su ensamblaje, plano y PDF.
+- **Nueva tabla placas_ce en PostgreSQL**: se alimenta automáticamente al Reindexar NAS leyendo los Excel de NÚMEROS DE SERIE (todos los años, formato .xls y .xlsx).
+- **Fix preview**: la miniatura ya no se desplaza sobre el texto ni deja el "fantasma" de la selección anterior (efecto de opacidad retirado del render).
+
 ## [2.0.0] - 2026-07-06 (Rediseño visual completo - Marca ALSI 2025)
 - **Tema oscuro CAD**: Nueva interfaz oscura de marca (naranja #E66C32) aplicada con hoja de estilo QSS global.
 - **Tipografía de marca**: AG ALSI en títulos principales, Nizzoli Alt en títulos de sección y Poppins como fuente de toda la interfaz.

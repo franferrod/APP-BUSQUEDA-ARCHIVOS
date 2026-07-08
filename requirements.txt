@@ -5,3 +5,4 @@ pywin32>=306
 olefile>=0.46
 pymupdf>=1.27
 psycopg2-binary>=2.9
+xlrd>=2.0

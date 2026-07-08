@@ -302,6 +302,16 @@ QTableWidget, QTableView, QListWidget {
     selection-color: #F5F5F5;
 }
 
+/* Toggle Placa CE (V2.1.0): pastilla junto al buscador */
+QPushButton#ToggleCE {
+    background-color: #2E2E2E; border: 1.5px solid #4A4A4A; border-radius: 10px;
+    padding: 8px 14px; color: #999999; font-weight: 700;
+}
+QPushButton#ToggleCE:hover { border-color: #E66C32; color: #DFDFDF; }
+QPushButton#ToggleCE:checked {
+    background-color: #3A2C21; border-color: #E66C32; color: #F0A377;
+}
+
 /* Segmented control por dynamic property (un widget solo admite un objectName) */
 QPushButton[segmento="true"] {
     background-color: #2E2E2E; border: 1px solid #4A4A4A; border-radius: 0;
@@ -1196,6 +1206,22 @@ class BuscadorPiezas(QMainWindow):
         self.btn_tipos.setMenu(self.menu_tipos)
         header_layout.addWidget(self.btn_tipos)
 
+        # V2.1.0 - Toggle "Placa CE": solo máquinas con placa CE registrada en
+        # los Excel de NÚMEROS DE SERIE (y permite buscar por nº de placa)
+        self.btn_placa_ce = QPushButton("Placa CE")
+        self.btn_placa_ce.setObjectName("ToggleCE")
+        self.btn_placa_ce.setIcon(svg_icon("check", size=15))
+        self.btn_placa_ce.setCheckable(True)
+        self.btn_placa_ce.setCursor(Qt.PointingHandCursor)
+        self.btn_placa_ce.setMinimumHeight(40)
+        self.btn_placa_ce.setToolTip(
+            "Solo máquinas con placa CE registrada en NÚMEROS DE SERIE.\n"
+            "Filtra ensamblajes/planos cuyo código (ej. 26047.E107) tiene placa asignada.\n"
+            "Consejo: también puedes escribir directamente un nº de placa (ej. 26-0006)\n"
+            "en el buscador para encontrar su máquina.")
+        self.btn_placa_ce.toggled.connect(self._on_placa_ce_toggled)
+        header_layout.addWidget(self.btn_placa_ce)
+
         self.btn_buscar = QPushButton("Buscar")
         self.btn_buscar.setIcon(svg_icon("buscar", color="#FFFFFF"))
         self.btn_buscar.setObjectName("Primary")
@@ -1638,9 +1664,11 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_preview_icon.set_imagen(svg_pixmap("buscar", color="#777777", size=56))
         img_card_lay.addWidget(self.lbl_preview_icon)
 
-        # Efecto de opacidad para animaciones (V1.3.16)
+        # V2.0.1: el QGraphicsOpacityEffect ya NO se adjunta al label — su caché
+        # de render pintaba la miniatura desplazada (tapando el texto) y dejaba
+        # el fantasma de la selección anterior. Los objetos se conservan porque
+        # varios métodos legacy llaman a setOpacity()/anim (ahora inofensivos).
         self.preview_opacity = QGraphicsOpacityEffect()
-        self.lbl_preview_icon.setGraphicsEffect(self.preview_opacity)
         self.anim_opacity = QPropertyAnimation(self.preview_opacity, b"opacity")
         self.anim_opacity.setDuration(400)
         preview_layout.addWidget(self.preview_image_card)
@@ -2206,11 +2234,30 @@ class BuscadorPiezas(QMainWindow):
             if n_banda:
                 chips.append((f"Banda: {n_banda}", lambda: self._reset_checks(chks_banda)))
 
+            # V2.1.0 - Toggle Placa CE activo
+            if self.btn_placa_ce.isChecked():
+                chips.append(("Solo placa CE", lambda: self.btn_placa_ce.setChecked(False)))
+
             for texto, cb in chips[:8]:
                 self.chips_activos_lay.addWidget(self._chip_activo(texto, cb))
             self.btn_limpiar.setVisible(bool(chips))
         except Exception as e:
             logger.debug(f"Error actualizando chips de contexto: {e}")
+
+    def _on_placa_ce_toggled(self, activo):
+        """Toggle 'Solo máquinas con placa CE' (V2.1.0)."""
+        if activo:
+            try:
+                if self.db.contar_placas_ce() == 0:
+                    self.toast.show_message(
+                        "No hay placas CE indexadas todavía.\n"
+                        "Pulsa 'Reindexar NAS' para cargarlas desde NÚMEROS DE SERIE.", 4000)
+            except Exception:
+                pass
+        self.ejecutar_busqueda(auto=True)
+        # La búsqueda puede retornar sin repintar chips (sin término/orígenes);
+        # el chip del toggle debe reflejarse siempre
+        self._actualizar_chips_contexto()
 
     def _reset_tipos(self):
         for a in self.tipos_actions.values():
@@ -2258,6 +2305,10 @@ class BuscadorPiezas(QMainWindow):
             for a in self.tipos_actions.values():
                 a.setChecked(True)
             self.actualizar_texto_tipos()
+            # V2.1.0: apagar el toggle Placa CE sin disparar búsqueda doble
+            self.btn_placa_ce.blockSignals(True)
+            self.btn_placa_ce.setChecked(False)
+            self.btn_placa_ce.blockSignals(False)
             self._refrescar_real_jerarquico()
         except Exception as e:
             logger.debug(f"Error limpiando filtros: {e}")
@@ -2595,7 +2646,7 @@ class BuscadorPiezas(QMainWindow):
             espesores_sel = self.get_selected_items(self.list_espesores) or None
 
             resultados = self.controller.perform_search(
-                termino, 
+                termino,
                 comp_sel,
                 años_sel,
                 extensiones,
@@ -2607,7 +2658,8 @@ class BuscadorPiezas(QMainWindow):
                 props_bandas,
                 materiales_sel,
                 tratamientos_sel,
-                espesores_sel
+                espesores_sel,
+                solo_placa_ce=self.btn_placa_ce.isChecked()  # V2.1.0
             )
             
             # Prealocar filas de golpe (mucho más rápido que insertRow en bucle)
@@ -3434,7 +3486,7 @@ class BuscadorPiezas(QMainWindow):
                 f'color: #FFFFFF; background: transparent;')
             lbl_title.setAlignment(Qt.AlignCenter)
             h_lay.addWidget(lbl_title)
-            lbl_ver = QLabel("Versión 2.0.0 · Rediseño UI ALSI")
+            lbl_ver = QLabel("Versión 2.1.0 · Placas CE + Rediseño UI ALSI")
             lbl_ver.setStyleSheet("font-size: 12px; color: #FFE3D2; font-weight: 600; background: transparent;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             h_lay.addWidget(lbl_ver)
