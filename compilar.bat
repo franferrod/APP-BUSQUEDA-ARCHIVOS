@@ -24,6 +24,11 @@ copy "ALSI_IMAGOTIPO_naranja.png" "dist\"
 copy "ALSI_BUSCADOR.ico" "dist\"
 copy "INSTALAR_LOCAL.bat" "dist\"
 copy "config.ini" "dist\"
+REM V2.0.1 - Recursos de marca: permiten ejecutar tambien buscar_piezas.py suelto
+REM (el .exe ya los lleva embebidos, esto es por robustez de la carpeta)
+copy "alsi_buscador.qss" "dist\"
+xcopy /Y /S /I "fonts" "dist\fonts"
+xcopy /Y /S /I "icons" "dist\icons"
 
 REM echo.
 REM echo === Desplegando en Unidad Z: ===
