@@ -1171,21 +1171,24 @@ class BuscadorPiezas(QMainWindow):
         self.input_buscar.setPlaceholderText("Buscar: travesaño, cama, inox (separar por comas)")
         self.input_buscar.setToolTip("Introduce palabras separadas por comas para una búsqueda inteligente")
         self.input_buscar.setMinimumHeight(38)
+        # V2.0.0: buscador más corto (tope de ancho) y un separador elástico después,
+        # para dejar espacio de sobra a los botones de la derecha sin que se inflen
+        self.input_buscar.setMaximumWidth(720)
         self.input_buscar.returnPressed.connect(self.ejecutar_busqueda)
-        # stretch=1: el buscador absorbe el espacio libre y empuja los botones a la
-        # derecha, que quedan a su tamaño natural (Tipos crece para caber ENSAMBLAJES)
         header_layout.addWidget(self.input_buscar, stretch=1)
+        header_layout.addStretch(1)
 
         # 4. TIPOS DE ARCHIVO (V1.0.0 - Reubicado a Barra Superior)
         self.btn_tipos = QPushButton("Tipos: TODOS")
         self.btn_tipos.setIcon(svg_icon("capas-tipos"))
         self.btn_tipos.setMinimumHeight(38)
         self.btn_tipos.setCursor(Qt.PointingHandCursor)
-        # V2.0.0: ancho mínimo (no fijo) para que "Tipos: ENSAMBLAJES" no se trunque
-        self.btn_tipos.setMinimumWidth(150)
+        # V2.0.0: ancho mínimo generoso para que "Tipos: ENSAMBLAJES" no se corte
+        # ni siquiera con escalado de pantalla al 125/150%
+        self.btn_tipos.setMinimumWidth(230)
         self.btn_tipos.setStyleSheet("""
             QPushButton::menu-indicator { image: none; }
-            QPushButton { padding: 5px 12px; font-weight: bold; }
+            QPushButton { padding: 5px 14px; font-weight: bold; text-align: left; }
         """)
         
         self.menu_tipos = CheckableMenu(self)  # Menú que no se cierra al seleccionar (R5)
