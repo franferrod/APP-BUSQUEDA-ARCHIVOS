@@ -724,7 +724,9 @@ class GaleriaArrastrable(QListWidget):
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragOnly)
         self.setDefaultDropAction(Qt.CopyAction)
-        self.setUniformItemSizes(True)
+        # V2.0.0: NO uniformItemSizes — cacheaba el tamaño del primer item y no
+        # recalculaba la zona de texto al cambiar S/M/L (etiquetas invisibles hasta
+        # forzar un M→L). Sin él, cada cambio de rejilla recompone bien el texto.
 
     def mimeData(self, items):
         """file:/// URLs para arrastrar a SolidWorks (idéntico a TablaArrastrable)."""
@@ -1171,11 +1173,13 @@ class BuscadorPiezas(QMainWindow):
         self.input_buscar.setPlaceholderText("Buscar: travesaño, cama, inox (separar por comas)")
         self.input_buscar.setToolTip("Introduce palabras separadas por comas para una búsqueda inteligente")
         self.input_buscar.setMinimumHeight(38)
-        # V2.0.0: buscador más corto (tope de ancho) y un separador elástico después,
-        # para dejar espacio de sobra a los botones de la derecha sin que se inflen
-        self.input_buscar.setMaximumWidth(720)
+        # V2.0.0: buscador amplio pero con tope, y un separador elástico después,
+        # para que los botones de la derecha respiren sin que se inflen
+        self.input_buscar.setMaximumWidth(1050)
         self.input_buscar.returnPressed.connect(self.ejecutar_busqueda)
-        header_layout.addWidget(self.input_buscar, stretch=1)
+        # El buscador se queda con 6/7 del espacio libre (amplio); el separador
+        # con 1/7 evita que los botones se inflen cuando el buscador llega al tope
+        header_layout.addWidget(self.input_buscar, stretch=6)
         header_layout.addStretch(1)
 
         # 4. TIPOS DE ARCHIVO (V1.0.0 - Reubicado a Barra Superior)
@@ -2047,6 +2051,10 @@ class BuscadorPiezas(QMainWindow):
         icono, grid = self.TAM_GALERIA[max(0, min(index, 2))]
         self.galeria.setIconSize(QSize(icono, icono))
         self.galeria.setGridSize(QSize(*grid))
+        # Forzar recomposición inmediata para que las etiquetas se pinten ya
+        # (sin esperar a otra interacción)
+        self.galeria.doItemsLayout()
+        self.galeria.viewport().update()
 
     def _cambiar_tam_galeria(self, index):
         self._aplicar_tam_galeria(index)
