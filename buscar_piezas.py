@@ -1128,8 +1128,9 @@ class BuscadorPiezas(QMainWindow):
         self.header_frame = QFrame()
         self.header_frame.setObjectName("Header")
         header_layout = QHBoxLayout(self.header_frame)
-        header_layout.setContentsMargins(12, 8, 12, 8)
-        header_layout.setSpacing(14)
+        # V2.0.0: header más compacto (menos alto) y mejor repartido
+        header_layout.setContentsMargins(14, 5, 14, 5)
+        header_layout.setSpacing(10)
 
         # Isotipo corporativo (V2.0.0: precompuesto sobre el fondo oscuro del
         # header #2E2E2E para evitar franjas por transparencia parcial en Windows)
@@ -1169,19 +1170,22 @@ class BuscadorPiezas(QMainWindow):
         self.input_buscar.setObjectName("SearchBox")
         self.input_buscar.setPlaceholderText("Buscar: travesaño, cama, inox (separar por comas)")
         self.input_buscar.setToolTip("Introduce palabras separadas por comas para una búsqueda inteligente")
-        self.input_buscar.setMinimumHeight(40)
+        self.input_buscar.setMinimumHeight(38)
         self.input_buscar.returnPressed.connect(self.ejecutar_busqueda)
+        # stretch=1: el buscador absorbe el espacio libre y empuja los botones a la
+        # derecha, que quedan a su tamaño natural (Tipos crece para caber ENSAMBLAJES)
         header_layout.addWidget(self.input_buscar, stretch=1)
 
         # 4. TIPOS DE ARCHIVO (V1.0.0 - Reubicado a Barra Superior)
         self.btn_tipos = QPushButton("Tipos: TODOS")
         self.btn_tipos.setIcon(svg_icon("capas-tipos"))
-        self.btn_tipos.setMinimumHeight(40)
+        self.btn_tipos.setMinimumHeight(38)
         self.btn_tipos.setCursor(Qt.PointingHandCursor)
-        self.btn_tipos.setFixedWidth(150)
+        # V2.0.0: ancho mínimo (no fijo) para que "Tipos: ENSAMBLAJES" no se trunque
+        self.btn_tipos.setMinimumWidth(150)
         self.btn_tipos.setStyleSheet("""
-            QPushButton::menu-indicator { image: none; } 
-            QPushButton { padding: 5px; font-weight: bold; }
+            QPushButton::menu-indicator { image: none; }
+            QPushButton { padding: 5px 12px; font-weight: bold; }
         """)
         
         self.menu_tipos = CheckableMenu(self)  # Menú que no se cierra al seleccionar (R5)
@@ -1213,7 +1217,7 @@ class BuscadorPiezas(QMainWindow):
         self.btn_placa_ce.setIcon(svg_icon("check", size=15))
         self.btn_placa_ce.setCheckable(True)
         self.btn_placa_ce.setCursor(Qt.PointingHandCursor)
-        self.btn_placa_ce.setMinimumHeight(40)
+        self.btn_placa_ce.setMinimumHeight(38)
         self.btn_placa_ce.setToolTip(
             "Solo máquinas con placa CE registrada en NÚMEROS DE SERIE.\n"
             "Filtra ensamblajes/planos cuyo código (ej. 26047.E107) tiene placa asignada.\n"
@@ -1227,7 +1231,7 @@ class BuscadorPiezas(QMainWindow):
         self.btn_buscar.setObjectName("Primary")
         self.btn_buscar.setToolTip("Haz clic para iniciar la búsqueda (o pulsa Enter)")
         self.btn_buscar.setCursor(Qt.PointingHandCursor)
-        self.btn_buscar.setMinimumHeight(45)
+        self.btn_buscar.setMinimumHeight(38)
         self.btn_buscar.setFixedWidth(120)
         self.btn_buscar.clicked.connect(self.ejecutar_busqueda)
         # Main Menu
@@ -2714,7 +2718,12 @@ class BuscadorPiezas(QMainWindow):
                 }
                 for i_data, i_tabla in map_cols.items():
                     val = data[i_data]
-                    item = QTableWidgetItem(str(val) if val else "")
+                    texto = str(val) if val else ""
+                    # V2.0.0: mostrar el origen con etiqueta legible (Proyectos,
+                    # Biblioteca 3D, ALSI Estándar) en vez de la clave con guion bajo
+                    if i_tabla == 6 and texto:
+                        texto = ETIQUETAS_ORIGEN.get(texto, texto)
+                    item = QTableWidgetItem(texto)
                     self.tabla.setItem(row, i_tabla, item)
                     
                 # Combinar Orden y Nombre Orden en la columna 10
@@ -3486,7 +3495,7 @@ class BuscadorPiezas(QMainWindow):
                 f'color: #FFFFFF; background: transparent;')
             lbl_title.setAlignment(Qt.AlignCenter)
             h_lay.addWidget(lbl_title)
-            lbl_ver = QLabel("Versión 2.1.0 · Placas CE + Rediseño UI ALSI")
+            lbl_ver = QLabel("Versión 2.0.0 · Rediseño UI ALSI")
             lbl_ver.setStyleSheet("font-size: 12px; color: #FFE3D2; font-weight: 600; background: transparent;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             h_lay.addWidget(lbl_ver)

@@ -1,12 +1,9 @@
 # Changelog - Buscador de Piezas ALSI
 
-## [2.1.0] - 2026-07-08 (Placas CE + fixes de preview)
+## [2.0.0] - 2026-07-08 (Rediseño visual completo - Marca ALSI 2025)
 - **Nuevo filtro "Placa CE"**: botón junto al buscador que restringe los resultados a máquinas con placa CE registrada (ej. buscar "CINTA A450" muestra solo las cintas reales, no todas las patas y travesaños con nombre parecido).
 - **Búsqueda por nº de placa**: escribir un número de placa (ej. "26-0006") en el buscador encuentra directamente su ensamblaje, plano y PDF.
 - **Nueva tabla placas_ce en PostgreSQL**: se alimenta automáticamente al Reindexar NAS leyendo los Excel de NÚMEROS DE SERIE (todos los años, formato .xls y .xlsx).
-- **Fix preview**: la miniatura ya no se desplaza sobre el texto ni deja el "fantasma" de la selección anterior (efecto de opacidad retirado del render).
-
-## [2.0.0] - 2026-07-06 (Rediseño visual completo - Marca ALSI 2025)
 - **Tema oscuro CAD**: Nueva interfaz oscura de marca (naranja #E66C32) aplicada con hoja de estilo QSS global.
 - **Tipografía de marca**: AG ALSI en títulos principales, Nizzoli Alt en títulos de sección y Poppins como fuente de toda la interfaz.
 - **Iconos SVG**: Sustituidos todos los emojis por iconografía vectorial monocroma recoloreable.
@@ -16,6 +13,8 @@
 - **Diálogos renovados**: Reindexar NAS (orígenes como tarjetas y años como chips), Guía rápida con índice lateral y Acerca de con cabecera de marca.
 - **Fix Reindexar**: Corregido un error por el que el diálogo de indexación no lanzaba la indexación de ningún origen (etiquetas vs claves internas).
 - **Placeholder de miniaturas**: Badge de extensión coloreado (PRT/ASM/DRW/PDF...) mientras carga la miniatura real.
+- **Fix Previsualizador**: La miniatura ya no se desplaza sobre el texto ni deja el "fantasma" de la selección anterior; se ajusta al recuadro en cualquier resolución/escalado de pantalla.
+- **Origen legible**: En la tabla de resultados el origen se muestra como "Proyectos", "Biblioteca 3D" o "ALSI Estándar" (sin guiones bajos).
 
 ## [1.1.0] - 2026-07-03 (Rediseño Completo UI/UX y Fix Logo)
 - **Fix Logo Definitivo**: Solucionado el problema visual ("franja negra") del logo ALSI al arrancar, procesando la imagen con PIL (LANCZOS) sobre fondo blanco puro, eliminando los píxeles de anti-aliasing con transparencia alfa.
