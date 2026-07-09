@@ -1995,12 +1995,18 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_status.setObjectName("StatusOk")
         footer_layout.addWidget(self.lbl_status, stretch=1)
 
-        # V2.0.0: estado del índice (toque pro, como el mockup: "● Índice hace 2 h")
+        # V2.0.0: estado del índice (color por antigüedad, clic → reindexar)
         self.lbl_estado_indice = QLabel("")
         self.lbl_estado_indice.setObjectName("StatusDim")
         self.lbl_estado_indice.setTextFormat(Qt.RichText)
+        self.lbl_estado_indice.setCursor(Qt.PointingHandCursor)
+        self.lbl_estado_indice.mousePressEvent = lambda ev: self.confirmar_indexacion()
         footer_layout.addWidget(self.lbl_estado_indice)
         QTimer.singleShot(1500, self._actualizar_estado_indice)
+        # Refresco periódico para que el color/antigüedad se mantengan al día
+        self._timer_estado_indice = QTimer(self)
+        self._timer_estado_indice.timeout.connect(self._actualizar_estado_indice)
+        self._timer_estado_indice.start(10 * 60 * 1000)  # cada 10 min
 
         # Botones de Ayuda e Info (V2.0.0: botones redondos #RoundBtn del QSS)
         self.btn_ayuda = QPushButton("?")
@@ -2316,22 +2322,37 @@ class BuscadorPiezas(QMainWindow):
             logger.debug(f"Error actualizando chips de contexto: {e}")
 
     def _actualizar_estado_indice(self):
-        """Muestra '● Índice hace X' en el footer (V2.0.0, toque pro)."""
+        """Estado del índice en el footer, con color según antigüedad (V2.0.0):
+        verde ≤30 h, ámbar 30 h–4 días, rojo >4 días. Clic → diálogo Reindexar.
+        Pensado para que a simple vista se detecte si la reindexación automática
+        (tarea programada L-V 15:45 en OFITEC-4) ha dejado de correr."""
         try:
             ts = self.db.obtener_ultima_indexacion()
             if not ts:
                 self.lbl_estado_indice.setText(
-                    '<span style="color:#C7A23F;">●</span> Índice sin datos')
+                    '<span style="color:#C7A23F;">●</span> Índice sin datos · clic para reindexar')
+                self.lbl_estado_indice.setToolTip("No hay indexación registrada. Haz clic para reindexar el NAS.")
                 return
-            mins = max(0, int((time.time() - ts) / 60))
-            if mins < 60:
-                cuando = f"hace {mins} min"
-            elif mins < 60 * 24:
-                cuando = f"hace {mins // 60} h"
+            horas = max(0, (time.time() - ts) / 3600)
+            if horas < 1:
+                cuando = f"hace {int(horas * 60)} min"
+            elif horas < 48:
+                cuando = f"hace {int(horas)} h"
             else:
-                cuando = f"hace {mins // (60 * 24)} d"
-            self.lbl_estado_indice.setText(
-                f'<span style="color:#3BA55D;">●</span> Índice actualizado {cuando}')
+                cuando = f"hace {int(horas / 24)} días"
+            if horas <= 30:
+                color, prefijo = "#3BA55D", "Índice actualizado"      # verde
+            elif horas <= 96:
+                color, prefijo = "#C7A23F", "Índice"                   # ámbar
+            else:
+                color, prefijo = "#C75450", "Índice · conviene reindexar,"  # rojo
+            self.lbl_estado_indice.setText(f'<span style="color:{color};">●</span> {prefijo} {cuando}')
+            import datetime as _dt
+            fecha = _dt.datetime.fromtimestamp(ts).strftime("%d/%m/%Y %H:%M")
+            self.lbl_estado_indice.setToolTip(
+                f"Última indexación del NAS: {fecha}\n"
+                f"Reindexación automática programada L-V a las 15:45 (equipo OFITEC-4).\n"
+                f"Haz clic para reindexar ahora.")
         except Exception as e:
             logger.debug(f"Error estado índice: {e}")
 
