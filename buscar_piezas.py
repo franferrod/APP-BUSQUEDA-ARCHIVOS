@@ -1038,18 +1038,36 @@ class BuscadorPiezas(QMainWindow):
         
         self.init_ui()
         self.toast = ToastNotification(self) # Inicializar Toast
-        self.refrescar_filtros_jerarquicos()  # Carga inicial V1.0.0
-        self.cargar_filtros_propiedades()
-        self.cargar_preferencias()
-        self._actualizar_chips_contexto()  # V2.0.1: estado inicial de la barra de contexto
-        
+
+        # V2.0.0: la carga inicial (consultas a PostgreSQL para poblar filtros y
+        # preferencias) se difiere a DESPUÉS de mostrar la ventana. Antes corría
+        # en el constructor, así que con la BD lenta o saturada (p.ej. durante una
+        # reindexación) la ventana tardaba en aparecer ("abre al rato"). Ahora la
+        # ventana sale al instante y los filtros se rellenan un momento después.
+        QTimer.singleShot(0, self._carga_inicial_diferida)
+
         # Diagnóstico de red (V1.0.7)
-        QTimer.singleShot(1000, self.verificar_rutas_red)
+        QTimer.singleShot(1200, self.verificar_rutas_red)
         # V2.0.0: comprobar si hay versión nueva en la carpeta de red
         QTimer.singleShot(3000, self._comprobar_actualizacion)
 
     # check_for_updates eliminado en V1.0.7 — El aviso de actualización lo gestiona
     # el administrador directamente con los compañeros.
+
+    def _carga_inicial_diferida(self):
+        """Carga inicial de filtros y preferencias, tras mostrar la ventana (V2.0.0).
+        Mantiene el arranque fluido aunque la BD esté lenta."""
+        try:
+            self.lbl_status.setText("Cargando filtros…")
+            QApplication.processEvents()
+            self.refrescar_filtros_jerarquicos()
+            self.cargar_filtros_propiedades()
+            self.cargar_preferencias()
+            self._actualizar_chips_contexto()
+            self.lbl_status.setText("Listo")
+        except Exception as e:
+            logger.error(f"Error en carga inicial diferida: {e}")
+            self.lbl_status.setText("Listo")
 
     def verificar_rutas_red(self):
         """Comprueba si las rutas del NAS nuevo son accesibles (V1.0.7)"""
