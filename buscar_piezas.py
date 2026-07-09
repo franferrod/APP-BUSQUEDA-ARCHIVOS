@@ -127,6 +127,9 @@ def etiqueta_origen(texto):
     unificada de UI. Deja intacto cualquier otro valor."""
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
+# V2.0.0 - Versión de la app (fuente única: "Acerca de" y comprobación de updates)
+APP_VERSION = "2.0.0"
+
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
 RUTA_DESPLIEGUE_APP = r'\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS'
@@ -307,6 +310,12 @@ QTableWidget::item:alternate, QTableView::item:alternate { background-color: #1D
 QTableWidget, QTableView, QListWidget {
     selection-background-color: #3A2C21;
     selection-color: #F5F5F5;
+}
+
+/* Banner de actualización (V2.0.0): degradado de marca, discreto */
+QFrame#UpdateBanner {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #E66C32, stop:1 #BF5320);
+    border: none;
 }
 
 /* Toggle Placa CE (V2.1.0): pastilla junto al buscador */
@@ -1036,6 +1045,8 @@ class BuscadorPiezas(QMainWindow):
         
         # Diagnóstico de red (V1.0.7)
         QTimer.singleShot(1000, self.verificar_rutas_red)
+        # V2.0.0: comprobar si hay versión nueva en la carpeta de red
+        QTimer.singleShot(3000, self._comprobar_actualizacion)
 
     # check_for_updates eliminado en V1.0.7 — El aviso de actualización lo gestiona
     # el administrador directamente con los compañeros.
@@ -1309,7 +1320,41 @@ class BuscadorPiezas(QMainWindow):
 
         main_layout.addWidget(self.context_frame)
 
-        # Banner de Actualización eliminado en V1.0.7
+        # ═══════════════════════════════════════════
+        # BANNER DE ACTUALIZACIÓN (V2.0.0): aparece si hay versión nueva en la red
+        # ═══════════════════════════════════════════
+        self.update_banner = QFrame()
+        self.update_banner.setObjectName("UpdateBanner")
+        ub_lay = QHBoxLayout(self.update_banner)
+        ub_lay.setContentsMargins(14, 7, 14, 7)
+        ub_lay.setSpacing(10)
+        ub_icon = QLabel()
+        ub_icon.setPixmap(svg_pixmap("reindexar-refrescar", color="#FFFFFF", size=16))
+        ub_lay.addWidget(ub_icon)
+        self.lbl_update = QLabel("Actualización disponible")
+        self.lbl_update.setStyleSheet("color: #FFFFFF; font-weight: 700; background: transparent;")
+        ub_lay.addWidget(self.lbl_update)
+        ub_lay.addStretch()
+        self.btn_update = QPushButton("Actualizar ahora")
+        self.btn_update.setCursor(Qt.PointingHandCursor)
+        self.btn_update.setStyleSheet(
+            "QPushButton { background: #FFFFFF; color: #BF5320; border: none; "
+            "border-radius: 6px; padding: 5px 14px; font-weight: 800; } "
+            "QPushButton:hover { background: #FFE3D2; }")
+        self.btn_update.clicked.connect(self._lanzar_actualizacion)
+        ub_lay.addWidget(self.btn_update)
+        btn_update_x = QPushButton("✕")
+        btn_update_x.setCursor(Qt.PointingHandCursor)
+        btn_update_x.setFixedSize(24, 24)
+        btn_update_x.setToolTip("Ocultar (te lo recordaré en el próximo arranque)")
+        btn_update_x.setStyleSheet(
+            "QPushButton { background: transparent; color: #FFFFFF; border: none; "
+            "font-weight: 800; } QPushButton:hover { color: #FFE3D2; }")
+        btn_update_x.clicked.connect(lambda: self.update_banner.setVisible(False))
+        ub_lay.addWidget(btn_update_x)
+        self.update_banner.setVisible(False)
+        main_layout.addWidget(self.update_banner)
+        self._version_red = None  # versión detectada en red (para el instalador)
 
         # ═══════════════════════════════════════════
         # CONTENIDO PRINCIPAL (SPLITTER: SIDEBAR + CONTENT) V1.0.0
@@ -2320,6 +2365,98 @@ class BuscadorPiezas(QMainWindow):
                 sec.set_activo(estados.get(clave, False))
         except Exception as e:
             logger.debug(f"Error actualizando chips de contexto: {e}")
+
+    # ═══════════════════════════════════════════
+    # AUTO-ACTUALIZACIÓN (V2.0.0)
+    # ═══════════════════════════════════════════
+    @staticmethod
+    def _version_tuple(v):
+        """'v2.0.1' → (2,0,1) para comparar. Tolera prefijo 'v' y texto extra."""
+        import re as _re
+        nums = _re.findall(r'\d+', (v or "").strip())
+        return tuple(int(n) for n in nums[:3]) if nums else (0,)
+
+    def _comprobar_actualizacion(self):
+        """Lee version.txt de la carpeta de red y, si hay una versión más nueva
+        que la instalada, muestra el banner de actualización (V2.0.0)."""
+        try:
+            version_file = os.path.join(RUTA_DESPLIEGUE_APP, "version.txt")
+            if not os.path.exists(version_file):
+                return
+            with open(version_file, encoding="utf-8", errors="ignore") as f:
+                v_red = f.read().strip()
+            if not v_red:
+                return
+            self._version_red = v_red
+            if self._version_tuple(v_red) > self._version_tuple(APP_VERSION):
+                self.lbl_update.setText(
+                    f"Actualización disponible: {v_red}  (tienes la v{APP_VERSION})")
+                self.update_banner.setVisible(True)
+                logger.info(f"Actualización disponible: red={v_red} local={APP_VERSION}")
+        except Exception as e:
+            logger.debug(f"Error comprobando actualización: {e}")
+
+    def _lanzar_actualizacion(self):
+        """Cierra la app y lanza un actualizador que copia la versión nueva desde
+        la carpeta de red al equipo local y la reabre (V2.0.0)."""
+        try:
+            local_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "ALSI_Buscador")
+            exe_local = os.path.join(local_dir, "BuscadorPiezas.exe")
+            # Si no se ejecuta desde la instalación local (p.ej. en desarrollo),
+            # simplemente abrimos la carpeta de red para instalar a mano
+            if not getattr(sys, 'frozen', False) or not os.path.isdir(local_dir):
+                os.startfile(RUTA_DESPLIEGUE_APP)
+                return
+            resp = QMessageBox.question(
+                self, "Actualizar Buscador de Piezas",
+                f"Se instalará la versión {self._version_red or ''} y la aplicación se "
+                f"reiniciará.\n\n¿Continuar?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if resp != QMessageBox.Yes:
+                return
+
+            # Actualizador .bat: espera a que se cierre la app, copia recursos y reabre
+            bat = os.path.join(os.environ.get("TEMP", local_dir), "alsi_update.bat")
+            recursos = ["BuscadorPiezas.exe", "SwPropExtractor.exe",
+                        "SolidWorks.Interop.swdocumentmgr.dll", "config.ini",
+                        "ALSI_BUSCADOR.ico", "reindexar_diario.py", "reindexar_tarea.bat"]
+            lineas = [
+                "@echo off",
+                "setlocal",
+                'set "NET=' + RUTA_DESPLIEGUE_APP + '"',
+                'set "LOC=' + local_dir + '"',
+                "timeout /t 1 /nobreak >nul",
+                ":wait",
+                'tasklist /FI "IMAGENAME eq BuscadorPiezas.exe" | find /I "BuscadorPiezas.exe" >nul',
+                'if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto wait )',
+                'pushd "%NET%"',
+            ]
+            for r in recursos:
+                lineas.append(f'copy /Y "%NET%\\{r}" "%LOC%\\" >nul 2>&1')
+            lineas += [
+                'popd',
+                'start "" "%LOC%\\BuscadorPiezas.exe"',
+                'del "%~f0"',
+            ]
+            with open(bat, "w", encoding="cp850", errors="ignore") as f:
+                f.write("\r\n".join(lineas))
+
+            # Lanzar el .bat despegado y cerrar la app
+            DETACHED = 0x00000008
+            subprocess.Popen(["cmd", "/c", bat], creationflags=DETACHED, close_fds=True)
+            self.close()
+            QApplication.quit()
+        except Exception as e:
+            logger.error(f"Error lanzando actualización: {e}")
+            QMessageBox.warning(
+                self, "Actualización",
+                "No se pudo iniciar la actualización automática.\n"
+                "Puedes actualizar manualmente ejecutando INSTALAR_LOCAL.bat "
+                "desde la carpeta de red.")
+            try:
+                os.startfile(RUTA_DESPLIEGUE_APP)
+            except Exception:
+                pass
 
     def _actualizar_estado_indice(self):
         """Estado del índice en el footer, con color según antigüedad (V2.0.0):
@@ -3610,7 +3747,7 @@ class BuscadorPiezas(QMainWindow):
                 f'color: #FFFFFF; background: transparent;')
             lbl_title.setAlignment(Qt.AlignCenter)
             h_lay.addWidget(lbl_title)
-            lbl_ver = QLabel("Versión 2.0.0 · Rediseño UI ALSI")
+            lbl_ver = QLabel(f"Versión {APP_VERSION} · Rediseño UI ALSI")
             lbl_ver.setStyleSheet("font-size: 12px; color: #FFE3D2; font-weight: 600; background: transparent;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             h_lay.addWidget(lbl_ver)
