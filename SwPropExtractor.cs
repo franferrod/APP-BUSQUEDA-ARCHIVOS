@@ -91,41 +91,45 @@ namespace SwPropExtractor
                     }
                 }
 
-                // Get configuration properties
+                // Get configuration properties — V2.0.0: recorrer TODAS las
+                // configuraciones (antes solo la primera). Muchos ensamblajes ALSI
+                // guardan MONTAJE/SOLDADURA/etc. en una configuración concreta que
+                // puede no ser la primera. Una config solo rellena un valor si aún
+                // está vacío, para no pisar un valor válido con uno vacío de otra.
                 SwDMConfigurationMgr cfgMgr = doc.ConfigurationManager;
                 if (cfgMgr != null)
                 {
                     string[] cfgNames = (string[])cfgMgr.GetConfigurationNames();
-                    if (cfgNames != null && cfgNames.Length > 0)
+                    if (cfgNames != null)
                     {
-                        SwDMConfiguration cfg = cfgMgr.GetConfigurationByName(cfgNames[0]);
-                        if (cfg != null)
+                        foreach (string cfgName in cfgNames)
                         {
+                            SwDMConfiguration cfg = cfgMgr.GetConfigurationByName(cfgName);
+                            if (cfg == null) continue;
                             string[] cfgPropNames = (string[])cfg.GetCustomPropertyNames();
-                            if (cfgPropNames != null)
+                            if (cfgPropNames == null) continue;
+                            ISwDMConfiguration14 cfg14 = cfg as ISwDMConfiguration14;
+                            foreach (string name in cfgPropNames)
                             {
-                                ISwDMConfiguration14 cfg14 = cfg as ISwDMConfiguration14;
-                                foreach (string name in cfgPropNames)
+                                string val = null;
+                                SwDmCustomInfoType propType;
+                                if (cfg14 != null)
                                 {
-                                    // Configuration properties override document properties
-                                    string val = null;
-                                    SwDmCustomInfoType propType;
-                                    
-                                    if (cfg14 != null)
-                                    {
-                                        string linkedTo;
-                                        val = cfg14.GetCustomPropertyValues(name, out propType, out linkedTo);
-                                        if (string.IsNullOrEmpty(val))
-                                            val = cfg.GetCustomProperty(name, out propType);
-                                    }
-                                    else
-                                    {
+                                    string linkedTo;
+                                    val = cfg14.GetCustomPropertyValues(name, out propType, out linkedTo);
+                                    if (string.IsNullOrEmpty(val))
                                         val = cfg.GetCustomProperty(name, out propType);
-                                    }
-                                    
-                                    if (val != null && !string.IsNullOrEmpty(val)) {
+                                }
+                                else
+                                {
+                                    val = cfg.GetCustomProperty(name, out propType);
+                                }
+                                if (val != null && !string.IsNullOrEmpty(val))
+                                {
+                                    // Solo rellena si el valor actual está vacío
+                                    string actual;
+                                    if (!props.TryGetValue(name, out actual) || string.IsNullOrEmpty(actual))
                                         props[name] = val;
-                                    }
                                 }
                             }
                         }

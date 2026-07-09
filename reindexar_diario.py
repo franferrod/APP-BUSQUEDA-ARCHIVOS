@@ -149,7 +149,7 @@ def extraer_sw_props(filepath):
         result = subprocess.run(
             [exe_path, license_key, filepath],
             capture_output=True, text=True, encoding='utf-8',
-            startupinfo=startupinfo, timeout=5
+            startupinfo=startupinfo, timeout=20  # V2.0.0: 20s (antes 5)
         )
         
         if result.stdout:

@@ -76,7 +76,7 @@ class SWPropertyExtractor:
                 [self.extractor_exe, self.license_key, filepath],
                 capture_output=True,
                 startupinfo=startupinfo,
-                timeout=5  # 5 segundos max por archivo
+                timeout=20  # V2.0.0: 20s (antes 5) — ensamblajes grandes/red lenta
             )
             
             if result.stdout:
