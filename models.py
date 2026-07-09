@@ -256,6 +256,19 @@ class IndexManager:
         finally:
             wrapper.close()
 
+    def obtener_ultima_indexacion(self):
+        """Timestamp (epoch) de la indexación más reciente, o None (V2.0.0)."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute("SELECT MAX(ultima_indexacion) FROM buscador.estado_indexacion")
+            res = cursor.fetchone()
+            return res[0] if res and res[0] else None
+        except Exception:
+            return None
+        finally:
+            wrapper.close()
+
     def contar_placas_ce(self):
         wrapper = self.get_connection()
         try:

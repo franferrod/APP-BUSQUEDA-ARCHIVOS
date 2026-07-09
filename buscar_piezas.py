@@ -113,12 +113,19 @@ RUTAS_NAS = {
     'ALSI_ESTANDAR': r'\\192.168.1.10\Oficina Tecnica\ALSI ESTANDAR',
 }
 
-# Etiquetas legibles para la UI
+# Etiquetas legibles para la UI (V2.0.0: unificadas en mayúsculas en TODA la app:
+# filtros, columnas de tabla, preview, galería y diálogos)
 ETIQUETAS_ORIGEN = {
-    'PROYECTOS':     'Proyectos',
-    'BIBLIOTECA_3D': 'Biblioteca 3D',
-    'ALSI_ESTANDAR': 'ALSI Estándar',
+    'PROYECTOS':     'PROYECTOS',
+    'BIBLIOTECA_3D': 'BIBLIOTECA 3D',
+    'ALSI_ESTANDAR': 'ALSI ESTANDAR',
 }
+
+
+def etiqueta_origen(texto):
+    """Convierte claves internas (ALSI_ESTANDAR, BIBLIOTECA_3D) a su etiqueta
+    unificada de UI. Deja intacto cualquier otro valor."""
+    return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -756,17 +763,14 @@ class SeccionAcordeon(QFrame):
         v.setContentsMargins(6, 4, 6, 6)
         v.setSpacing(4)
 
+        self._activo = False  # V2.0.0: True si hay filtros activos dentro
         self.btn_header = QPushButton(f" {titulo}  ▾")
         if icono:
             self.btn_header.setIcon(svg_icon(icono, size=14))
         self.btn_header.setCheckable(True)
         self.btn_header.setChecked(expandido)
         self.btn_header.setCursor(Qt.PointingHandCursor)
-        self.btn_header.setStyleSheet(
-            f'QPushButton {{ background: transparent; border: none; text-align: left; '
-            f'font-family: "{FUENTES["h2"]}"; font-size: 11px; font-weight: 800; '
-            f'letter-spacing: 1px; color: #DFDFDF; padding: 4px 2px; }} '
-            f'QPushButton:hover {{ color: #E66C32; }}')
+        self._aplicar_estilo_header()
 
         self.contenido = QWidget()
         self.lay = QVBoxLayout(self.contenido)
@@ -778,10 +782,31 @@ class SeccionAcordeon(QFrame):
         v.addWidget(self.contenido)
         self._on_toggle(expandido)
 
+    def _aplicar_estilo_header(self):
+        color = "#E66C32" if self._activo else "#DFDFDF"
+        self.btn_header.setStyleSheet(
+            f'QPushButton {{ background: transparent; border: none; text-align: left; '
+            f'font-family: "{FUENTES["h2"]}"; font-size: 11px; font-weight: 800; '
+            f'letter-spacing: 1px; color: {color}; padding: 4px 2px; }} '
+            f'QPushButton:hover {{ color: #E66C32; }}')
+
+    def set_activo(self, activo):
+        """Marca visualmente que la sección tiene filtros aplicados: punto naranja,
+        icono y título en color de marca (V2.0.0)."""
+        activo = bool(activo)
+        if activo == self._activo:
+            return
+        self._activo = activo
+        if self.icono:
+            self.btn_header.setIcon(svg_icon(self.icono, "#E66C32" if activo else "#999999", 14))
+        self._aplicar_estilo_header()
+        self._on_toggle(self.btn_header.isChecked())
+
     def _on_toggle(self, abierto):
         self.contenido.setVisible(abierto)
         flecha = "▾" if abierto else "▸"
-        self.btn_header.setText(f" {self.titulo}  {flecha}")
+        punto = " ●" if self._activo else ""
+        self.btn_header.setText(f" {self.titulo}{punto}  {flecha}")
 
 
 # -----------------------------------------------------------------------------
@@ -1597,6 +1622,11 @@ class BuscadorPiezas(QMainWindow):
         self.btn_columnas = QPushButton("Columnas")
         self.btn_columnas.setIcon(svg_icon("columnas", size=15))
         self.btn_columnas.setCursor(Qt.PointingHandCursor)
+        # V2.0.0: ancho mínimo y sin flecha de menú (cortaba la 's' final)
+        self.btn_columnas.setMinimumWidth(130)
+        self.btn_columnas.setStyleSheet(
+            "QPushButton::menu-indicator { image: none; width: 0; } "
+            "QPushButton { padding: 6px 16px; }")
         self.menu_columnas = CheckableMenu(self)
         self.columnas_actions = {}
         for col_idx in range(5, 21):
@@ -1965,6 +1995,13 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_status.setObjectName("StatusOk")
         footer_layout.addWidget(self.lbl_status, stretch=1)
 
+        # V2.0.0: estado del índice (toque pro, como el mockup: "● Índice hace 2 h")
+        self.lbl_estado_indice = QLabel("")
+        self.lbl_estado_indice.setObjectName("StatusDim")
+        self.lbl_estado_indice.setTextFormat(Qt.RichText)
+        footer_layout.addWidget(self.lbl_estado_indice)
+        QTimer.singleShot(1500, self._actualizar_estado_indice)
+
         # Botones de Ayuda e Info (V2.0.0: botones redondos #RoundBtn del QSS)
         self.btn_ayuda = QPushButton("?")
         self.btn_ayuda.setObjectName("RoundBtn")
@@ -2256,8 +2293,47 @@ class BuscadorPiezas(QMainWindow):
             for texto, cb in chips[:8]:
                 self.chips_activos_lay.addWidget(self._chip_activo(texto, cb))
             self.btn_limpiar.setVisible(bool(chips))
+
+            # V2.0.0: indicadores ● en las cabeceras de acordeón del sidebar
+            estados = {}
+            t, m = contar(self.list_companeros)
+            estados['origen'] = m < t
+            t, m = contar(self.list_años)
+            estados['años'] = 0 < m < t
+            t, m = contar(self.list_carpetas)
+            estados['carpetas'] = m < t
+            estados['clientes'] = contar(self.list_clientes)[1] > 0
+            estados['proyectos'] = contar(self.list_proyectos)[1] > 0
+            estados['material'] = contar(self.list_materiales)[1] > 0
+            estados['tratamiento'] = contar(self.list_tratamientos)[1] > 0
+            estados['cierre'] = contar(self.list_cierres)[1] > 0
+            estados['espesor'] = contar(self.list_espesores)[1] > 0
+            estados['fabricacion'] = n_fab > 0
+            estados['banda'] = n_banda > 0
+            for clave, sec in self.acordeones.items():
+                sec.set_activo(estados.get(clave, False))
         except Exception as e:
             logger.debug(f"Error actualizando chips de contexto: {e}")
+
+    def _actualizar_estado_indice(self):
+        """Muestra '● Índice hace X' en el footer (V2.0.0, toque pro)."""
+        try:
+            ts = self.db.obtener_ultima_indexacion()
+            if not ts:
+                self.lbl_estado_indice.setText(
+                    '<span style="color:#C7A23F;">●</span> Índice sin datos')
+                return
+            mins = max(0, int((time.time() - ts) / 60))
+            if mins < 60:
+                cuando = f"hace {mins} min"
+            elif mins < 60 * 24:
+                cuando = f"hace {mins // 60} h"
+            else:
+                cuando = f"hace {mins // (60 * 24)} d"
+            self.lbl_estado_indice.setText(
+                f'<span style="color:#3BA55D;">●</span> Índice actualizado {cuando}')
+        except Exception as e:
+            logger.debug(f"Error estado índice: {e}")
 
     def _on_placa_ce_toggled(self, activo):
         """Toggle 'Solo máquinas con placa CE' (V2.1.0)."""
@@ -2660,6 +2736,7 @@ class BuscadorPiezas(QMainWindow):
             tratamientos_sel = self.get_selected_items(self.list_tratamientos) or None
             espesores_sel = self.get_selected_items(self.list_espesores) or None
 
+            t0_busqueda = time.time()  # V2.0.0: cronómetro de búsqueda
             resultados = self.controller.perform_search(
                 termino,
                 comp_sel,
@@ -2730,10 +2807,10 @@ class BuscadorPiezas(QMainWindow):
                 for i_data, i_tabla in map_cols.items():
                     val = data[i_data]
                     texto = str(val) if val else ""
-                    # V2.0.0: mostrar el origen con etiqueta legible (Proyectos,
-                    # Biblioteca 3D, ALSI Estándar) en vez de la clave con guion bajo
-                    if i_tabla == 6 and texto:
-                        texto = ETIQUETAS_ORIGEN.get(texto, texto)
+                    # V2.0.0: etiquetas unificadas (PROYECTOS / BIBLIOTECA 3D /
+                    # ALSI ESTANDAR) en las columnas Origen (6) y Proyecto (9)
+                    if i_tabla in (6, 9) and texto:
+                        texto = etiqueta_origen(texto)
                     item = QTableWidgetItem(texto)
                     self.tabla.setItem(row, i_tabla, item)
                     
@@ -2773,7 +2850,10 @@ class BuscadorPiezas(QMainWindow):
             else:
                 self.lbl_status.setText("Listo")
                 
-            self.lbl_count.setText(f"{len(resultados)} resultados")
+            # V2.0.0: contador con separador de miles + tiempo de búsqueda (toque pro)
+            n_fmt = f"{len(resultados):,}".replace(",", ".")
+            dt_txt = f"{time.time() - t0_busqueda:.2f}".replace(".", ",")
+            self.lbl_count.setText(f"{n_fmt} resultados · {dt_txt} s")
             if not resultados and termino:
                 txt = f"No se encontraron resultados para '{termino}'"
                 self.lbl_status.setText(txt)
@@ -2836,6 +2916,7 @@ class BuscadorPiezas(QMainWindow):
         self.btn_indexar.setEnabled(True)
         self.btn_cancelar.setVisible(False)
         self.btn_cancelar.setEnabled(True)
+        self._actualizar_estado_indice()  # V2.0.0: refrescar "● Índice hace X"
         self.lbl_status.setText("Indexación completada")
         self.lbl_count.setText(f"{total} archivos en total")
         
@@ -3063,6 +3144,7 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_preview_pill.setVisible(True)
 
             proy_str = f"{cod_proy} {nom_proy}" if cod_proy else (nom_proy if nom_proy else proyecto)
+            proy_str = etiqueta_origen(proy_str)  # V2.0.0: unificar ALSI_ESTANDAR etc.
             self._meta_vals['origen'].setText(comp or "—")
             self._meta_vals['anio'].setText(str(año) if año else "—")
             self._meta_vals['cliente'].setText(cliente or "—")
