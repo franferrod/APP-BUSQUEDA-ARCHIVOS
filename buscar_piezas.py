@@ -3378,16 +3378,17 @@ class BuscadorPiezas(QMainWindow):
         self._export_to_csv(rows)
 
     def keyPressEvent(self, event):
-        # Keyboard First Navigation
+        # Keyboard First Navigation (V2.0.0: el buscador es self.input_buscar)
         if event.key() == Qt.Key_F and event.modifiers() == Qt.ControlModifier:
-            self.search_box.setFocus()
-            self.search_box.selectAll()
+            self.input_buscar.setFocus()
+            self.input_buscar.selectAll()
             event.accept()
         elif event.key() == Qt.Key_Escape:
-            if self.search_box.hasFocus():
-                self.search_box.clear()
-            else:
-                self.panel_preview.setVisible(False)
+            if self.input_buscar.hasFocus():
+                self.input_buscar.clear()
+            elif self.panel_preview.isVisible():
+                # Usar el toggle para que el botón del footer quede coherente
+                self.toggle_preview_panel()
             event.accept()
         elif event.key() == Qt.Key_Return or event.key() == Qt.Key_Enter:
             if self.tabla.hasFocus():
