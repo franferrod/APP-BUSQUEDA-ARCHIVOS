@@ -106,6 +106,51 @@ LOGO_ISOTIPO = resource_path("ALSI_ISOTIPO_naranja.png")
 LOGO_IMAGOTIPO = resource_path("ALSI_IMAGOTIPO_naranja.png")
 APP_ICON = resource_path("ALSI_BUSCADOR.ico")
 
+# V2.0.1 - Host del NAS Synology: algunos equipos acceden por IP (192.168.1.10)
+# y otros por nombre (NASCENTRAL) — por IP les pide credenciales y fallan los
+# archivos. Las rutas se guardan en BD con la IP; al TOCAR un archivo se reescriben
+# al host que funcione en ESTE equipo. El primero de la lista que responda se usa.
+NAS_HOSTS = ["192.168.1.10", "NASCENTRAL"]
+NAS_HOST_CANONICO = "192.168.1.10"  # como se guardan las rutas en la BD
+NAS_HOST_ACTIVO = None              # detectado al arrancar
+
+
+def detectar_nas_host():
+    """Detecta por cuál host es accesible el NAS en este equipo (V2.0.1).
+    Prueba IP primero y, si no llega, el nombre NASCENTRAL."""
+    global NAS_HOST_ACTIVO
+    for host in NAS_HOSTS:
+        try:
+            if os.path.exists(r"\\%s\Oficina Tecnica" % host):
+                NAS_HOST_ACTIVO = host
+                logger.info(f"NAS accesible por: {host}")
+                return host
+        except Exception:
+            continue
+    NAS_HOST_ACTIVO = NAS_HOSTS[0]
+    logger.warning(f"Ningún host del NAS respondió; se usará {NAS_HOST_ACTIVO}")
+    return NAS_HOST_ACTIVO
+
+
+def ruta_accesible(ruta):
+    """Reescribe el host del NAS en 'ruta' al que funciona en este equipo.
+    Si aún no se ha detectado, la deja igual (V2.0.1)."""
+    if not ruta or not NAS_HOST_ACTIVO:
+        return ruta
+    for host in NAS_HOSTS:
+        if host.upper() == NAS_HOST_ACTIVO.upper():
+            continue
+        pref = "\\\\" + host + "\\"
+        if ruta[:len(pref)].upper() == pref.upper():
+            return "\\\\" + NAS_HOST_ACTIVO + "\\" + ruta[len(pref):]
+    return ruta
+
+
+def rutas_nas_activas():
+    """RUTAS_NAS con el host activo (para diagnóstico y diálogo de reindexado)."""
+    return {k: ruta_accesible(v) for k, v in RUTAS_NAS.items()}
+
+
 # v1.0.7 - Rutas NAS nuevo (modelo por origen, sustituye RUTAS_RED por compañero)
 RUTAS_NAS = {
     'PROYECTOS':     r'\\192.168.1.10\Oficina Tecnica\ALSI PROYECTOS APROBADOS',
@@ -713,13 +758,13 @@ class TablaArrastrable(QTableWidget):
             if ruta_item:
                 ruta = ruta_item.text()
                 if ruta:
-                    # Convertir a file:/// URL
-                    url = QUrl.fromLocalFile(ruta)
+                    # V2.0.1: reescribir al host accesible (IP/NASCENTRAL)
+                    url = QUrl.fromLocalFile(ruta_accesible(ruta))
                     urls.append(url)
-        
+
         if urls:
             mime.setUrls(urls)
-        
+
         return mime
         
 # -----------------------------------------------------------------------------
@@ -751,7 +796,7 @@ class GaleriaArrastrable(QListWidget):
         for item in items:
             ruta = item.data(Qt.UserRole)
             if ruta:
-                urls.append(QUrl.fromLocalFile(ruta))
+                urls.append(QUrl.fromLocalFile(ruta_accesible(ruta)))  # V2.0.1
         if urls:
             mime.setUrls(urls)
         return mime
@@ -1018,6 +1063,9 @@ class BuscadorPiezas(QMainWindow):
             pythoncom.CoInitialize() # Inicialización COM Hilo Principal (V1.0.3)
         except:
             pass
+        # V2.0.1: detectar por qué host llega al NAS (IP o NASCENTRAL) antes de
+        # tocar ningún archivo, para reescribir las rutas al que funcione aquí
+        detectar_nas_host()
         self.db = IndexManager()
         self.controller = SearchController(self.db)
         self.thread = None  # Referencia al thread de indexación activo
@@ -1070,20 +1118,22 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_status.setText("Listo")
 
     def verificar_rutas_red(self):
-        """Comprueba si las rutas del NAS nuevo son accesibles (V1.0.7)"""
+        """Comprueba si las rutas del NAS son accesibles (V1.0.7).
+        V2.0.1: usa el host detectado (IP o NASCENTRAL), así que en equipos que
+        solo llegan por nombre ya no salta el falso aviso."""
         error_msg = ""
-        for origen, ruta in RUTAS_NAS.items():
+        for origen, ruta in rutas_nas_activas().items():
             if not os.path.exists(ruta):
                 error_msg += f"• {ETIQUETAS_ORIGEN.get(origen, origen)}: {ruta}\n"
-        
+
         if error_msg:
-            QMessageBox.warning(self, "Problema de Red", 
-                                "Atención: No se puede acceder a las siguientes rutas del NAS:\n\n" + 
-                                error_msg + 
-                                "\nComprueba la conexión de red con 192.168.1.10.")
-            logger.error(f"Rutas NAS no accesibles: {error_msg}")
+            QMessageBox.warning(self, "Problema de Red",
+                                "Atención: No se puede acceder a las siguientes rutas del NAS:\n\n" +
+                                error_msg +
+                                f"\nComprueba la conexión de red con el NAS ({NAS_HOST_ACTIVO or '192.168.1.10'}).")
+            logger.error(f"Rutas NAS no accesibles (host {NAS_HOST_ACTIVO}): {error_msg}")
         else:
-            logger.info("Rutas NAS OK: todas accesibles")
+            logger.info(f"Rutas NAS OK por host: {NAS_HOST_ACTIVO}")
 
     def toggle_checkboxes(self, list_widget, state):
         """Activa o desactiva todos los checkboxes en un QListWidget"""
@@ -3108,6 +3158,7 @@ class BuscadorPiezas(QMainWindow):
     def extraer_miniatura_raw(self, ruta, size=256):
         """Devuelve (QImage, hbitmap) permitiendo su uso seguro en QThreads (V1.0.3)"""
         try:
+            ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
             if not ruta or not os.path.exists(ruta):
                 return None, 0
             
@@ -3159,6 +3210,7 @@ class BuscadorPiezas(QMainWindow):
 
     def extraer_miniatura(self, ruta, size=256):
         """Extrae miniatura (QPixmap) para el hilo principal (Compatible hacia atrás)"""
+        ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
         if not ruta or not os.path.exists(ruta):
             return None
         
@@ -3445,6 +3497,7 @@ class BuscadorPiezas(QMainWindow):
             data = self.current_preview_data
             ruta = data.get('ruta')
             if not ruta: return
+            ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
 
             # Verificar existencia (IO Pesado en red)
             if not os.path.exists(ruta):
@@ -3482,7 +3535,7 @@ class BuscadorPiezas(QMainWindow):
     def abrir_carpeta_seleccionada(self):
         row = self.tabla.currentRow()
         if row >= 0:
-            ruta = self.tabla.item(row, 0).text()  # Columna 0 = Ruta Completa
+            ruta = ruta_accesible(self.tabla.item(row, 0).text())  # V2.0.1
             if ruta and os.path.exists(ruta):
                 subprocess.Popen(f'explorer /select,"{ruta}"')
             else:
@@ -3491,7 +3544,7 @@ class BuscadorPiezas(QMainWindow):
     def copiar_ruta_seleccionada(self):
         row = self.tabla.currentRow()
         if row >= 0:
-            ruta = self.tabla.item(row, 0).text()  # Columna 0 = Ruta Completa
+            ruta = ruta_accesible(self.tabla.item(row, 0).text())  # V2.0.1: host accesible
             QApplication.clipboard().setText(ruta)
             self.lbl_status.setText("✅ Ruta copiada al portapapeles")
             self.toast.show_message(f"✅ Ruta copiada:\n{os.path.basename(ruta)}")
@@ -3596,13 +3649,13 @@ class BuscadorPiezas(QMainWindow):
             menu.addAction(action_copy)
             menu.addAction(action_copy_name)
 
-            # Columna 0 = Ruta Completa
+            # Columna 0 = Ruta Completa (V2.0.1: host accesible IP/NASCENTRAL)
             item_ruta = self.tabla.item(self.tabla.currentRow(), 0)
-            ruta = item_ruta.text() if item_ruta else ""
+            ruta = ruta_accesible(item_ruta.text()) if item_ruta else ""
             if ruta and os.path.exists(ruta):
                 menu.addSeparator()
                 menu.addAction(svg_icon("arrastrar-solidworks"), "Abrir/Insertar en SolidWorks").triggered.connect(
-                    lambda: os.startfile(ruta)
+                    lambda r=ruta: os.startfile(r)
                 )
 
             # Export selection option
