@@ -208,6 +208,19 @@ def upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props):
         sw_props.get('CANGILÓN') or sw_props.get('CANGILON') or None,
         sw_props.get('RUNER') or None,
     ))
+    # V2.0.2: componentes del ensamblaje (para "¿en qué ensamblajes se usa?")
+    # Se guarda el NOMBRE de archivo en mayúsculas (cruce robusto por nombre).
+    comps = sw_props.get('__COMPONENTES__')
+    if comps:
+        try:
+            import ntpath
+            cursor.execute("DELETE FROM buscador.componentes WHERE ensamblaje_ruta = %s", (full_path,))
+            nombres = sorted({ntpath.basename(str(c)).upper() for c in comps if c})
+            cursor.executemany(
+                "INSERT INTO buscador.componentes (ensamblaje_ruta, componente_nombre) VALUES (%s, %s)",
+                [(full_path, n) for n in nombres])
+        except Exception as ex_c:
+            logger.debug(f"Error guardando componentes de {file}: {ex_c}")
 
 
 def indexar_completo(conn, cursor, origen, ruta_base):
@@ -306,6 +319,19 @@ def main():
         conn = psycopg2.connect(**PG_CONFIG)
         cursor = conn.cursor()
         logger.info("Conexión a PostgreSQL OK")
+        # V2.0.2: asegurar tabla de componentes (por si la app aún no la creó)
+        # Migración: recrear si tiene el esquema antiguo (componente_ruta)
+        cursor.execute("""SELECT column_name FROM information_schema.columns
+                          WHERE table_schema='buscador' AND table_name='componentes'""")
+        _cols = {r[0] for r in cursor.fetchall()}
+        if _cols and 'componente_nombre' not in _cols:
+            cursor.execute("DROP TABLE IF EXISTS buscador.componentes")
+        cursor.execute('''CREATE TABLE IF NOT EXISTS buscador.componentes (
+                              ensamblaje_ruta   TEXT NOT NULL,
+                              componente_nombre TEXT NOT NULL)''')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_comp_nombre ON buscador.componentes(componente_nombre)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_comp_ensamblaje ON buscador.componentes(ensamblaje_ruta)')
+        conn.commit()
     except Exception as e:
         logger.error(f"No se pudo conectar a PostgreSQL: {e}")
         sys.exit(1)

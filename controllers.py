@@ -282,6 +282,14 @@ class IndexadorThread(QThread):
                                         sw_props.get('CANGILÓN') or sw_props.get('CANGILON') or None,
                                         sw_props.get('RUNER') or None,
                                     ))
+                                    # V2.0.2: guardar componentes del ensamblaje
+                                    # (para "¿en qué ensamblajes se usa esta pieza?")
+                                    comps = sw_props.get('__COMPONENTES__')
+                                    if comps:
+                                        try:
+                                            self.db.guardar_componentes(cursor, full_path, comps)
+                                        except Exception as ex_c:
+                                            logger.debug(f"Error guardando componentes de {file}: {ex_c}")
                                     count_comp += 1
                                     total_indexados += 1
                                     

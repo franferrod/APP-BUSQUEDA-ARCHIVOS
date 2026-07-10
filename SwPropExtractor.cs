@@ -57,8 +57,10 @@ namespace SwPropExtractor
                     Environment.Exit(0);
                 }
 
-                Dictionary<string, string> props = new Dictionary<string, string>();
-                
+                // V2.0.2: Dictionary<string,object> para poder incluir, además de
+                // las propiedades (string), la lista de componentes (array).
+                Dictionary<string, object> props = new Dictionary<string, object>();
+
                 string[] propNames = (string[])doc.GetCustomPropertyNames();
                 if (propNames != null)
                 {
@@ -127,13 +129,35 @@ namespace SwPropExtractor
                                 if (val != null && !string.IsNullOrEmpty(val))
                                 {
                                     // Solo rellena si el valor actual está vacío
-                                    string actual;
-                                    if (!props.TryGetValue(name, out actual) || string.IsNullOrEmpty(actual))
+                                    object actualObj;
+                                    string actual = props.TryGetValue(name, out actualObj) ? actualObj as string : null;
+                                    if (string.IsNullOrEmpty(actual))
                                         props[name] = val;
                                 }
                             }
                         }
                     }
+                }
+
+                // V2.0.2: componentes (solo ensamblajes) — rutas completas de las
+                // piezas/subensamblajes insertados, para el "¿en qué ensamblajes se usa?"
+                if (docType == SwDmDocumentType.swDmDocumentAssembly)
+                {
+                    try
+                    {
+                        SwDMSearchOption opt = app.GetSearchOptionObject();
+                        object refsObj = doc.GetAllExternalReferences(opt);
+                        if (refsObj != null)
+                        {
+                            string[] refs = (string[])refsObj;
+                            var comps = new System.Collections.Generic.List<string>();
+                            foreach (string rf in refs)
+                                if (!string.IsNullOrEmpty(rf)) comps.Add(rf);
+                            if (comps.Count > 0)
+                                props["__COMPONENTES__"] = comps.ToArray();
+                        }
+                    }
+                    catch { }
                 }
 
                 doc.CloseDoc();

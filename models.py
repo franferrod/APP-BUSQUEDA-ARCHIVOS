@@ -154,6 +154,23 @@ class IndexManager:
                 )
             ''')
 
+            # V2.0.2 - Componentes: relación ensamblaje <-> pieza/subensamblaje que
+            # contiene, para "¿en qué ensamblajes se usa esta pieza?".
+            # Se cruza por NOMBRE de archivo en mayúsculas (robusto ante distintos
+            # hosts/unidades mapeadas y correcto para piezas de biblioteca compartidas).
+            # Migración: si existe con el esquema antiguo (componente_ruta), recrear.
+            cursor.execute("""SELECT column_name FROM information_schema.columns
+                              WHERE table_schema='buscador' AND table_name='componentes'""")
+            _cols = {r[0] for r in cursor.fetchall()}
+            if _cols and 'componente_nombre' not in _cols:
+                cursor.execute("DROP TABLE IF EXISTS buscador.componentes")
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS buscador.componentes (
+                    ensamblaje_ruta   TEXT NOT NULL,
+                    componente_nombre TEXT NOT NULL
+                )
+            ''')
+
             # V2.1.0 - Placas CE: relación nº de placa <-> código de plano/ensamblaje
             # alimentada desde los Excel de \\NAS\Oficina Tecnica\NÚMEROS DE SERIE
             cursor.execute('''
@@ -183,6 +200,8 @@ class IndexManager:
                 'CREATE INDEX IF NOT EXISTS idx_ba_cod_ord ON buscador.archivos(codigo_orden)',
                 'CREATE INDEX IF NOT EXISTS idx_ba_origen_anio ON buscador.archivos(origen, anio)',
                 'CREATE INDEX IF NOT EXISTS idx_placas_plano ON buscador.placas_ce(num_plano)',
+                'CREATE INDEX IF NOT EXISTS idx_comp_nombre ON buscador.componentes(componente_nombre)',
+                'CREATE INDEX IF NOT EXISTS idx_comp_ensamblaje ON buscador.componentes(ensamblaje_ruta)',
             ]
             for idx_sql in indices:
                 cursor.execute(idx_sql)
@@ -253,6 +272,50 @@ class IndexManager:
             conn.commit()
             logger.info(f"Placas CE indexadas: {len(filas)}")
             return len(filas)
+        finally:
+            wrapper.close()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # COMPONENTES / DÓNDE SE USA (V2.0.2)
+    # ═══════════════════════════════════════════════════════════════════
+    @staticmethod
+    def _nombre_de_ruta(ruta):
+        """Basename en mayúsculas para el cruce robusto de componentes."""
+        import ntpath
+        return ntpath.basename(str(ruta)).upper()
+
+    def guardar_componentes(self, cursor, ensamblaje_ruta, componentes):
+        """Reemplaza los componentes de un ensamblaje. Usa el cursor de la
+        indexación en curso (misma transacción). componentes = lista de rutas;
+        se guarda el NOMBRE de archivo en mayúsculas (V2.0.2)."""
+        cursor.execute("DELETE FROM buscador.componentes WHERE ensamblaje_ruta = %s",
+                       (ensamblaje_ruta,))
+        nombres = sorted({self._nombre_de_ruta(c) for c in componentes if c})
+        if nombres:
+            cursor.executemany(
+                "INSERT INTO buscador.componentes (ensamblaje_ruta, componente_nombre) VALUES (%s, %s)",
+                [(ensamblaje_ruta, n) for n in nombres])
+
+    def buscar_ensamblajes_de(self, nombre_pieza):
+        """Devuelve los ensamblajes que contienen la pieza/subensamblaje (por nombre).
+        Cruza con archivos para traer los metadatos del ensamblaje (V2.0.2).
+        Filas: (nombre, origen, anio, cliente, proyecto, ruta_ensamblaje)."""
+        nombre = self._nombre_de_ruta(nombre_pieza)
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute('''
+                SELECT DISTINCT a.nombre_archivo, a.origen, a.anio, a.cliente,
+                       a.proyecto, c.ensamblaje_ruta
+                FROM buscador.componentes c
+                LEFT JOIN buscador.archivos a ON a.ruta_completa = c.ensamblaje_ruta
+                WHERE c.componente_nombre = %s
+                ORDER BY a.anio DESC NULLS LAST, a.nombre_archivo
+            ''', (nombre,))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error buscando ensamblajes de {nombre_pieza}: {e}")
+            return []
         finally:
             wrapper.close()
 

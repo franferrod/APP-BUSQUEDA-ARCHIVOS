@@ -3651,7 +3651,18 @@ class BuscadorPiezas(QMainWindow):
 
             # Columna 0 = Ruta Completa (V2.0.1: host accesible IP/NASCENTRAL)
             item_ruta = self.tabla.item(self.tabla.currentRow(), 0)
-            ruta = ruta_accesible(item_ruta.text()) if item_ruta else ""
+            ruta_canonica = item_ruta.text() if item_ruta else ""
+
+            # V2.0.2: ¿en qué ensamblajes se usa esta pieza? (piezas y subensamblajes)
+            nombre_sel = self.tabla.item(self.tabla.currentRow(), 5)
+            ext_sel = Path(nombre_sel.text()).suffix.lower() if nombre_sel else ""
+            if ext_sel in ('.sldprt', '.sldasm'):
+                menu.addSeparator()
+                act_donde = QAction(svg_icon("proyectos-maletin"), "¿En qué ensamblajes se usa?", self)
+                act_donde.triggered.connect(lambda: self.mostrar_donde_se_usa(ruta_canonica))
+                menu.addAction(act_donde)
+
+            ruta = ruta_accesible(ruta_canonica)
             if ruta and os.path.exists(ruta):
                 menu.addSeparator()
                 menu.addAction(svg_icon("arrastrar-solidworks"), "Abrir/Insertar en SolidWorks").triggered.connect(
@@ -3666,6 +3677,81 @@ class BuscadorPiezas(QMainWindow):
                 menu.addAction(action_export_sel)
 
             menu.exec_(widget_menu.mapToGlobal(pos))
+
+    def mostrar_donde_se_usa(self, ruta_pieza):
+        """Diálogo: ensamblajes que contienen la pieza/subensamblaje (V2.0.2).
+        Consulta indexada e instantánea contra la tabla 'componentes'."""
+        try:
+            nombre = os.path.basename(ruta_pieza)
+            resultados = self.db.buscar_ensamblajes_de(ruta_pieza)
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("¿En qué ensamblajes se usa?")
+            dlg.resize(680, 460)
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(16, 14, 16, 14)
+            lay.setSpacing(10)
+
+            cab = QLabel(f'Ensamblajes que usan <span style="color:#E66C32;">{nombre}</span>')
+            cab.setTextFormat(Qt.RichText)
+            cab.setStyleSheet(
+                f'font-family: "{FUENTES["h2"]}"; font-size: 14px; font-weight: 800; '
+                f'color: #F5F5F5; background: transparent;')
+            cab.setWordWrap(True)
+            lay.addWidget(cab)
+
+            lbl_n = QLabel(f"{len(resultados)} ensamblaje(s) encontrados")
+            lbl_n.setObjectName("StatusDim")
+            lay.addWidget(lbl_n)
+
+            lista = QListWidget()
+            lista.setAlternatingRowColors(False)
+            for r in resultados:
+                nom, origen, anio, cliente, proyecto, ruta_ens = r
+                if nom:
+                    meta = " · ".join(str(x) for x in [cliente, etiqueta_origen(proyecto or ""), anio] if x)
+                    texto = f"{nom}\n   {meta}"
+                else:
+                    # El ensamblaje está en componentes pero no en archivos (raro)
+                    texto = os.path.basename(ruta_ens)
+                it = QListWidgetItem(texto)
+                it.setData(Qt.UserRole, ruta_ens)
+                lista.addItem(it)
+            lay.addWidget(lista, stretch=1)
+
+            if not resultados:
+                aviso = QLabel(
+                    "No se ha encontrado ningún ensamblaje que la contenga.\n\n"
+                    "Nota: la relación de componentes se genera al reindexar el NAS. "
+                    "Si esta función es nueva, ejecuta 'Reindexar NAS' para poblarla.")
+                aviso.setStyleSheet("color: #999999; font-style: italic; background: transparent;")
+                aviso.setWordWrap(True)
+                lay.addWidget(aviso)
+
+            def abrir_sel():
+                it = lista.currentItem()
+                if it:
+                    rr = ruta_accesible(it.data(Qt.UserRole))
+                    if rr and os.path.exists(rr):
+                        subprocess.Popen(f'explorer /select,"{rr}"')
+            lista.itemDoubleClicked.connect(lambda _: abrir_sel())
+
+            footer = QHBoxLayout()
+            footer.addStretch()
+            btn_abrir = QPushButton("Abrir carpeta")
+            btn_abrir.setIcon(svg_icon("carpeta", size=15))
+            btn_abrir.setCursor(Qt.PointingHandCursor)
+            btn_abrir.clicked.connect(abrir_sel)
+            btn_cerrar = QPushButton("Cerrar")
+            btn_cerrar.setCursor(Qt.PointingHandCursor)
+            btn_cerrar.clicked.connect(dlg.accept)
+            footer.addWidget(btn_abrir)
+            footer.addWidget(btn_cerrar)
+            lay.addLayout(footer)
+
+            dlg.exec_()
+        except Exception as e:
+            logger.error(f"Error en 'dónde se usa' para {ruta_pieza}: {e}")
 
     def copiar_nombre_seleccionado(self):
         """Acción proactiva: copiar solo el nombre del archivo"""
