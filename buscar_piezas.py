@@ -172,8 +172,8 @@ def etiqueta_origen(texto):
     unificada de UI. Deja intacto cualquier otro valor."""
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
-# V2.0.0 - Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.0.0"
+# Versión de la app (fuente única: "Acerca de" y comprobación de updates)
+APP_VERSION = "2.0.1"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -3905,6 +3905,7 @@ class BuscadorPiezas(QMainWindow):
             lbl_title.setAlignment(Qt.AlignCenter)
             h_lay.addWidget(lbl_title)
             lbl_ver = QLabel(f"Versión {APP_VERSION} · Rediseño UI ALSI")
+            # (APP_VERSION es la fuente única de la versión mostrada)
             lbl_ver.setStyleSheet("font-size: 12px; color: #FFE3D2; font-weight: 600; background: transparent;")
             lbl_ver.setAlignment(Qt.AlignCenter)
             h_lay.addWidget(lbl_ver)

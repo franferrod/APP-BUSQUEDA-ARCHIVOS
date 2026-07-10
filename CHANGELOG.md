@@ -1,5 +1,12 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.1] - 2026-07-10 (Dónde se usa una pieza + acceso NAS por nombre)
+- **Nueva función "¿En qué ensamblajes se usa?"**: clic derecho sobre cualquier pieza o subensamblaje muestra al instante la lista de ensamblajes que la contienen (cliente, proyecto, año), con doble clic para abrir su carpeta. Especialmente útil para piezas estándar de biblioteca (arandelas, tuercas, rodamientos...).
+- **Acceso al NAS por IP o por nombre**: los equipos que solo llegan al Synology por "NASCENTRAL" (y por IP les pedía credenciales) ya pueden abrir archivos, arrastrar a SolidWorks y ver miniaturas — la app detecta el host que funciona en cada equipo.
+- **Instalador más robusto**: cierra la app antes de actualizar (evita el "archivo en uso" que dejaba el exe sin actualizar) y abre la app al terminar.
+- **Arranque más fluido**: la ventana aparece al instante y los filtros se cargan justo después.
+- **Aviso de actualización**: cuando hay una versión nueva en la carpeta de red, la app lo muestra con un botón "Actualizar ahora".
+
 ## [2.0.0] - 2026-07-08 (Rediseño visual completo - Marca ALSI 2025)
 - **Nuevo filtro "Placa CE"**: botón junto al buscador que restringe los resultados a máquinas con placa CE registrada (ej. buscar "CINTA A450" muestra solo las cintas reales, no todas las patas y travesaños con nombre parecido).
 - **Búsqueda por nº de placa**: escribir un número de placa (ej. "26-0006") en el buscador encuentra directamente su ensamblaje, plano y PDF.
