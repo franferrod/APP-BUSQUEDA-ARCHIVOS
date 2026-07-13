@@ -116,8 +116,10 @@ def extraer_metadata_proyecto(ruta_carpeta, ruta_base):
     return metadata
 
 
-def extraer_sw_props(filepath):
-    """Intenta extraer propiedades SW via SwPropExtractor.exe"""
+def extraer_sw_props(filepath, preview=False):
+    """Intenta extraer propiedades SW via SwPropExtractor.exe.
+    Con preview=True añade '__PREVIEW_PNG__' (base64) para la caché de
+    miniaturas en BD (V2.0.3, equipos sin SolidWorks)."""
     try:
         # Intentar usar el extractor si está disponible
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -152,8 +154,11 @@ def extraer_sw_props(filepath):
         # Decodificar como utf-8 REVIENTA con esos bytes (UnicodeDecodeError) y,
         # al tragarse el error, dejaba TODAS las propiedades a NULL. cp850 mapea
         # los 256 bytes, así que nunca falla y reconstruye los acentos bien.
+        cmd = [exe_path, license_key, filepath]
+        if preview:
+            cmd.append('--preview')
         result = subprocess.run(
-            [exe_path, license_key, filepath],
+            cmd,
             capture_output=True,
             startupinfo=startupinfo, timeout=20  # V2.0.0: 20s (antes 5)
         )
@@ -175,6 +180,51 @@ def extraer_sw_props(filepath):
     except Exception as e:
         logger.warning(f"extraer_sw_props falló en {os.path.basename(filepath)}: {e}")
     return {}
+
+
+def miniatura_jpeg(png_b64, lado=256):
+    """Convierte el preview PNG (base64) a JPEG ~256px sobre fondo blanco.
+    Devuelve bytes o None (V2.0.3)."""
+    try:
+        import base64, io
+        from PIL import Image
+        png = base64.b64decode(png_b64)
+        im = Image.open(io.BytesIO(png))
+        if im.mode in ('RGBA', 'P', 'LA'):
+            im = im.convert('RGBA')
+            fondo = Image.new('RGB', im.size, (255, 255, 255))
+            fondo.paste(im, mask=im.split()[-1])
+            im = fondo
+        else:
+            im = im.convert('RGB')
+        im.thumbnail((lado, lado), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, 'JPEG', quality=85)
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
+def guardar_miniatura_bd(cursor, full_path, sw_props, mtime=None):
+    """Si el extractor trajo '__PREVIEW_PNG__', guarda la miniatura en BD (V2.0.3)."""
+    png_b64 = sw_props.get('__PREVIEW_PNG__')
+    if not png_b64:
+        return False
+    jpeg = miniatura_jpeg(png_b64)
+    if not jpeg:
+        return False
+    try:
+        import psycopg2
+        cursor.execute('''
+            INSERT INTO buscador.miniaturas (ruta_completa, imagen, mtime, actualizado)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (ruta_completa) DO UPDATE SET
+                imagen = EXCLUDED.imagen, mtime = EXCLUDED.mtime, actualizado = NOW()
+        ''', (full_path, psycopg2.Binary(jpeg), mtime))
+        return True
+    except Exception as ex:
+        logger.debug(f"Error guardando miniatura de {full_path}: {ex}")
+        return False
 
 
 def upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props):
@@ -268,9 +318,11 @@ def indexar_completo(conn, cursor, origen, ruta_base):
             try:
                 stats = os.stat(full_path)
                 sw_props = {}
-                if file.lower().endswith(('.sldprt', '.sldasm')):
-                    sw_props = extraer_sw_props(full_path)
+                # V2.0.3: .slddrw incluido para la caché de miniaturas
+                if file.lower().endswith(('.sldprt', '.sldasm', '.slddrw')):
+                    sw_props = extraer_sw_props(full_path, preview=True)
                 upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props)
+                guardar_miniatura_bd(cursor, full_path, sw_props, int(stats.st_mtime))
                 count += 1
                 if count % 2000 == 0:
                     conn.commit()
@@ -309,9 +361,11 @@ def indexar_proyectos_recientes(conn, cursor, ruta_base, dias=DIAS_RECIENTES):
 
                 metadata = extraer_metadata_proyecto(root, ruta_base)
                 sw_props = {}
-                if file.lower().endswith(('.sldprt', '.sldasm')):
-                    sw_props = extraer_sw_props(full_path)
+                # V2.0.3: .slddrw incluido para la caché de miniaturas
+                if file.lower().endswith(('.sldprt', '.sldasm', '.slddrw')):
+                    sw_props = extraer_sw_props(full_path, preview=True)
                 upsert_archivo(cursor, file, 'PROYECTOS', metadata, full_path, stats, sw_props)
+                guardar_miniatura_bd(cursor, full_path, sw_props, int(stats.st_mtime))
                 count += 1
                 if count % 2000 == 0:
                     conn.commit()
@@ -347,6 +401,12 @@ def main():
                               componente_nombre TEXT NOT NULL)''')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_comp_nombre ON buscador.componentes(componente_nombre)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_comp_ensamblaje ON buscador.componentes(ensamblaje_ruta)')
+        # V2.0.3: caché de miniaturas para equipos sin SolidWorks
+        cursor.execute('''CREATE TABLE IF NOT EXISTS buscador.miniaturas (
+                              ruta_completa TEXT PRIMARY KEY,
+                              imagen        BYTEA NOT NULL,
+                              mtime         BIGINT,
+                              actualizado   TIMESTAMP DEFAULT NOW())''')
         conn.commit()
     except Exception as e:
         logger.error(f"No se pudo conectar a PostgreSQL: {e}")

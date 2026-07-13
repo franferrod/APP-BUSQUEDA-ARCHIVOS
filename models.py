@@ -171,6 +171,18 @@ class IndexManager:
                 )
             ''')
 
+            # V2.0.3 - Miniaturas: caché central de previews (JPEG ~256px) extraídas
+            # con Document Manager en el reindexado. Permite ver miniaturas en
+            # equipos SIN SolidWorks (la extensión shell no existe allí).
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS buscador.miniaturas (
+                    ruta_completa TEXT PRIMARY KEY,
+                    imagen        BYTEA NOT NULL,
+                    mtime         BIGINT,
+                    actualizado   TIMESTAMP DEFAULT NOW()
+                )
+            ''')
+
             # V2.1.0 - Placas CE: relación nº de placa <-> código de plano/ensamblaje
             # alimentada desde los Excel de \\NAS\Oficina Tecnica\NÚMEROS DE SERIE
             cursor.execute('''
@@ -318,6 +330,34 @@ class IndexManager:
         except Exception as e:
             logger.error(f"Error buscando ensamblajes de {nombre_pieza}: {e}")
             return []
+        finally:
+            wrapper.close()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # MINIATURAS EN BD (V2.0.3) — para equipos sin SolidWorks
+    # ═══════════════════════════════════════════════════════════════════
+    def guardar_miniatura(self, cursor, ruta_completa, imagen_bytes, mtime=None):
+        """Upsert de la miniatura (JPEG/PNG ya reescalada). Usa el cursor de la
+        indexación en curso (misma transacción)."""
+        cursor.execute('''
+            INSERT INTO buscador.miniaturas (ruta_completa, imagen, mtime, actualizado)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (ruta_completa) DO UPDATE SET
+                imagen = EXCLUDED.imagen, mtime = EXCLUDED.mtime, actualizado = NOW()
+        ''', (ruta_completa, psycopg2.Binary(imagen_bytes), mtime))
+
+    def obtener_miniatura(self, ruta_completa):
+        """Bytes de la miniatura cacheada en BD, o None si no existe."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute("SELECT imagen FROM buscador.miniaturas WHERE ruta_completa = %s",
+                           (ruta_completa,))
+            fila = cursor.fetchone()
+            return bytes(fila[0]) if fila and fila[0] else None
+        except Exception as e:
+            logger.debug(f"Error leyendo miniatura de {ruta_completa}: {e}")
+            return None
         finally:
             wrapper.close()
 

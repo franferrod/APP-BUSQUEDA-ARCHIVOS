@@ -61,6 +61,11 @@ namespace SwPropExtractor
                 // las propiedades (string), la lista de componentes (array).
                 Dictionary<string, object> props = new Dictionary<string, object>();
 
+                // V2.0.3: cada sección con su propio try — un fallo en una parte
+                // (p.ej. configuraciones en planos, que no existen y dan E_FAIL)
+                // no debe impedir extraer el resto (propiedades, preview...).
+                try
+                {
                 string[] propNames = (string[])doc.GetCustomPropertyNames();
                 if (propNames != null)
                 {
@@ -92,12 +97,19 @@ namespace SwPropExtractor
                         }
                     }
                 }
+                }
+                catch { }
 
                 // Get configuration properties — V2.0.0: recorrer TODAS las
                 // configuraciones (antes solo la primera). Muchos ensamblajes ALSI
                 // guardan MONTAJE/SOLDADURA/etc. en una configuración concreta que
                 // puede no ser la primera. Una config solo rellena un valor si aún
                 // está vacío, para no pisar un valor válido con uno vacío de otra.
+                // V2.0.3: los planos no tienen configuraciones (E_FAIL) — se omite.
+                try
+                {
+                if (docType != SwDmDocumentType.swDmDocumentDrawing)
+                {
                 SwDMConfigurationMgr cfgMgr = doc.ConfigurationManager;
                 if (cfgMgr != null)
                 {
@@ -138,6 +150,9 @@ namespace SwPropExtractor
                         }
                     }
                 }
+                }
+                }
+                catch { }
 
                 // V2.0.2: componentes (solo ensamblajes) — rutas completas de las
                 // piezas/subensamblajes insertados, para el "¿en qué ensamblajes se usa?"
@@ -160,9 +175,32 @@ namespace SwPropExtractor
                     catch { }
                 }
 
+                // V2.0.3: preview PNG embebido (opt-in con --preview). Funciona en
+                // equipos SIN SolidWorks; se usa para la caché de miniaturas en BD.
+                bool wantPreview = false;
+                for (int i = 2; i < args.Length; i++)
+                    if (args[i] == "--preview") wantPreview = true;
+                if (wantPreview)
+                {
+                    try
+                    {
+                        ISwDMDocument11 doc11 = doc as ISwDMDocument11;
+                        if (doc11 != null)
+                        {
+                            SwDmPreviewError perr;
+                            object pngObj = doc11.GetPreviewPNGBitmapBytes(out perr);
+                            byte[] pngBytes = pngObj as byte[];
+                            if (pngBytes != null && pngBytes.Length > 8)
+                                props["__PREVIEW_PNG__"] = Convert.ToBase64String(pngBytes);
+                        }
+                    }
+                    catch { }
+                }
+
                 doc.CloseDoc();
 
                 JavaScriptSerializer serializer = new JavaScriptSerializer();
+                serializer.MaxJsonLength = 32 * 1024 * 1024;  // previews grandes en base64
                 string json = serializer.Serialize(props);
                 Console.WriteLine(json);
             }
