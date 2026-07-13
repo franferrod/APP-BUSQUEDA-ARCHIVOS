@@ -3169,17 +3169,39 @@ class BuscadorPiezas(QMainWindow):
             if not ruta or not os.path.exists(ruta):
                 return None, 0
 
+            ext = Path(ruta).suffix.lower()
+
+            # 0. PDF: renderizar la primera página SIEMPRE con PyMuPDF (V2.0.3).
+            # El proveedor de miniaturas de Adobe registra su ICONO como si fuera
+            # una miniatura válida (incluso con THUMBNAILONLY, según la caché del
+            # shell), así que el shell no es fiable para PDF.
+            if ext == '.pdf':
+                try:
+                    import fitz
+                    doc = fitz.open(ruta)
+                    if doc.page_count > 0:
+                        page = doc[0]
+                        mat = fitz.Matrix(2, 2) if size <= 256 else fitz.Matrix(4, 4)
+                        pix = page.get_pixmap(matrix=mat, alpha=False)
+                        image = QImage(pix.samples, pix.width, pix.height,
+                                       pix.stride, QImage.Format_RGB888).copy()
+                        doc.close()
+                        if not image.isNull():
+                            return image, 0
+                    else:
+                        doc.close()
+                except Exception as e:
+                    logger.debug(f"PyMuPDF falló para PDF: {e}")
+
             # 1. PRIORIZAR IShellItemImageFactory (Calidad Explorador de Windows).
             # Con THUMBNAILONLY: falla limpio si no hay proveedor real (equipos
-            # sin SolidWorks, PDFs) y se pasa a los fallbacks de abajo (V2.0.3).
+            # sin SolidWorks) y se pasa a los fallbacks de abajo (V2.0.3).
             try:
                 hbitmap = self._thumbnail_via_shell_factory(ruta, size)
                 if hbitmap and hbitmap != 0:
                     return None, hbitmap
             except Exception as e:
                 logger.debug(f"IShellItemImageFactory falló: {e}")
-
-            ext = Path(ruta).suffix.lower()
 
             # 2. FALLBACK A EXTRACTORES ESPECÍFICOS
             # SolidWorks: archivos antiguos son OLE con PreviewPNG embebido
@@ -3206,22 +3228,6 @@ class BuscadorPiezas(QMainWindow):
                             return image, 0
                 except Exception as e:
                     logger.debug(f"Miniatura BD falló para {ruta_canonica}: {e}")
-
-            # PDF (Matrix 4x para nitidez HD)
-            if ext == '.pdf':
-                try:
-                    import fitz
-                    doc = fitz.open(ruta)
-                    if doc.page_count > 0:
-                        page = doc[0]
-                        mat = fitz.Matrix(4, 4) # Mayor resolución (V1.0.6)
-                        pix = page.get_pixmap(matrix=mat, alpha=False)
-                        image = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
-                        if not image.isNull():
-                            return image.copy(), 0
-                    doc.close()
-                except Exception as e:
-                    logger.debug(f"PyMuPDF falló para PDF: {e}")
 
         except Exception as e:
             logger.debug(f"Error en extraer_miniatura_raw: {e}")
