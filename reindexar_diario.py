@@ -379,6 +379,56 @@ def indexar_proyectos_recientes(conn, cursor, ruta_base, dias=DIAS_RECIENTES):
     return count
 
 
+def purgar_rutas_huerfanas(conn, cursor, origen, ruta_base):
+    """Barrido semanal (V2.0.3): recorre el NAS listando las rutas que EXISTEN
+    y borra de la BD las que ya no están (archivos borrados/renombrados/movidos
+    que el indexado incremental de PROYECTOS nunca purga y quedan como
+    fantasmas con 'Problema de red').
+
+    Solo lista rutas (os.walk): NO re-extrae propiedades, así el barrido
+    completo cuesta minutos y no días. Limpia también miniaturas y componentes."""
+    logger.info(f"  PURGA semanal de {origen}: recorriendo el NAS...")
+    t0 = datetime.datetime.now()
+    excluir_upper = {x.upper() for x in CARPETAS_EXCLUIDAS}
+    en_disco = set()
+    for root, dirs, files in os.walk(ruta_base):
+        dirs[:] = [d for d in dirs if d.upper() not in excluir_upper and not d.startswith('~')]
+        for file in files:
+            if file.startswith("~$") or file == 'Thumbs.db':
+                continue
+            if file.lower().endswith(EXTENSIONES_VALIDAS):
+                en_disco.add(os.path.join(root, file))
+
+    cursor.execute("SELECT ruta_completa FROM buscador.archivos WHERE origen = %s", (origen,))
+    en_bd = {r[0] for r in cursor.fetchall()}
+
+    # SEGURIDAD: si el recorrido devuelve muchísimo menos de lo que hay en BD,
+    # lo más probable es que el NAS fallara a mitad (red, permisos...) — en ese
+    # caso NO purgamos nada para no vaciar el índice por un fallo puntual.
+    if en_bd and len(en_disco) < len(en_bd) * 0.5:
+        logger.warning(f"  PURGA ABORTADA: el NAS devuelve {len(en_disco)} rutas "
+                       f"frente a {len(en_bd)} en BD (menos del 50 por ciento). ¿Recorrido incompleto?")
+        return 0
+
+    huerfanas = list(en_bd - en_disco)
+    if not huerfanas:
+        logger.info(f"  PURGA {origen}: sin huérfanas ({len(en_disco)} rutas vivas).")
+        return 0
+
+    LOTE = 500
+    for i in range(0, len(huerfanas), LOTE):
+        lote = huerfanas[i:i + LOTE]
+        cursor.execute("DELETE FROM buscador.archivos WHERE ruta_completa = ANY(%s)", (lote,))
+        cursor.execute("DELETE FROM buscador.miniaturas WHERE ruta_completa = ANY(%s)", (lote,))
+        cursor.execute("DELETE FROM buscador.componentes WHERE ensamblaje_ruta = ANY(%s)", (lote,))
+        conn.commit()
+
+    dur = (datetime.datetime.now() - t0).total_seconds() / 60
+    logger.info(f"  PURGA {origen}: {len(huerfanas)} rutas huérfanas eliminadas "
+                f"(quedan {len(en_disco)}) en {dur:.1f} min.")
+    return len(huerfanas)
+
+
 def main():
     logger.info("=" * 60)
     logger.info("INICIO REINDEXACIÓN AUTOMÁTICA DIARIA")
@@ -432,6 +482,26 @@ def main():
         ruta = RUTAS_NAS.get('PROYECTOS')
         if ruta and os.path.exists(ruta):
             total += indexar_proyectos_recientes(conn, cursor, ruta)
+            # V2.0.3: los VIERNES, barrido de purga — el incremental nunca borra,
+            # así que sin esto los archivos eliminados del NAS quedan de fantasmas
+            if datetime.datetime.now().weekday() == 4:
+                purgar_rutas_huerfanas(conn, cursor, 'PROYECTOS', ruta)
+                # Y limpieza global de tablas satélite: miniaturas/componentes de
+                # rutas que ya no existen en archivos (p.ej. purgadas del origen
+                # BIBLIOTECA/ESTANDAR, que se recrea a diario)
+                try:
+                    cursor.execute('''DELETE FROM buscador.miniaturas m
+                                      WHERE NOT EXISTS (SELECT 1 FROM buscador.archivos a
+                                                        WHERE a.ruta_completa = m.ruta_completa)''')
+                    n_m = cursor.rowcount
+                    cursor.execute('''DELETE FROM buscador.componentes c
+                                      WHERE NOT EXISTS (SELECT 1 FROM buscador.archivos a
+                                                        WHERE a.ruta_completa = c.ensamblaje_ruta)''')
+                    n_c = cursor.rowcount
+                    conn.commit()
+                    logger.info(f"  Limpieza satélite: {n_m} miniaturas y {n_c} componentes huérfanos.")
+                except Exception as ex:
+                    logger.warning(f"  Limpieza satélite falló: {ex}")
         else:
             logger.warning(f"Ruta PROYECTOS no accesible: {ruta}")
 
