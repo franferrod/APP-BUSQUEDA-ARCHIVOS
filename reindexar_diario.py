@@ -146,18 +146,34 @@ def extraer_sw_props(filepath):
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         
+        # OJO: capturar BYTES, no text=True. El extractor emite en la página de
+        # códigos OEM de la consola (cp850 en Windows ES): contiene bytes como
+        # 0xb5='Á', 0xd6='Í', 0xe0='Ó' (valores "LÁSER":"SÍ", "CANGILÓN"...).
+        # Decodificar como utf-8 REVIENTA con esos bytes (UnicodeDecodeError) y,
+        # al tragarse el error, dejaba TODAS las propiedades a NULL. cp850 mapea
+        # los 256 bytes, así que nunca falla y reconstruye los acentos bien.
         result = subprocess.run(
             [exe_path, license_key, filepath],
-            capture_output=True, text=True, encoding='utf-8',
+            capture_output=True,
             startupinfo=startupinfo, timeout=20  # V2.0.0: 20s (antes 5)
         )
-        
+
         if result.stdout:
-            data = json.loads(result.stdout)
+            raw = result.stdout
+            text_out = None
+            for enc in ('cp850', 'utf-8', 'cp1252'):
+                try:
+                    text_out = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if text_out is None:
+                text_out = raw.decode('latin-1', errors='replace')
+            data = json.loads(text_out)
             if "error" not in data:
                 return data
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"extraer_sw_props falló en {os.path.basename(filepath)}: {e}")
     return {}
 
 
