@@ -202,6 +202,8 @@ class IndexManager:
                 'CREATE INDEX IF NOT EXISTS idx_placas_plano ON buscador.placas_ce(num_plano)',
                 'CREATE INDEX IF NOT EXISTS idx_comp_nombre ON buscador.componentes(componente_nombre)',
                 'CREATE INDEX IF NOT EXISTS idx_comp_ensamblaje ON buscador.componentes(ensamblaje_ruta)',
+                # V2.0.2 - Despiece: cruce componente_nombre -> archivos por nombre en mayúsculas
+                'CREATE INDEX IF NOT EXISTS idx_ba_nombre_upper ON buscador.archivos(UPPER(nombre_archivo))',
             ]
             for idx_sql in indices:
                 cursor.execute(idx_sql)
@@ -315,6 +317,42 @@ class IndexManager:
             return cursor.fetchall()
         except Exception as e:
             logger.error(f"Error buscando ensamblajes de {nombre_pieza}: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def obtener_componentes_de(self, ensamblaje_ruta):
+        """Despiece (BOM): componentes de un ensamblaje, desde la tabla
+        'componentes'. Para cada componente se elige el archivo indexado que
+        mejor casa: primero los de la propia carpeta del ensamblaje (pieza del
+        proyecto), después el más reciente (piezas de biblioteca compartidas).
+        Filas: (componente_nombre, nombre_archivo, origen, anio, cliente,
+                proyecto, ruta_completa). nombre_archivo es NULL si el
+        componente no está en el índice (referencia rota o carpeta excluida)."""
+        import ntpath
+        carpeta = ntpath.dirname(ensamblaje_ruta)
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            # strpos en vez de LIKE: las rutas UNC llevan '\' que en LIKE es escape
+            cursor.execute('''
+                SELECT c.componente_nombre, a.nombre_archivo, a.origen, a.anio,
+                       a.cliente, a.proyecto, a.ruta_completa
+                FROM buscador.componentes c
+                LEFT JOIN LATERAL (
+                    SELECT nombre_archivo, origen, anio, cliente, proyecto, ruta_completa
+                    FROM buscador.archivos
+                    WHERE UPPER(nombre_archivo) = c.componente_nombre
+                    ORDER BY (strpos(ruta_completa, %s) = 1) DESC,
+                             anio DESC NULLS LAST
+                    LIMIT 1
+                ) a ON TRUE
+                WHERE c.ensamblaje_ruta = %s
+                ORDER BY c.componente_nombre
+            ''', (carpeta, ensamblaje_ruta))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error obteniendo componentes de {ensamblaje_ruta}: {e}")
             return []
         finally:
             wrapper.close()

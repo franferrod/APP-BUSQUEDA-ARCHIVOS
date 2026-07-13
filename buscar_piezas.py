@@ -3668,6 +3668,28 @@ class BuscadorPiezas(QMainWindow):
                 act_donde.triggered.connect(lambda: self.mostrar_donde_se_usa(ruta_canonica))
                 menu.addAction(act_donde)
 
+            # V2.0.2: despiece del ensamblaje (misma tabla 'componentes')
+            if ext_sel == '.sldasm':
+                act_bom = QAction(svg_icon("ensamblaje-cubo"), "Ver componentes (despiece)", self)
+                act_bom.triggered.connect(lambda: self.mostrar_despiece(ruta_canonica))
+                menu.addAction(act_bom)
+
+            # V2.0.2: comparar componentes de 2 ensamblajes seleccionados
+            filas_sel = sorted({it.row() for it in self.tabla.selectedItems()})
+            if len(filas_sel) == 2:
+                extensiones = []
+                rutas_sel = []
+                for r in filas_sel:
+                    it_n = self.tabla.item(r, 5)
+                    it_r = self.tabla.item(r, 0)
+                    extensiones.append(Path(it_n.text()).suffix.lower() if it_n else "")
+                    rutas_sel.append(it_r.text() if it_r else "")
+                if extensiones == ['.sldasm', '.sldasm'] and all(rutas_sel):
+                    act_cmp = QAction(svg_icon("comparar-balanza"), "Comparar componentes de los 2 ensamblajes", self)
+                    act_cmp.triggered.connect(
+                        lambda _, a=rutas_sel[0], b=rutas_sel[1]: self.comparar_ensamblajes(a, b))
+                    menu.addAction(act_cmp)
+
             ruta = ruta_accesible(ruta_canonica)
             if ruta and os.path.exists(ruta):
                 menu.addSeparator()
@@ -3758,6 +3780,235 @@ class BuscadorPiezas(QMainWindow):
             dlg.exec_()
         except Exception as e:
             logger.error(f"Error en 'dónde se usa' para {ruta_pieza}: {e}")
+
+    # ═══════════════════════════════════════════
+    # DESPIECE Y COMPARACIÓN DE ENSAMBLAJES (V2.0.2)
+    # ═══════════════════════════════════════════
+    def _export_csv_generico(self, headers, filas, nombre_defecto):
+        """Exporta una lista de tuplas a CSV (mismo formato que la tabla: ';' + BOM)."""
+        if not filas:
+            return
+        import csv
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar a Excel (CSV)", nombre_defecto, "Archivos CSV (*.csv)")
+        if not path:
+            return
+        try:
+            with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+                writer = csv.writer(f, delimiter=';')
+                writer.writerow(headers)
+                writer.writerows(filas)
+            self.toast.show_message("✅ Exportado con éxito")
+        except Exception as e:
+            QMessageBox.critical(self, "Error al Exportar", f"No se pudo guardar el archivo:\n{e}")
+
+    @staticmethod
+    def _abrir_en_explorer(ruta_canonica):
+        """Abre el Explorador seleccionando el archivo (host accesible)."""
+        if not ruta_canonica:
+            return
+        rr = ruta_accesible(ruta_canonica)
+        if rr and os.path.exists(rr):
+            subprocess.Popen(f'explorer /select,"{rr}"')
+
+    def mostrar_despiece(self, ruta_ens):
+        """Despiece (BOM) del ensamblaje: lista sus componentes desde la tabla
+        'componentes', cruzados con el índice para traer metadatos (V2.0.2)."""
+        try:
+            nombre = os.path.basename(ruta_ens)
+            filas = self.db.obtener_componentes_de(ruta_ens)
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Componentes del ensamblaje")
+            dlg.resize(820, 540)
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(16, 14, 16, 14)
+            lay.setSpacing(10)
+
+            cab = QLabel(f'Componentes de <span style="color:#E66C32;">{nombre}</span>')
+            cab.setTextFormat(Qt.RichText)
+            cab.setStyleSheet(
+                f'font-family: "{FUENTES["h2"]}"; font-size: 14px; font-weight: 800; '
+                f'color: #F5F5F5; background: transparent;')
+            cab.setWordWrap(True)
+            lay.addWidget(cab)
+
+            sin_indexar = sum(1 for f in filas if not f[1])
+            texto_n = f"{len(filas)} componente(s)"
+            if sin_indexar:
+                texto_n += f" · {sin_indexar} sin indexar (referencia rota o carpeta excluida)"
+            lbl_n = QLabel(texto_n)
+            lbl_n.setObjectName("StatusDim")
+            lay.addWidget(lbl_n)
+
+            tabla = QTableWidget()
+            tabla.setColumnCount(5)
+            tabla.setHorizontalHeaderLabels(["Componente", "Cliente", "Proyecto", "Año", "Origen"])
+            tabla.setRowCount(len(filas))
+            tabla.setEditTriggers(QTableWidget.NoEditTriggers)
+            tabla.setSelectionBehavior(QTableWidget.SelectRows)
+            tabla.verticalHeader().setVisible(False)
+            tabla.setSortingEnabled(True)
+            for i, (comp, nom_a, origen, anio, cliente, proyecto, ruta_c) in enumerate(filas):
+                it0 = QTableWidgetItem(comp)
+                it0.setData(Qt.UserRole, ruta_c or "")
+                celdas = [
+                    it0,
+                    QTableWidgetItem(cliente or ("—" if nom_a else "no indexado")),
+                    QTableWidgetItem(etiqueta_origen(proyecto or "") if proyecto else "—"),
+                    QTableWidgetItem(str(anio) if anio else "—"),
+                    QTableWidgetItem(etiqueta_origen(origen or "") if origen else "—"),
+                ]
+                for j, it in enumerate(celdas):
+                    if not nom_a:  # componente no encontrado en el índice
+                        it.setForeground(QColor("#888888"))
+                    tabla.setItem(i, j, it)
+            tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            for j in (1, 2, 3, 4):
+                tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
+            lay.addWidget(tabla, stretch=1)
+
+            if not filas:
+                aviso = QLabel(
+                    "No hay componentes registrados para este ensamblaje.\n\n"
+                    "Nota: la relación de componentes se genera al reindexar el NAS. "
+                    "Si el ensamblaje es reciente, se completará con la próxima indexación.")
+                aviso.setStyleSheet("color: #999999; font-style: italic; background: transparent;")
+                aviso.setWordWrap(True)
+                lay.addWidget(aviso)
+
+            def abrir_sel():
+                it = tabla.item(tabla.currentRow(), 0) if tabla.currentRow() >= 0 else None
+                if it:
+                    self._abrir_en_explorer(it.data(Qt.UserRole))
+            tabla.itemDoubleClicked.connect(lambda _: abrir_sel())
+
+            footer = QHBoxLayout()
+            btn_export = QPushButton("Exportar CSV")
+            btn_export.setIcon(svg_icon("exportar-descargar", size=15))
+            btn_export.setCursor(Qt.PointingHandCursor)
+            btn_export.clicked.connect(lambda: self._export_csv_generico(
+                ["Componente", "Cliente", "Proyecto", "Año", "Origen", "Ruta"],
+                [(f[0], f[4] or "", etiqueta_origen(f[5] or "") if f[5] else "",
+                  f[3] or "", etiqueta_origen(f[2] or "") if f[2] else "", f[6] or "")
+                 for f in filas],
+                f"Despiece_{os.path.splitext(nombre)[0]}.csv"))
+            footer.addWidget(btn_export)
+            footer.addStretch()
+            btn_abrir = QPushButton("Abrir carpeta")
+            btn_abrir.setIcon(svg_icon("carpeta", size=15))
+            btn_abrir.setCursor(Qt.PointingHandCursor)
+            btn_abrir.clicked.connect(abrir_sel)
+            btn_cerrar = QPushButton("Cerrar")
+            btn_cerrar.setCursor(Qt.PointingHandCursor)
+            btn_cerrar.clicked.connect(dlg.accept)
+            footer.addWidget(btn_abrir)
+            footer.addWidget(btn_cerrar)
+            lay.addLayout(footer)
+
+            dlg.exec_()
+        except Exception as e:
+            logger.error(f"Error en despiece de {ruta_ens}: {e}")
+
+    def comparar_ensamblajes(self, ruta_a, ruta_b):
+        """Diff de componentes entre dos ensamblajes: qué tiene cada uno y qué
+        comparten (V2.0.2). Útil para ver qué cambió entre dos versiones."""
+        try:
+            nom_a = os.path.basename(ruta_a)
+            nom_b = os.path.basename(ruta_b)
+            comp_a = {f[0]: f for f in self.db.obtener_componentes_de(ruta_a)}
+            comp_b = {f[0]: f for f in self.db.obtener_componentes_de(ruta_b)}
+            solo_a = sorted(set(comp_a) - set(comp_b))
+            solo_b = sorted(set(comp_b) - set(comp_a))
+            comunes = sorted(set(comp_a) & set(comp_b))
+
+            COL_A, COL_B, COL_COMUN = "#E66C32", "#5B8DD9", "#3BA55D"
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Comparar componentes")
+            dlg.resize(820, 560)
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(16, 14, 16, 14)
+            lay.setSpacing(10)
+
+            cab = QLabel(
+                f'<span style="color:{COL_A};">A · {nom_a}</span>'
+                f'<span style="color:#777777;">  vs  </span>'
+                f'<span style="color:{COL_B};">B · {nom_b}</span>')
+            cab.setTextFormat(Qt.RichText)
+            cab.setStyleSheet(
+                f'font-family: "{FUENTES["h2"]}"; font-size: 14px; font-weight: 800; '
+                f'color: #F5F5F5; background: transparent;')
+            cab.setWordWrap(True)
+            lay.addWidget(cab)
+
+            lbl_n = QLabel(
+                f"Solo en A: {len(solo_a)}   ·   Solo en B: {len(solo_b)}   ·   "
+                f"En ambos: {len(comunes)}")
+            lbl_n.setObjectName("StatusDim")
+            lay.addWidget(lbl_n)
+
+            tabla = QTableWidget()
+            tabla.setColumnCount(2)
+            tabla.setHorizontalHeaderLabels(["Componente", "Estado"])
+            tabla.setEditTriggers(QTableWidget.NoEditTriggers)
+            tabla.setSelectionBehavior(QTableWidget.SelectRows)
+            tabla.verticalHeader().setVisible(False)
+            datos = ([(c, "Solo en A", COL_A, comp_a[c][6]) for c in solo_a] +
+                     [(c, "Solo en B", COL_B, comp_b[c][6]) for c in solo_b] +
+                     [(c, "En ambos", COL_COMUN, comp_a[c][6]) for c in comunes])
+            tabla.setRowCount(len(datos))
+            for i, (comp, estado, color, ruta_c) in enumerate(datos):
+                it0 = QTableWidgetItem(comp)
+                it0.setData(Qt.UserRole, ruta_c or "")
+                it1 = QTableWidgetItem(estado)
+                it1.setForeground(QColor(color))
+                tabla.setItem(i, 0, it0)
+                tabla.setItem(i, 1, it1)
+            tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+            tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+            lay.addWidget(tabla, stretch=1)
+
+            if not comp_a or not comp_b:
+                vacios = " y ".join(n for n, c in ((nom_a, comp_a), (nom_b, comp_b)) if not c)
+                aviso = QLabel(
+                    f"Sin componentes registrados para: {vacios}.\n"
+                    "La relación de componentes se genera al reindexar el NAS.")
+                aviso.setStyleSheet("color: #999999; font-style: italic; background: transparent;")
+                aviso.setWordWrap(True)
+                lay.addWidget(aviso)
+
+            def abrir_sel():
+                it = tabla.item(tabla.currentRow(), 0) if tabla.currentRow() >= 0 else None
+                if it:
+                    self._abrir_en_explorer(it.data(Qt.UserRole))
+            tabla.itemDoubleClicked.connect(lambda _: abrir_sel())
+
+            footer = QHBoxLayout()
+            btn_export = QPushButton("Exportar CSV")
+            btn_export.setIcon(svg_icon("exportar-descargar", size=15))
+            btn_export.setCursor(Qt.PointingHandCursor)
+            btn_export.clicked.connect(lambda: self._export_csv_generico(
+                ["Componente", "Estado", f"A: {nom_a}", f"B: {nom_b}"],
+                [(c, e, "X" if e != "Solo en B" else "", "X" if e != "Solo en A" else "")
+                 for c, e, _, _ in datos],
+                f"Comparacion_{os.path.splitext(nom_a)[0]}_vs_{os.path.splitext(nom_b)[0]}.csv"))
+            footer.addWidget(btn_export)
+            footer.addStretch()
+            btn_abrir = QPushButton("Abrir carpeta")
+            btn_abrir.setIcon(svg_icon("carpeta", size=15))
+            btn_abrir.setCursor(Qt.PointingHandCursor)
+            btn_abrir.clicked.connect(abrir_sel)
+            btn_cerrar = QPushButton("Cerrar")
+            btn_cerrar.setCursor(Qt.PointingHandCursor)
+            btn_cerrar.clicked.connect(dlg.accept)
+            footer.addWidget(btn_abrir)
+            footer.addWidget(btn_cerrar)
+            lay.addLayout(footer)
+
+            dlg.exec_()
+        except Exception as e:
+            logger.error(f"Error comparando {ruta_a} vs {ruta_b}: {e}")
 
     def copiar_nombre_seleccionado(self):
         """Acción proactiva: copiar solo el nombre del archivo"""
