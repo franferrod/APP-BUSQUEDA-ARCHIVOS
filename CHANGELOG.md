@@ -1,5 +1,11 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.2] - 2026-07-13 (Despiece de ensamblajes + comparación)
+- **"Ver componentes (despiece)"**: clic derecho sobre un ensamblaje muestra su lista de piezas (BOM) al instante — con cliente, proyecto, año y origen de cada componente — sin abrir SolidWorks. Doble clic abre la carpeta de la pieza y botón "Exportar CSV" para llevarlo a Excel. Los componentes con referencia rota o fuera del índice se marcan en gris.
+- **"Comparar componentes de los 2 ensamblajes"**: seleccionando dos ensamblajes, el clic derecho ofrece un diff de componentes — qué piezas tiene solo A, solo B y cuáles comparten (ej. qué cambió entre la cinta de 2023 y la de 2025). Exportable a CSV con matriz de presencia.
+- **Fix indexado de propiedades SW**: el reindexado automático guardaba en blanco las propiedades con acentos (LÁSER=SÍ, SOLDADURA=SÍ...) por un error de codificación; los filtros de fabricación no devolvían resultados. Corregido y repoblado el histórico.
+- **Fix actualizador**: la ventana de actualización ya no se queda abierta indefinidamente si hay otra instancia de la app abierta; fuerza el cierre y continúa.
+
 ## [2.0.1] - 2026-07-10 (Dónde se usa una pieza + acceso NAS por nombre)
 - **Nueva función "¿En qué ensamblajes se usa?"**: clic derecho sobre cualquier pieza o subensamblaje muestra al instante la lista de ensamblajes que la contienen (cliente, proyecto, año), con doble clic para abrir su carpeta. Especialmente útil para piezas estándar de biblioteca (arandelas, tuercas, rodamientos...).
 - **Acceso al NAS por IP o por nombre**: los equipos que solo llegan al Synology por "NASCENTRAL" (y por IP les pedía credenciales) ya pueden abrir archivos, arrastrar a SolidWorks y ver miniaturas — la app detecta el host que funciona en cada equipo.
