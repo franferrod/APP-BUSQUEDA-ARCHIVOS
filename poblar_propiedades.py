@@ -29,11 +29,17 @@ LOG_DIR = os.path.expanduser("~/.alsi_busqueda")
 os.makedirs(LOG_DIR, exist_ok=True)
 CHECKPOINT = os.path.join(LOG_DIR, "poblar_propiedades.checkpoint")
 
-logging.basicConfig(
-    level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler(os.path.join(LOG_DIR, "poblar_propiedades.log"), encoding='utf-8'),
-              logging.StreamHandler()])
+# Configurar un logger PROPIO con sus handlers (no usar basicConfig: al importar
+# reindexar_diario/models el logger raíz ya puede tener handlers y basicConfig
+# sería un no-op, mandando los logs a otro fichero).
 log = logging.getLogger("poblar_props")
+log.setLevel(logging.INFO)
+log.propagate = False
+if not log.handlers:
+    _fmt = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    _fh = logging.FileHandler(os.path.join(LOG_DIR, "poblar_propiedades.log"), encoding='utf-8')
+    _fh.setFormatter(_fmt); log.addHandler(_fh)
+    _ch = logging.StreamHandler(); _ch.setFormatter(_fmt); log.addHandler(_ch)
 
 
 def valores_sw(p):
