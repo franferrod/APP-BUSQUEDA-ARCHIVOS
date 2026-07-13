@@ -2483,7 +2483,10 @@ class BuscadorPiezas(QMainWindow):
             if resp != QMessageBox.Yes:
                 return
 
-            # Actualizador .bat: espera a que se cierre la app, copia recursos y reabre
+            # Actualizador .bat: da un margen para que la app se cierre sola,
+            # FUERZA el cierre de cualquier instancia que quede (evita el bucle
+            # infinito si hay otra ventana abierta o un proceso colgado), copia
+            # los recursos y reabre.
             bat = os.path.join(os.environ.get("TEMP", local_dir), "alsi_update.bat")
             recursos = ["BuscadorPiezas.exe", "SwPropExtractor.exe",
                         "SolidWorks.Interop.swdocumentmgr.dll", "config.ini",
@@ -2493,10 +2496,13 @@ class BuscadorPiezas(QMainWindow):
                 "setlocal",
                 'set "NET=' + RUTA_DESPLIEGUE_APP + '"',
                 'set "LOC=' + local_dir + '"',
+                'title Actualizando Buscador de Piezas ALSI...',
+                "rem Margen para que la app se cierre por si misma",
+                "timeout /t 2 /nobreak >nul",
+                "rem Forzar cierre de cualquier instancia restante (extras o colgadas)",
+                'taskkill /F /IM BuscadorPiezas.exe >nul 2>&1',
+                'taskkill /F /IM SwPropExtractor.exe >nul 2>&1',
                 "timeout /t 1 /nobreak >nul",
-                ":wait",
-                'tasklist /FI "IMAGENAME eq BuscadorPiezas.exe" | find /I "BuscadorPiezas.exe" >nul',
-                'if not errorlevel 1 ( timeout /t 1 /nobreak >nul & goto wait )',
                 'pushd "%NET%"',
             ]
             for r in recursos:
