@@ -151,6 +151,86 @@ def procesar_fase(conn, cur, nombre_fase, extensiones, checkpoint_file, con_prop
     return True
 
 
+def procesar_step(conn, cur):
+    """FASE 3: miniaturas de STEP/IGES vía render_step.py en subproceso aislado
+    (un STEP corrupto puede reventar gmsh y no debe tumbar el pase). Procesa
+    solo los que aún no tienen miniatura, así también recoge los nuevos.
+    Devuelve True si terminó, False si paró por horario."""
+    import subprocess, tempfile
+    render = os.path.join(BASE, 'render_step.py')
+    if not os.path.exists(render):
+        log.warning("[FASE3 step] render_step.py no encontrado — fase omitida")
+        return True
+    try:
+        import gmsh  # noqa: F401 — solo comprobar que está instalado
+    except ImportError:
+        log.warning("[FASE3 step] gmsh no instalado (pip install gmsh numpy) — fase omitida")
+        return True
+
+    cur.execute("""SELECT a.id, a.ruta_completa, a.ultima_modificacion
+                   FROM buscador.archivos a
+                   WHERE a.extension IN ('.step', '.stp', '.iges', '.igs')
+                     AND NOT EXISTS (SELECT 1 FROM buscador.miniaturas m
+                                     WHERE m.ruta_completa = a.ruta_completa)
+                   ORDER BY a.id""")
+    filas = cur.fetchall()
+    total = len(filas)
+    log.info(f"[FASE3 step] pendientes: {total}")
+    if not total:
+        return True
+
+    si = subprocess.STARTUPINFO(); si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    procesados = 0; minis_ok = 0; errores = 0; t0 = time.time()
+    for fid, ruta, mtime in filas:
+        if procesados % 20 == 0 and en_horario_laboral():
+            conn.commit()
+            log.info(f"[FASE3 step] PAUSA por horario en {procesados}/{total}")
+            return False
+        procesados += 1
+        try:
+            if not os.path.exists(ruta):
+                continue
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                salida = tmp.name
+            try:
+                r = subprocess.run([sys.executable, render, ruta, salida, '256'],
+                                   capture_output=True, startupinfo=si, timeout=90)
+                if r.returncode == 0 and os.path.getsize(salida) > 0:
+                    with open(salida, 'rb') as f:
+                        jpeg = f.read()
+                    cur.execute('''
+                        INSERT INTO buscador.miniaturas (ruta_completa, imagen, mtime, actualizado)
+                        VALUES (%s, %s, %s, NOW())
+                        ON CONFLICT (ruta_completa) DO UPDATE SET
+                            imagen = EXCLUDED.imagen, mtime = EXCLUDED.mtime, actualizado = NOW()
+                    ''', (ruta, psycopg2.Binary(jpeg), mtime))
+                    minis_ok += 1
+                else:
+                    errores += 1
+            finally:
+                try:
+                    os.unlink(salida)
+                except OSError:
+                    pass
+        except Exception as e:
+            errores += 1
+            log.debug(f"Error STEP id={fid} {ruta}: {e}")
+
+        if procesados % 50 == 0:
+            conn.commit()
+        if procesados % 200 == 0:
+            vel = procesados / max(1, time.time() - t0)
+            eta = (total - procesados) / max(0.1, vel) / 60
+            log.info(f"[FASE3 step] {procesados}/{total} · minis: {minis_ok} · "
+                     f"err: {errores} · {vel:.1f}/s · ETA {eta:.0f} min")
+
+    conn.commit()
+    dur = (time.time() - t0) / 60
+    log.info(f"[FASE3 step] COMPLETADA: {procesados} en {dur:.1f} min · "
+             f"minis: {minis_ok} · sin geometría/errores: {errores}")
+    return True
+
+
 def main():
     log.info("=" * 60)
     log.info("PASE NOCTURNO: propiedades SW + caché de miniaturas")
@@ -176,13 +256,19 @@ def main():
         ok2 = procesar_fase(conn, cur, "FASE2 slddrw", ('.slddrw',),
                             "poblar_fase2.checkpoint", con_props=True)
 
+    # FASE 3: STEP/IGES (render con gmsh) — solo si las anteriores terminaron
+    ok3 = False
+    if ok1 and ok2:
+        ok3 = procesar_step(conn, cur)
+
     cur.execute("SELECT count(*) FROM buscador.miniaturas")
     total_minis = cur.fetchone()[0]
     conn.close()
     log.info(f"ESTADO GLOBAL: fase1 {'OK' if ok1 else 'parcial'} · "
              f"fase2 {'OK' if ok2 else 'parcial/pendiente'} · "
+             f"fase3 {'OK' if ok3 else 'parcial/pendiente'} · "
              f"miniaturas en BD: {total_minis}")
-    if ok1 and ok2:
+    if ok1 and ok2 and ok3:
         log.info("TODO COMPLETADO — las próximas ejecuciones serán no-op rápidos.")
     log.info("=" * 60)
 

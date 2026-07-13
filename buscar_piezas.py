@@ -3272,8 +3272,12 @@ class BuscadorPiezas(QMainWindow):
                 except Exception:
                     logger.debug(f"OLE fallback para: {ruta}")
 
-                # V2.0.3: caché central de miniaturas en BD (equipos sin SolidWorks;
-                # los archivos modernos no son OLE y el shell no tiene proveedor)
+            # V2.0.3: caché central de miniaturas en BD.
+            # - SW: para equipos sin SolidWorks (los modernos no son OLE y el
+            #   shell no tiene proveedor allí).
+            # - STEP/IGES: no llevan preview embebido; se renderizan de noche
+            #   en el indexador (gmsh) y todos los equipos las leen de aquí.
+            if ext in ('.sldprt', '.sldasm', '.slddrw', '.step', '.stp', '.iges', '.igs'):
                 try:
                     data = self.db.obtener_miniatura(ruta_canonica)
                     if data:
