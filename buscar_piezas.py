@@ -2238,8 +2238,8 @@ class BuscadorPiezas(QMainWindow):
                 card.setData(Qt.UserRole, ruta)
                 card.setToolTip(f"{nombre}\n{meta}\n{ruta}")
                 card.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
-                if ruta in self.cache_miniaturas:
-                    card.setIcon(QIcon(self.cache_miniaturas[ruta]))
+                if (ruta, 256) in self.cache_miniaturas:
+                    card.setIcon(QIcon(self.cache_miniaturas[(ruta, 256)]))
                 else:
                     ext = Path(nombre).suffix.lower()
                     if ext not in self._badge_cache:
@@ -3217,6 +3217,20 @@ class BuscadorPiezas(QMainWindow):
 
             ext = Path(ruta).suffix.lower()
 
+            # 0a. PDF/DWG en tamaño miniatura: caché de BD primero (V2.0.3).
+            # Ya está cocinada por el pase nocturno: instantánea y sin leer el
+            # archivo del NAS cada vez. El preview grande (size>256) sí
+            # renderiza en local para máxima calidad.
+            if size <= 256 and ext in ('.pdf', '.dwg'):
+                try:
+                    data = self.db.obtener_miniatura(ruta_canonica)
+                    if data:
+                        image = QImage.fromData(data)
+                        if not image.isNull():
+                            return image, 0
+                except Exception as e:
+                    logger.debug(f"Miniatura BD falló para {ruta_canonica}: {e}")
+
             # 0. PDF: renderizar la primera página SIEMPRE con PyMuPDF (V2.0.3).
             # El proveedor de miniaturas de Adobe registra su ICONO como si fuera
             # una miniatura válida (incluso con THUMBNAILONLY, según la caché del
@@ -3301,8 +3315,10 @@ class BuscadorPiezas(QMainWindow):
         if not ruta_local or not os.path.exists(ruta_local):
             return None
 
-        if ruta in self.cache_miniaturas:
-            return self.cache_miniaturas[ruta]
+        # V2.0.3: clave (ruta, size) — el preview grande pide 1024 y la tabla 256
+        clave = (ruta, size)
+        if clave in self.cache_miniaturas:
+            return self.cache_miniaturas[clave]
 
         if len(self.cache_miniaturas) > 100:
             self.cache_miniaturas.clear()
@@ -3334,9 +3350,9 @@ class BuscadorPiezas(QMainWindow):
                 pass
 
         if pixmap and not pixmap.isNull():
-            self.cache_miniaturas[ruta] = pixmap
+            self.cache_miniaturas[clave] = pixmap
             return pixmap
-            
+
         return None
 
     def _thumbnail_via_shell_factory(self, ruta, size=256):
@@ -3476,8 +3492,11 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_preview_ruta.setText(ruta)
 
             # Mostrar miniatura cacheada inmediatamente o placeholder (V1.0.4 Fix)
-            if ruta in self.cache_miniaturas:
-                self._set_preview_imagen(self.cache_miniaturas[ruta])
+            # V2.0.3: primero la del preview (1024) y si no, la de tabla (256)
+            pm_cache = (self.cache_miniaturas.get((ruta, 1024))
+                        or self.cache_miniaturas.get((ruta, 256)))
+            if pm_cache:
+                self._set_preview_imagen(pm_cache)
                 self.lbl_preview_icon.setText("")
                 self.preview_opacity.setOpacity(1.0)
             else:
@@ -3531,7 +3550,7 @@ class BuscadorPiezas(QMainWindow):
                 pixmap = QPixmap.fromImage(image)
 
             if pixmap and not pixmap.isNull():
-                self.cache_miniaturas[ruta] = pixmap
+                self.cache_miniaturas[(ruta, 256)] = pixmap
 
                 # Poner miniatura en la celda correcta (busca por ruta, no por row)
                 self.set_cell_thumbnail(ruta, pixmap)
@@ -3606,8 +3625,9 @@ class BuscadorPiezas(QMainWindow):
             else:
                 self.lbl_preview_tamaño.setText(f"{size / (1024 * 1024):.1f} MB")
 
-            # Miniatura (Heavy IO)
-            pixmap = self.extraer_miniatura(ruta)
+            # Miniatura (Heavy IO) — V2.0.3: 1024 = calidad alta en el panel
+            # (PDF renderiza 4x, SW pide al shell tamaño grande); la tabla usa 256
+            pixmap = self.extraer_miniatura(ruta, size=1024)
             if pixmap and not pixmap.isNull():
                 self._set_preview_imagen(pixmap)
                 self.lbl_preview_icon.setText("")
