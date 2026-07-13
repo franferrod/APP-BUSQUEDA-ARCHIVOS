@@ -3161,6 +3161,52 @@ class BuscadorPiezas(QMainWindow):
     # ═══════════════════════════════════════════
 
 
+    @staticmethod
+    def _preview_embebido_dwg(ruta):
+        """Extrae la miniatura embebida en la cabecera de un DWG (V2.0.3).
+        Formato: offset 0x0D = puntero a la sección de preview (sentinel 16B +
+        tamaño 4B + nº imágenes 1B + entradas [código 1B, inicio 4B, tamaño 4B]).
+        Código 2 = BMP sin BITMAPFILEHEADER (se antepone), código 6 = PNG.
+        Devuelve QImage o None. Python puro: no necesita AutoCAD."""
+        import struct
+        try:
+            with open(ruta, 'rb') as f:
+                head = f.read(0x11)
+                if len(head) < 0x11 or head[:2] != b'AC':
+                    return None
+                pos = struct.unpack('<I', head[0x0D:0x11])[0]
+                if pos <= 0:
+                    return None
+                f.seek(pos + 16)  # saltar sentinel
+                f.read(4)         # tamaño total de la sección
+                n = f.read(1)[0]
+                entradas = []
+                for _ in range(n):
+                    code = f.read(1)[0]
+                    start, size_img = struct.unpack('<II', f.read(8))
+                    entradas.append((code, start, size_img))
+                for code, start, size_img in entradas:
+                    if code in (2, 6) and size_img > 0:
+                        f.seek(start)
+                        data = f.read(size_img)
+                        if code == 6 or data[:8] == b'\x89PNG\r\n\x1a\n':
+                            img = QImage.fromData(data)
+                            return img if not img.isNull() else None
+                        # BMP crudo: anteponer BITMAPFILEHEADER
+                        dib = struct.unpack('<I', data[0:4])[0]
+                        bpp = struct.unpack('<H', data[14:16])[0]
+                        paleta = 0
+                        if bpp <= 8:
+                            ncol = struct.unpack('<I', data[32:36])[0] or (1 << bpp)
+                            paleta = ncol * 4
+                        offset = 14 + dib + paleta
+                        fh = b'BM' + struct.pack('<IHHI', 14 + len(data), 0, 0, offset)
+                        img = QImage.fromData(fh + data, 'BMP')
+                        return img if not img.isNull() else None
+        except Exception:
+            pass
+        return None
+
     def extraer_miniatura_raw(self, ruta, size=256):
         """Devuelve (QImage, hbitmap) permitiendo su uso seguro en QThreads (V1.0.3)"""
         try:
@@ -3192,6 +3238,14 @@ class BuscadorPiezas(QMainWindow):
                         doc.close()
                 except Exception as e:
                     logger.debug(f"PyMuPDF falló para PDF: {e}")
+
+            # 0b. DWG: miniatura embebida en la cabecera del archivo (V2.0.3).
+            # Igual que Adobe, el proveedor de AutoCAD mete su icono en la caché
+            # del shell — la extracción directa es determinista y sin AutoCAD.
+            if ext == '.dwg':
+                img = self._preview_embebido_dwg(ruta)
+                if img is not None:
+                    return img, 0
 
             # 1. PRIORIZAR IShellItemImageFactory (Calidad Explorador de Windows).
             # Con THUMBNAILONLY: falla limpio si no hay proveedor real (equipos
