@@ -3164,11 +3164,14 @@ class BuscadorPiezas(QMainWindow):
     def extraer_miniatura_raw(self, ruta, size=256):
         """Devuelve (QImage, hbitmap) permitiendo su uso seguro en QThreads (V1.0.3)"""
         try:
+            ruta_canonica = ruta  # clave de la caché de BD (tal cual se indexó)
             ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
             if not ruta or not os.path.exists(ruta):
                 return None, 0
-            
-            # 1. PRIORIZAR IShellItemImageFactory (Calidad Explorador de Windows)
+
+            # 1. PRIORIZAR IShellItemImageFactory (Calidad Explorador de Windows).
+            # Con THUMBNAILONLY: falla limpio si no hay proveedor real (equipos
+            # sin SolidWorks, PDFs) y se pasa a los fallbacks de abajo (V2.0.3).
             try:
                 hbitmap = self._thumbnail_via_shell_factory(ruta, size)
                 if hbitmap and hbitmap != 0:
@@ -3177,9 +3180,9 @@ class BuscadorPiezas(QMainWindow):
                 logger.debug(f"IShellItemImageFactory falló: {e}")
 
             ext = Path(ruta).suffix.lower()
-            
+
             # 2. FALLBACK A EXTRACTORES ESPECÍFICOS
-            # SolidWorks OLE (PreviewPNG)
+            # SolidWorks: archivos antiguos son OLE con PreviewPNG embebido
             if ext in ('.sldprt', '.sldasm', '.slddrw'):
                 try:
                     import olefile
@@ -3192,6 +3195,17 @@ class BuscadorPiezas(QMainWindow):
                                     return image, 0
                 except Exception:
                     logger.debug(f"OLE fallback para: {ruta}")
+
+                # V2.0.3: caché central de miniaturas en BD (equipos sin SolidWorks;
+                # los archivos modernos no son OLE y el shell no tiene proveedor)
+                try:
+                    data = self.db.obtener_miniatura(ruta_canonica)
+                    if data:
+                        image = QImage.fromData(data)
+                        if not image.isNull():
+                            return image, 0
+                except Exception as e:
+                    logger.debug(f"Miniatura BD falló para {ruta_canonica}: {e}")
 
             # PDF (Matrix 4x para nitidez HD)
             if ext == '.pdf':
@@ -3216,13 +3230,16 @@ class BuscadorPiezas(QMainWindow):
 
     def extraer_miniatura(self, ruta, size=256):
         """Extrae miniatura (QPixmap) para el hilo principal (Compatible hacia atrás)"""
-        ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
-        if not ruta or not os.path.exists(ruta):
+        # V2.0.3: NO reescribir aquí — extraer_miniatura_raw necesita la ruta
+        # canónica original como clave de la caché de miniaturas en BD (y ya
+        # hace su propio ruta_accesible internamente).
+        ruta_local = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
+        if not ruta_local or not os.path.exists(ruta_local):
             return None
-        
+
         if ruta in self.cache_miniaturas:
             return self.cache_miniaturas[ruta]
-            
+
         if len(self.cache_miniaturas) > 100:
             self.cache_miniaturas.clear()
 
@@ -3241,7 +3258,7 @@ class BuscadorPiezas(QMainWindow):
         if not pixmap:
             # 4. Fallback: icono del sistema (SHGetFileInfo)
             try:
-                res = shell.SHGetFileInfo(ruta, 0, shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON)
+                res = shell.SHGetFileInfo(ruta_local, 0, shellcon.SHGFI_ICON | shellcon.SHGFI_LARGEICON)
                 hicon = res[0]
                 if hicon:
                     pixmap = QtWin.fromHICON(hicon)
@@ -3298,10 +3315,16 @@ class BuscadorPiezas(QMainWindow):
                 get_image = GetImageFunc(vtable[3])
                 
                 sz = SIZE(size, size)
+                # V2.0.3: THUMBNAILONLY — sin él, el shell devuelve el ICONO del
+                # tipo de archivo como si fuera miniatura (Adobe para PDF, genérico
+                # para SW en equipos sin SolidWorks) y cortocircuitaba los fallbacks
+                # buenos (render PDF con PyMuPDF, caché de miniaturas en BD).
                 SIIGBF_BIGGERSIZEOK = 0x01
+                SIIGBF_THUMBNAILONLY = 0x04
                 hbitmap = c_void_p()
-                
-                hr = get_image(ppv, sz, SIIGBF_BIGGERSIZEOK, byref(hbitmap))
+
+                hr = get_image(ppv, sz, SIIGBF_BIGGERSIZEOK | SIIGBF_THUMBNAILONLY,
+                               byref(hbitmap))
                 
                 if hr == 0 and hbitmap.value:
                     return int(hbitmap.value)

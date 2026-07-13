@@ -67,7 +67,10 @@ class IndexManager:
     def _init_pool(self):
         """Inicializa el pool de conexiones PostgreSQL."""
         try:
-            self._pool = psycopg2.pool.SimpleConnectionPool(
+            # V2.0.3: ThreadedConnectionPool (mismo API que SimpleConnectionPool
+            # pero con locks) — las miniaturas ahora consultan la BD desde los
+            # hilos de carga, además del hilo principal.
+            self._pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=1,
                 maxconn=5,
                 **PG_CONFIG
