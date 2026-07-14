@@ -3014,33 +3014,58 @@ class BuscadorPiezas(QMainWindow):
             # Prealocar filas de golpe (mucho más rápido que insertRow en bucle)
             self.tabla.setRowCount(len(resultados))
             vistas_pendientes = []
-            
+
+            # V2.0.3: precargar miniaturas de la caché de BD en UNA consulta y
+            # ponerlas directas (sin parpadeo badge→miniatura ni relectura del
+            # NAS). Cap para no cargar el hilo de UI en búsquedas enormes: el
+            # resto las trae el worker (también de BD, en segundo plano).
+            minis_bd = {}
+            if len(resultados) <= 300:
+                try:
+                    minis_bd = self.db.obtener_miniaturas_lote(
+                        [d[10] for d in resultados if d[10]])
+                except Exception as e:
+                    logger.debug(f"Precarga de miniaturas falló: {e}")
+
             for row, data in enumerate(resultados):
                 # V1.0.5 Final Clean Mapping:
                 # [nombre, comp, año, cliente, proy, tipo, codProy, nomProy, codOrd, nomOrd, ruta]
                 
                 # Columna oculta 0: Ruta
                 ruta = data[10]
-                vistas_pendientes.append((row, ruta))
                 self.tabla.setItem(row, 0, QTableWidgetItem(ruta))
-                
+
                 # Columna oculta 1: Orden Original
                 self.tabla.setItem(row, 1, QTableWidgetItem(str(row).zfill(6)))
-                
+
                 # Columna oculta 2: Cod Proy
                 self.tabla.setItem(row, 2, QTableWidgetItem(str(data[6]) if data[6] else ""))
-                
+
                 # Columna oculta 3: Nom Proy
                 self.tabla.setItem(row, 3, QTableWidgetItem(str(data[7]) if data[7] else ""))
-                
-                # Columna 4: Vista (Miniatura, con badge de extensión como placeholder V2.0.0)
+
+                # Columna 4: Vista. V2.0.3: miniatura de BD directa si está en la
+                # precarga; si no, badge de extensión y se deja pendiente para el
+                # worker (miss de caché → shell/extracción).
                 thumb_item = QTableWidgetItem()
                 thumb_item.setData(Qt.UserRole, ruta)
                 thumb_item.setTextAlignment(Qt.AlignCenter)
-                ext_badge = Path(str(data[0])).suffix.lower()
-                if ext_badge not in self._badge_cache:
-                    self._badge_cache[ext_badge] = QIcon(pixmap_badge_extension(ext_badge, size=48))
-                thumb_item.setIcon(self._badge_cache[ext_badge])
+                puesta = False
+                data_bd = minis_bd.get(ruta)
+                if data_bd:
+                    img = QImage.fromData(data_bd)
+                    if not img.isNull():
+                        # Escalar al tamaño de vista (memoria acotada: ~96px)
+                        pm = QPixmap.fromImage(img).scaled(
+                            96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        thumb_item.setIcon(QIcon(pm))
+                        puesta = True
+                if not puesta:
+                    ext_badge = Path(str(data[0])).suffix.lower()
+                    if ext_badge not in self._badge_cache:
+                        self._badge_cache[ext_badge] = QIcon(pixmap_badge_extension(ext_badge, size=48))
+                    thumb_item.setIcon(self._badge_cache[ext_badge])
+                    vistas_pendientes.append((row, ruta))
                 self.tabla.setItem(row, 4, thumb_item)
                 
                 # Resto de columnas visibles:
@@ -3077,23 +3102,8 @@ class BuscadorPiezas(QMainWindow):
                 orden_completa = f"{cod_ord} {nom_ord}".strip()
                 self.tabla.setItem(row, 10, QTableWidgetItem(orden_completa))
             
-            # Lanzamos hilo de miniaturas
-            if hasattr(self, 'thumb_worker') and self.thumb_worker and self.thumb_worker.isRunning():
-                self.thumb_worker.cancelar()
-                try:
-                    self.thumb_worker.thumbnail_ready.disconnect(self.on_thumbnail_ready)
-                except (TypeError, RuntimeError):
-                    pass
-                self.thumb_worker.wait(500)
-            elif hasattr(self, 'thumb_worker') and self.thumb_worker:
-                try:
-                    self.thumb_worker.thumbnail_ready.disconnect(self.on_thumbnail_ready)
-                except (TypeError, RuntimeError):
-                    pass
-                
-            self.thumb_worker = ThumbnailWorker(vistas_pendientes, self.extraer_miniatura_raw)
-            self.thumb_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
-            self.thumb_worker.start()
+            # Lanzamos hilo de miniaturas (V2.0.3: swap sin bloquear la UI)
+            self._swap_thumb_worker(vistas_pendientes)
             
             # Re-activar ordenación después de cargar datos
             self.tabla.setSortingEnabled(True)
@@ -3232,21 +3242,51 @@ class BuscadorPiezas(QMainWindow):
             pass
         return None
 
+    def _swap_thumb_worker(self, vistas_pendientes):
+        """Reemplaza el worker de miniaturas SIN bloquear el hilo de UI (V2.0.3).
+        Antes se hacía thumb_worker.wait(500), que congelaba la app al encadenar
+        búsquedas/filtros si el worker estaba leyendo un archivo lento del NAS.
+        Ahora el worker viejo se cancela y se deja morir solo (referenciado en
+        una lista hasta que emite finished, para no destruirlo en pleno vuelo)."""
+        old = getattr(self, 'thumb_worker', None)
+        if old is not None:
+            try:
+                old.thumbnail_ready.disconnect(self.on_thumbnail_ready)
+            except (TypeError, RuntimeError):
+                pass
+            old.cancelar()
+            if old.isRunning():
+                if not hasattr(self, '_workers_muriendo'):
+                    self._workers_muriendo = []
+                self._workers_muriendo.append(old)
+                old.finished.connect(lambda o=old: self._limpiar_worker_muerto(o))
+        self.thumb_worker = ThumbnailWorker(vistas_pendientes, self.extraer_miniatura_raw)
+        self.thumb_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
+        self.thumb_worker.start()
+
+    def _limpiar_worker_muerto(self, worker):
+        try:
+            self._workers_muriendo.remove(worker)
+        except (ValueError, AttributeError):
+            pass
+
+    # Extensiones cuya miniatura se cachea en BD (pase nocturno)
+    _EXT_CACHEABLE = ('.sldprt', '.sldasm', '.slddrw', '.pdf', '.dwg',
+                      '.step', '.stp', '.iges', '.igs')
+
     def extraer_miniatura_raw(self, ruta, size=256):
         """Devuelve (QImage, hbitmap) permitiendo su uso seguro en QThreads (V1.0.3)"""
         try:
             ruta_canonica = ruta  # clave de la caché de BD (tal cual se indexó)
-            ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
-            if not ruta or not os.path.exists(ruta):
-                return None, 0
-
             ext = Path(ruta).suffix.lower()
 
-            # 0a. PDF/DWG en tamaño miniatura: caché de BD primero (V2.0.3).
-            # Ya está cocinada por el pase nocturno: instantánea y sin leer el
-            # archivo del NAS cada vez. El preview grande (size>256) sí
-            # renderiza en local para máxima calidad.
-            if size <= 256 and ext in ('.pdf', '.dwg'):
+            # 0a. TAMAÑO MINIATURA (tabla/galería): caché de BD PRIMERO, sin
+            # tocar el NAS (V2.0.3). Antes se probaba el shell de Windows —que
+            # lee el archivo del NAS— en cada búsqueda, y además se hacía un
+            # os.path.exists por cada fila: lento y causa de los cuelgues.
+            # El preview grande (size>256) sigue renderizando en local para
+            # máxima calidad más abajo.
+            if size <= 256 and ext in self._EXT_CACHEABLE:
                 try:
                     data = self.db.obtener_miniatura(ruta_canonica)
                     if data:
@@ -3255,6 +3295,12 @@ class BuscadorPiezas(QMainWindow):
                             return image, 0
                 except Exception as e:
                     logger.debug(f"Miniatura BD falló para {ruta_canonica}: {e}")
+
+            # A partir de aquí sí hace falta el archivo real (miss de caché o
+            # preview grande): resolvemos host y comprobamos existencia.
+            ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
+            if not ruta or not os.path.exists(ruta):
+                return None, 0
 
             # 0. PDF: renderizar la primera página SIEMPRE con PyMuPDF (V2.0.3).
             # El proveedor de miniaturas de Adobe registra su ICONO como si fuera
