@@ -2702,10 +2702,13 @@ class BuscadorPiezas(QMainWindow):
             with open(bat, "w", encoding="ascii", errors="strict") as f:
                 f.write("\r\n".join(lineas))
 
-            # Lanzar el .bat despegado (NET y LOC como argumentos Unicode)
+            # Lanzar el .bat despegado (NET y LOC como argumentos Unicode).
+            # cmd /s /c con TODO envuelto en comillas externas: a prueba de
+            # rutas con espacios también en el propio .bat (usuarios con
+            # espacios en el nombre tienen %TEMP% con espacios).
             DETACHED = 0x00000008
-            subprocess.Popen(["cmd", "/c", bat, RUTA_DESPLIEGUE_APP, local_dir],
-                             creationflags=DETACHED, close_fds=True)
+            linea = f'cmd /s /c ""{bat}" "{RUTA_DESPLIEGUE_APP}" "{local_dir}""'
+            subprocess.Popen(linea, creationflags=DETACHED, close_fds=True)
             self.close()
             QApplication.quit()
         except Exception as e:
