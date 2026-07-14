@@ -2649,41 +2649,63 @@ class BuscadorPiezas(QMainWindow):
             if resp != QMessageBox.Yes:
                 return
 
-            # Actualizador .bat: da un margen para que la app se cierre sola,
-            # FUERZA el cierre de cualquier instancia que quede (evita el bucle
-            # infinito si hay otra ventana abierta o un proceso colgado), copia
-            # los recursos y reabre.
+            # Actualizador .bat (V2.0.3, reescrito): contenido 100%% ASCII.
+            # La ruta de red lleva "BÚSQUEDA" con Ú: si se escribe DENTRO del
+            # bat, la página de códigos de la consola (cp850/65001 según el
+            # equipo) puede corromperla al parsear y todas las copias fallan
+            # en silencio (bug reportado). Pasándola como ARGUMENTO viaja en
+            # Unicode vía CreateProcess y es inmune a la codificación.
+            # Además: log en %%TEMP%%\alsi_update.log y verificación de la
+            # copia — si falla, lo dice en pantalla en vez de morir callado.
             bat = os.path.join(os.environ.get("TEMP", local_dir), "alsi_update.bat")
-            recursos = ["BuscadorPiezas.exe", "SwPropExtractor.exe",
+            recursos = ["SwPropExtractor.exe",
                         "SolidWorks.Interop.swdocumentmgr.dll", "config.ini",
                         "ALSI_BUSCADOR.ico", "reindexar_diario.py", "reindexar_tarea.bat"]
             lineas = [
                 "@echo off",
                 "setlocal",
-                'set "NET=' + RUTA_DESPLIEGUE_APP + '"',
-                'set "LOC=' + local_dir + '"',
+                'set "NET=%~1"',
+                'set "LOC=%~2"',
+                'set "LOG=%TEMP%\\alsi_update.log"',
                 'title Actualizando Buscador de Piezas ALSI...',
+                'echo ==== %date% %time% ==== > "%LOG%"',
+                'echo NET=[%NET%] >> "%LOG%"',
+                'echo LOC=[%LOC%] >> "%LOG%"',
                 "rem Margen para que la app se cierre por si misma",
-                "timeout /t 2 /nobreak >nul",
-                "rem Forzar cierre de cualquier instancia restante (extras o colgadas)",
+                "timeout /t 2 /nobreak >nul 2>&1",
+                "rem Forzar cierre de cualquier instancia restante",
                 'taskkill /F /IM BuscadorPiezas.exe >nul 2>&1',
                 'taskkill /F /IM SwPropExtractor.exe >nul 2>&1',
-                "timeout /t 1 /nobreak >nul",
-                'pushd "%NET%"',
+                "timeout /t 1 /nobreak >nul 2>&1",
+                'copy /Y "%NET%\\BuscadorPiezas.exe" "%LOC%\\BuscadorPiezas.exe.nuevo" >> "%LOG%" 2>&1',
+                'if not exist "%LOC%\\BuscadorPiezas.exe.nuevo" goto :fallo',
+                'move /Y "%LOC%\\BuscadorPiezas.exe.nuevo" "%LOC%\\BuscadorPiezas.exe" >> "%LOG%" 2>&1',
+                'if errorlevel 1 goto :fallo',
             ]
             for r in recursos:
-                lineas.append(f'copy /Y "%NET%\\{r}" "%LOC%\\" >nul 2>&1')
+                lineas.append(f'copy /Y "%NET%\\{r}" "%LOC%\\" >> "%LOG%" 2>&1')
             lineas += [
-                'popd',
+                'echo OK >> "%LOG%"',
                 'start "" "%LOC%\\BuscadorPiezas.exe"',
-                'del "%~f0"',
+                'del "%~f0" >nul 2>&1',
+                'exit /b 0',
+                ':fallo',
+                'echo FALLO_COPIA >> "%LOG%"',
+                'echo.',
+                'echo  [ERROR] No se pudo copiar la nueva version desde la red.',
+                'echo  Ejecuta INSTALAR_LOCAL.bat desde la carpeta de red.',
+                'echo  (Detalle en %LOG%)',
+                'echo.',
+                'pause',
+                'start "" "%LOC%\\BuscadorPiezas.exe"',
             ]
-            with open(bat, "w", encoding="cp850", errors="ignore") as f:
+            with open(bat, "w", encoding="ascii", errors="strict") as f:
                 f.write("\r\n".join(lineas))
 
-            # Lanzar el .bat despegado y cerrar la app
+            # Lanzar el .bat despegado (NET y LOC como argumentos Unicode)
             DETACHED = 0x00000008
-            subprocess.Popen(["cmd", "/c", bat], creationflags=DETACHED, close_fds=True)
+            subprocess.Popen(["cmd", "/c", bat, RUTA_DESPLIEGUE_APP, local_dir],
+                             creationflags=DETACHED, close_fds=True)
             self.close()
             QApplication.quit()
         except Exception as e:
