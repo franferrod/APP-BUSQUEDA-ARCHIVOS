@@ -909,21 +909,54 @@ class PreviewImagenLabel(QLabel):
 class ThumbnailWorker(QThread):
     # row, ruta, image (QImage), hbitmap (int)
     thumbnail_ready = pyqtSignal(int, str, object, int)
-    
-    def __init__(self, vistas_pendientes, method_extractor):
+
+    LOTE_BD = 400  # miniaturas de BD por consulta
+
+    def __init__(self, vistas_pendientes, method_extractor, db=None):
         super().__init__()
         self.vistas_pendientes = vistas_pendientes # list of (row, ruta)
         self.method_extractor = method_extractor
+        self.db = db  # V2.0.3: caché de BD por LOTES (rápido) antes del extractor
         self._cancelar = False
-        
+
     def cancelar(self):
         self._cancelar = True
-        
+
     def run(self):
         # Inicializa COM en este hilo para IShellItemImageFactory
         pythoncom.CoInitialize()
         try:
-            for row, ruta in self.vistas_pendientes:
+            pendientes = list(self.vistas_pendientes)
+
+            # FASE 1 (V2.0.3): resolver por LOTES contra la caché de BD — una
+            # consulta por cada 400 filas en vez de una por fila. La inmensa
+            # mayoría sale de aquí en decisegundos, sin tocar el NAS.
+            restantes = []
+            if self.db is not None:
+                for i in range(0, len(pendientes), self.LOTE_BD):
+                    if self._cancelar:
+                        return
+                    chunk = pendientes[i:i + self.LOTE_BD]
+                    try:
+                        lote = self.db.obtener_miniaturas_lote([r for _, r in chunk])
+                    except Exception as e:
+                        logger.debug(f"Lote de miniaturas BD falló: {e}")
+                        lote = {}
+                    for row, ruta in chunk:
+                        if self._cancelar:
+                            return
+                        data = lote.get(ruta)
+                        if data:
+                            image = QImage.fromData(data)
+                            if not image.isNull():
+                                self.thumbnail_ready.emit(row, ruta, image, 0)
+                                continue
+                        restantes.append((row, ruta))
+            else:
+                restantes = pendientes
+
+            # FASE 2: misses de caché → extracción clásica (shell/embebido/NAS)
+            for row, ruta in restantes:
                 if self._cancelar:
                     break
                 try:
@@ -932,6 +965,42 @@ class ThumbnailWorker(QThread):
                         self.thumbnail_ready.emit(row, ruta, image, hbitmap)
                 except Exception as e:
                     logger.debug(f"Error procesando miniatura en hilo para {ruta}: {e}")
+        finally:
+            pythoncom.CoUninitialize()
+
+
+class PreviewWorker(QThread):
+    """V2.0.3: el trabajo pesado del previsualizador (os.path.exists/getsize en
+    el NAS + render 1024px) corre fuera del hilo de UI. Antes clicar una pieza
+    congelaba la interfaz 1-2s. El preview muestra al instante la miniatura de
+    BD y este worker la mejora a alta calidad cuando llega."""
+    resultado = pyqtSignal(int, str, str, object, int)  # gen, ruta, tam_txt, QImage, hbitmap
+
+    def __init__(self, generacion, ruta, extractor):
+        super().__init__()
+        self.generacion = generacion
+        self.ruta = ruta
+        self.extractor = extractor
+
+    def run(self):
+        pythoncom.CoInitialize()
+        try:
+            ruta_local = ruta_accesible(self.ruta)
+            if not ruta_local or not os.path.exists(ruta_local):
+                self.resultado.emit(self.generacion, self.ruta, "No accesible", None, 0)
+                return
+            size = os.path.getsize(ruta_local)
+            if size < 1024:
+                tam = f"{size} B"
+            elif size < 1024 * 1024:
+                tam = f"{size / 1024:.1f} KB"
+            else:
+                tam = f"{size / (1024 * 1024):.1f} MB"
+            image, hbitmap = self.extractor(self.ruta, size=1024)
+            self.resultado.emit(self.generacion, self.ruta, tam, image, hbitmap)
+        except Exception as e:
+            logger.debug(f"PreviewWorker falló para {self.ruta}: {e}")
+            self.resultado.emit(self.generacion, self.ruta, "—", None, 0)
         finally:
             pythoncom.CoUninitialize()
 
@@ -3347,7 +3416,8 @@ class BuscadorPiezas(QMainWindow):
                     self._workers_muriendo = []
                 self._workers_muriendo.append(old)
                 old.finished.connect(lambda o=old: self._limpiar_worker_muerto(o))
-        self.thumb_worker = ThumbnailWorker(vistas_pendientes, self.extraer_miniatura_raw)
+        self.thumb_worker = ThumbnailWorker(vistas_pendientes, self.extraer_miniatura_raw,
+                                            db=self.db)  # V2.0.3: lotes de BD
         self.thumb_worker.thumbnail_ready.connect(self.on_thumbnail_ready)
         self.thumb_worker.start()
 
@@ -3650,9 +3720,19 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_preview_ruta.setText(ruta)
 
             # Mostrar miniatura cacheada inmediatamente o placeholder (V1.0.4 Fix)
-            # V2.0.3: primero la del preview (1024) y si no, la de tabla (256)
+            # V2.0.3: caché en memoria → caché de BD (2-5ms) → badge.
+            # La versión en alta calidad la trae el PreviewWorker justo después.
             pm_cache = (self.cache_miniaturas.get((ruta, 1024))
                         or self.cache_miniaturas.get((ruta, 256)))
+            if pm_cache is None and ext in self._EXT_CACHEABLE:
+                try:
+                    data_bd = self.db.obtener_miniatura(ruta)
+                    if data_bd:
+                        img_bd = QImage.fromData(data_bd)
+                        if not img_bd.isNull():
+                            pm_cache = QPixmap.fromImage(img_bd)
+                except Exception as e:
+                    logger.debug(f"Miniatura BD (preview instantáneo) falló: {e}")
             if pm_cache:
                 self._set_preview_imagen(pm_cache)
                 self.lbl_preview_icon.setText("")
@@ -3802,44 +3882,66 @@ class BuscadorPiezas(QMainWindow):
         self.btn_similares.setVisible(similares)
 
     def _actualizar_preview_recursos_pesados(self):
-        """Ejecutado por el timer_preview tras 100ms de inactividad (V1.0.5)"""
+        """Ejecutado por el timer_preview tras 100ms de inactividad (V1.0.5).
+        V2.0.3: lo pesado (NAS + render 1024) va a un PreviewWorker — el clic
+        en una pieza ya no congela la interfaz."""
         try:
             data = self.current_preview_data
             ruta = data.get('ruta')
             if not ruta: return
-            self._actualizar_info_documental(ruta)  # V2.0.3 (usa ruta canónica)
-            ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
+            self._actualizar_info_documental(ruta)  # consultas BD (~ms)
 
-            # Verificar existencia (IO Pesado en red)
-            if not os.path.exists(ruta):
-                 self.lbl_preview_tamaño.setText("No accesible")
-                 return
-
-            # Tamaño (V2.0.1: solo el valor, la etiqueta "Tamaño" ya está en el grid)
-            size = os.path.getsize(ruta)
-            if size < 1024:
-                self.lbl_preview_tamaño.setText(f"{size} B")
-            elif size < 1024 * 1024:
-                self.lbl_preview_tamaño.setText(f"{size / 1024:.1f} KB")
-            else:
-                self.lbl_preview_tamaño.setText(f"{size / (1024 * 1024):.1f} MB")
-
-            # Miniatura (Heavy IO) — V2.0.3: 1024 = calidad alta en el panel
-            # (PDF renderiza 4x, SW pide al shell tamaño grande); la tabla usa 256
-            pixmap = self.extraer_miniatura(ruta, size=1024)
-            if pixmap and not pixmap.isNull():
-                self._set_preview_imagen(pixmap)
-                self.lbl_preview_icon.setText("")
-                self.anim_opacity.stop()
-                self.preview_opacity.setOpacity(0.0)
-                self.anim_opacity.setStartValue(0.0)
-                self.anim_opacity.setEndValue(1.0)
-                self.anim_opacity.start()
-            else:
-                self.preview_opacity.setOpacity(1.0)
-
+            self._gen_preview = getattr(self, '_gen_preview', 0) + 1
+            worker = PreviewWorker(self._gen_preview, ruta, self.extraer_miniatura_raw)
+            worker.resultado.connect(self._on_preview_pesado)
+            if not hasattr(self, '_preview_workers'):
+                self._preview_workers = []
+            self._preview_workers.append(worker)
+            worker.finished.connect(lambda w=worker: self._limpiar_preview_worker(w))
+            worker.start()
         except Exception as e:
             logger.debug(f"Error en recursos diferidos: {e}")
+
+    def _limpiar_preview_worker(self, worker):
+        try:
+            self._preview_workers.remove(worker)
+        except (ValueError, AttributeError):
+            pass
+
+    def _on_preview_pesado(self, gen, ruta, tam_txt, image, hbitmap):
+        """Aplica el resultado del PreviewWorker si sigue siendo el vigente."""
+        try:
+            if gen != getattr(self, '_gen_preview', 0):
+                # obsoleto: liberar el HBITMAP si venía uno
+                if hbitmap:
+                    import ctypes
+                    from ctypes import c_void_p
+                    ctypes.windll.gdi32.DeleteObject.argtypes = [c_void_p]
+                    ctypes.windll.gdi32.DeleteObject(hbitmap)
+                return
+            self.lbl_preview_tamaño.setText(tam_txt)
+
+            pixmap = None
+            if hbitmap:
+                pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapPremultipliedAlpha)
+                if pixmap.isNull():
+                    pixmap = QtWin.fromHBITMAP(hbitmap, QtWin.HBitmapNoAlpha)
+                import ctypes
+                from ctypes import c_void_p
+                ctypes.windll.gdi32.DeleteObject.argtypes = [c_void_p]
+                ctypes.windll.gdi32.DeleteObject(hbitmap)
+            elif image is not None and not image.isNull():
+                pixmap = QPixmap.fromImage(image)
+
+            if pixmap and not pixmap.isNull():
+                if len(self.cache_miniaturas) > 100:
+                    self.cache_miniaturas.clear()
+                self.cache_miniaturas[(ruta, 1024)] = pixmap
+                self._set_preview_imagen(pixmap)
+                self.lbl_preview_icon.setText("")
+                self.preview_opacity.setOpacity(1.0)
+        except Exception as e:
+            logger.debug(f"Error aplicando preview pesado: {e}")
 
     # ═══════════════════════════════════════════
     # ACCIONES
@@ -3979,6 +4081,16 @@ class BuscadorPiezas(QMainWindow):
                 act_bom = QAction(svg_icon("ensamblaje-cubo"), "Ver componentes (despiece)", self)
                 act_bom.triggered.connect(lambda: self.mostrar_despiece(ruta_canonica))
                 menu.addAction(act_bom)
+                # V2.0.3: ensamblajes que comparten un alto % de piezas
+                act_sim_ens = QAction(svg_icon("comparar-balanza"), "Ensamblajes similares (piezas compartidas)", self)
+                act_sim_ens.triggered.connect(lambda: self.mostrar_ensamblajes_similares(ruta_canonica))
+                menu.addAction(act_sim_ens)
+
+            # V2.0.3: posibles duplicados geométricos (misma vista previa)
+            if ext_sel in ('.sldprt', '.sldasm'):
+                act_dup = QAction(svg_icon("copiar-nombre-lapiz"), "Buscar piezas idénticas (duplicados)", self)
+                act_dup.triggered.connect(lambda: self.mostrar_piezas_identicas(ruta_canonica))
+                menu.addAction(act_dup)
 
             # V2.0.2: comparar componentes de 2 ensamblajes seleccionados
             filas_sel = sorted({it.row() for it in self.tabla.selectedItems()})
@@ -4433,6 +4545,61 @@ class BuscadorPiezas(QMainWindow):
                 f"Similares_{os.path.splitext(nombre)[0]}.csv")
         except Exception as e:
             logger.error(f"Error en similares: {e}")
+
+    def mostrar_ensamblajes_similares(self, ruta_ens):
+        """V2.0.3: ensamblajes que comparten un alto % de piezas con el dado
+        (ignorando tornillería ultra-común). Para encontrar máquinas parecidas."""
+        try:
+            nombre = os.path.basename(ruta_ens)
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                filas = self.db.ensamblajes_similares(ruta_ens)
+            finally:
+                QApplication.restoreOverrideCursor()
+            datos = [(nom or os.path.basename(ruta), f"{pct}%", com,
+                      cli or "", etiqueta_origen(pro or "") if pro else "", anio or 0, ruta)
+                     for nom, pct, com, ns, nm, cli, pro, anio, ruta in filas]
+            self._dialogo_tabla(
+                "Ensamblajes similares",
+                f'Ensamblajes que comparten piezas con <span style="color:#E66C32;">{nombre}</span>'
+                f'<br><span style="font-size:11px; color:#999999;">% sobre el ensamblaje mayor · '
+                f'sin contar piezas ultra-comunes (tornillería)</span>',
+                f"{len(datos)} ensamblaje(s) con piezas en común",
+                ["Ensamblaje", "% común", "Piezas comunes", "Cliente", "Proyecto", "Año"],
+                datos,
+                f"Similares_{os.path.splitext(nombre)[0]}.csv")
+        except Exception as e:
+            logger.error(f"Error en ensamblajes similares: {e}")
+
+    def mostrar_piezas_identicas(self, ruta_pieza):
+        """V2.0.3: posibles duplicados geométricos — misma vista previa embebida
+        bit a bit ('copia exacta' si además coincide el tamaño de archivo)."""
+        try:
+            nombre = os.path.basename(ruta_pieza)
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                filas = self.db.piezas_identicas(ruta_pieza)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not filas:
+                self.toast.show_message(
+                    "Sin duplicados detectados.\n(Se compara la vista previa del archivo;\n"
+                    "si la pieza aún no tiene miniatura en caché, prueba mañana.)")
+                return
+            datos = [(nom, tipo, anio or 0, cli or "",
+                      etiqueta_origen(pro or "") if pro else "", ruta)
+                     for nom, tipo, anio, cli, pro, ruta in filas]
+            self._dialogo_tabla(
+                "Piezas idénticas (posibles duplicados)",
+                f'Duplicados de <span style="color:#E66C32;">{nombre}</span>'
+                f'<br><span style="font-size:11px; color:#999999;">misma vista previa embebida; '
+                f'"copia exacta" = también el mismo tamaño de archivo</span>',
+                f"{len(datos)} posible(s) duplicado(s)",
+                ["Pieza", "Coincidencia", "Año", "Cliente", "Proyecto"],
+                datos,
+                f"Duplicados_{os.path.splitext(nombre)[0]}.csv")
+        except Exception as e:
+            logger.error(f"Error en piezas idénticas: {e}")
 
     def mostrar_reutilizadas(self):
         """V2.0.3: ranking de piezas usadas en más proyectos que NO están en

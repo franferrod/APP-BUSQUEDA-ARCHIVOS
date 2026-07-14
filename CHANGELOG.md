@@ -1,6 +1,11 @@
 # Changelog - Buscador de Piezas ALSI
 
 ## [2.0.2] - 2026-07-13 (Despiece, comparación, miniaturas sin SolidWorks y PDFs)
+- **Previsualizador instantáneo**: al clicar una pieza, la imagen sale al momento de la caché en BD y la versión en alta calidad llega en segundo plano — clicar ya no congela la interfaz 1-2 s.
+- **Miniaturas de lista/galería por lotes**: el hilo de miniaturas las trae de la BD en bloques de 400 (una consulta por bloque) — cientos de miniaturas en décimas de segundo.
+- **"Ensamblajes similares"** (clic derecho en un ensamblaje): encuentra máquinas que comparten un alto % de piezas (ignorando tornillería común) — ideal para localizar diseños parecidos entre proyectos.
+- **"Buscar piezas idénticas"** (clic derecho): detecta duplicados — piezas con la misma vista previa embebida aunque tengan otro nombre ("copia exacta" si además pesa lo mismo el archivo).
+- **Placas CE al día**: la base de placas CE se actualiza cada tarde desde los Excel de NÚMEROS DE SERIE (2005-hoy); los documentos de años nuevos se detectan solos y un Excel ilegible no rompe nada.
 - **La app ya no se congela nunca al buscar**: la consulta corre en segundo plano y los resultados se pintan por tramos — puedes seguir usando la interfaz aunque la búsqueda tarde (Placa CE, 5000 resultados, galería...). Si encadenas búsquedas, siempre gana la última.
 - **Galería instantánea**: pintar miles de tarjetas congelaba la app ~10 s; ahora se rellena por tramos reutilizando los iconos ya resueltos (5000 tarjetas en ~0,1 s).
 - **Fix "Abrir/Insertar en SolidWorks"**: en algunos equipos daba "startfile: filepath should be string... not bool" — corregido.

@@ -221,6 +221,9 @@ class IndexManager:
                 'CREATE INDEX IF NOT EXISTS idx_ba_nombre_upper ON buscador.archivos(UPPER(nombre_archivo))',
                 # V2.0.3 - Código de pieza (primer token del nombre): plano/PDF de una pieza
                 "CREATE INDEX IF NOT EXISTS idx_ba_codigo ON buscador.archivos (UPPER(split_part(nombre_archivo, ' ', 1)))",
+                # V2.0.3 - Duplicados: mismo tamaño de archivo / misma miniatura (hash)
+                'CREATE INDEX IF NOT EXISTS idx_ba_tamano ON buscador.archivos(tamano_bytes)',
+                'CREATE INDEX IF NOT EXISTS idx_min_md5 ON buscador.miniaturas(md5(imagen))',
             ]
             for idx_sql in indices:
                 cursor.execute(idx_sql)
@@ -546,6 +549,96 @@ class IndexManager:
             return cursor.fetchall()
         except Exception as e:
             logger.error(f"Error buscando similares de {ruta_completa}: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def ensamblajes_similares(self, ensamblaje_ruta, limite=30):
+        """Ensamblajes que comparten un alto porcentaje de piezas con el dado
+        (V2.0.3). Ignora las piezas ultra-comunes (en >2000 ensamblajes:
+        arandelas, tornillería...) para que no dominen la señal. Filas:
+        (nombre, pct, comunes, n_suyo, n_mio, cliente, proyecto, anio, ruta)."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute('''
+                WITH mis AS (
+                    SELECT componente_nombre FROM buscador.componentes
+                    WHERE ensamblaje_ruta = %s
+                ),
+                raros AS (
+                    SELECT c.componente_nombre
+                    FROM buscador.componentes c
+                    WHERE c.componente_nombre IN (SELECT componente_nombre FROM mis)
+                    GROUP BY c.componente_nombre
+                    HAVING count(*) <= 2000
+                ),
+                cand AS (
+                    SELECT c2.ensamblaje_ruta, count(*) AS comunes
+                    FROM buscador.componentes c2
+                    JOIN raros r ON r.componente_nombre = c2.componente_nombre
+                    WHERE c2.ensamblaje_ruta <> %s
+                    GROUP BY c2.ensamblaje_ruta
+                    ORDER BY comunes DESC
+                    LIMIT 80
+                )
+                SELECT a.nombre_archivo, cand.comunes,
+                       (SELECT count(*) FROM buscador.componentes cc
+                        WHERE cc.ensamblaje_ruta = cand.ensamblaje_ruta) AS n_suyo,
+                       (SELECT count(*) FROM mis) AS n_mio,
+                       a.cliente, a.proyecto, a.anio, cand.ensamblaje_ruta
+                FROM cand
+                LEFT JOIN buscador.archivos a ON a.ruta_completa = cand.ensamblaje_ruta
+                ORDER BY cand.comunes DESC
+            ''', (ensamblaje_ruta, ensamblaje_ruta))
+            filas = []
+            for nom, comunes, n_suyo, n_mio, cliente, proyecto, anio, ruta in cursor.fetchall():
+                base = max(n_suyo or 0, n_mio or 0, 1)
+                pct = int(round(100.0 * comunes / base))
+                filas.append((nom, pct, comunes, n_suyo, n_mio, cliente, proyecto, anio, ruta))
+            filas.sort(key=lambda f: (-f[1], -f[2]))
+            return filas[:limite]
+        except Exception as e:
+            logger.error(f"Error en ensamblajes_similares de {ensamblaje_ruta}: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def piezas_identicas(self, ruta_completa):
+        """Posibles duplicados geométricos de la pieza (V2.0.3), por dos señales:
+        - 'archivo idéntico': misma extensión y mismo tamaño exacto de archivo
+          (copias renombradas).
+        - 'vista previa idéntica': misma miniatura embebida bit a bit (md5) —
+          los archivos copiados conservan el preview aunque cambie el nombre.
+        Filas: (nombre, coincidencia, anio, cliente, proyecto, ruta)."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            # Señal principal: misma miniatura embebida bit a bit (md5). El
+            # tamaño de archivo por sí solo da falsos positivos (verificado),
+            # así que solo se usa para CONFIRMAR ("copia exacta").
+            cursor.execute('''
+                SELECT a2.nombre_archivo, a2.anio, a2.cliente, a2.proyecto,
+                       a2.ruta_completa,
+                       (a2.tamano_bytes = a1.tamano_bytes) AS mismo_tamano
+                FROM buscador.miniaturas m1
+                JOIN buscador.miniaturas m2
+                  ON md5(m2.imagen) = md5(m1.imagen)
+                 AND m2.ruta_completa <> m1.ruta_completa
+                JOIN buscador.archivos a1 ON a1.ruta_completa = m1.ruta_completa
+                JOIN buscador.archivos a2 ON a2.ruta_completa = m2.ruta_completa
+                WHERE m1.ruta_completa = %s
+                ORDER BY a2.anio DESC NULLS LAST
+                LIMIT 200
+            ''', (ruta_completa,))
+            filas = []
+            for nom, anio, cli, pro, ruta, mismo_tam in cursor.fetchall():
+                etiqueta = "copia exacta" if mismo_tam else "vista previa idéntica"
+                filas.append((nom, etiqueta, anio, cli, pro, ruta))
+            filas.sort(key=lambda f: (0 if f[1] == "copia exacta" else 1, str(f[0])))
+            return filas
+        except Exception as e:
+            logger.error(f"Error en piezas_identicas de {ruta_completa}: {e}")
             return []
         finally:
             wrapper.close()

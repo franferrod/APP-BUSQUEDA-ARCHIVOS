@@ -458,6 +458,45 @@ def purgar_rutas_huerfanas(conn, cursor, origen, ruta_base):
     return len(huerfanas)
 
 
+def actualizar_placas_ce(conn, cursor):
+    """V2.0.3: refresco DIARIO de placas CE desde los Excel de NÚMEROS DE SERIE
+    (todos los años 2005-hoy; el escáner recorre las subcarpetas, así que los
+    documentos de años nuevos se recogen solos y los ilegibles se saltan con
+    aviso sin romper nada). SALVAGUARDA: si se leen 0 filas (NAS caído, carpeta
+    movida...) NO se borra lo existente."""
+    try:
+        from controllers import escanear_placas_ce, RUTA_NUMEROS_SERIE
+        base = resolver_ruta_nas(RUTA_NUMEROS_SERIE)
+        if not base:
+            logger.warning("Placas CE: carpeta NÚMEROS DE SERIE no accesible — se omite hoy.")
+            return 0
+        filas = escanear_placas_ce(base)
+        if not filas:
+            logger.warning("Placas CE: 0 filas leídas — se conserva lo existente.")
+            return 0
+        cursor.execute("DELETE FROM buscador.placas_ce")
+        cursor.executemany('''
+            INSERT INTO buscador.placas_ce
+                (num_placa, codigo_tipo, descripcion, cliente, anio, proyecto, orden, num_plano, archivo_origen)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (num_placa) DO UPDATE SET
+                codigo_tipo = EXCLUDED.codigo_tipo, descripcion = EXCLUDED.descripcion,
+                cliente = EXCLUDED.cliente, anio = EXCLUDED.anio, proyecto = EXCLUDED.proyecto,
+                orden = EXCLUDED.orden, num_plano = EXCLUDED.num_plano,
+                archivo_origen = EXCLUDED.archivo_origen, indexado_en = NOW()
+        ''', filas)
+        conn.commit()
+        logger.info(f"Placas CE actualizadas: {len(filas)} placas (2005-hoy).")
+        return len(filas)
+    except Exception as e:
+        logger.warning(f"Placas CE: fallo en la actualización diaria: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+
+
 def main():
     logger.info("=" * 60)
     logger.info("INICIO REINDEXACIÓN AUTOMÁTICA DIARIA")
@@ -537,6 +576,9 @@ def main():
                     logger.warning(f"  Limpieza satélite falló: {ex}")
         else:
             logger.warning(f"Ruta PROYECTOS no accesible: {RUTAS_NAS.get('PROYECTOS')}")
+
+        # 4. Placas CE (diario, barato: ~20 Excels) — V2.0.3
+        actualizar_placas_ce(conn, cursor)
 
         if not ok_origenes:
             # Ningún origen accesible: NO tocar el sello de "última indexación"
