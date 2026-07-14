@@ -3152,8 +3152,10 @@ class BuscadorPiezas(QMainWindow):
                 if data_bd:
                     img = QImage.fromData(data_bd)
                     if not img.isNull():
+                        # 160px = tamaño L de la galería (que reutiliza este icono);
+                        # en la tabla se muestra reducido sin pérdida
                         pm = QPixmap.fromImage(img).scaled(
-                            96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                            160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                         thumb_item.setIcon(QIcon(pm))
                         puesta = True
                 if not puesta:
