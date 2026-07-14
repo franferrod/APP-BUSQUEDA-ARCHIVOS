@@ -936,6 +936,29 @@ class ThumbnailWorker(QThread):
             pythoncom.CoUninitialize()
 
 
+class SearchWorker(QThread):
+    """V2.0.3: la consulta SQL corre fuera del hilo de UI — la app nunca se
+    congela buscando (Placa CE, filtros pesados, etc.). Cada búsqueda lleva un
+    número de generación: si el usuario encadena clics, las respuestas viejas
+    se descartan al llegar."""
+    listo = pyqtSignal(int, list)   # generacion, resultados
+    fallo = pyqtSignal(int, str)    # generacion, mensaje
+
+    def __init__(self, generacion, controller, args, kwargs):
+        super().__init__()
+        self.generacion = generacion
+        self.controller = controller
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+        try:
+            resultados = self.controller.perform_search(*self.args, **self.kwargs)
+            self.listo.emit(self.generacion, resultados or [])
+        except Exception as e:
+            self.fallo.emit(self.generacion, str(e))
+
+
 # -----------------------------------------------------------------------------
 # TOAST NOTIFICATION WIDGET (V1.0.8)
 # -----------------------------------------------------------------------------
@@ -2242,13 +2265,30 @@ class BuscadorPiezas(QMainWindow):
         self.qsettings.setValue("galeria_tam", index)
 
     def _sincronizar_galeria(self):
-        """Reconstruye las tarjetas de la galería a partir de la tabla (fuente de verdad).
-        La miniatura usa la caché si existe; si no, el badge de extensión."""
+        """Reconstruye las tarjetas de la galería a partir de la tabla (fuente
+        de verdad), POR TRAMOS para no congelar la UI con miles de tarjetas
+        (V2.0.3: pintar 5000 tarjetas de golpe congelaba la app ~10s)."""
+        self._gen_galeria = getattr(self, '_gen_galeria', 0) + 1
+        self.galeria.blockSignals(True)
+        self.galeria.clear()
+        self.galeria.blockSignals(False)
+        self._galeria_items = {}
+        self._gal_fill = {'gen': self._gen_galeria, 'r': 0}
+        self._llenar_tramo_galeria()
+
+    _TRAMO_TARJETAS = 400
+
+    def _llenar_tramo_galeria(self):
+        st = getattr(self, '_gal_fill', None)
+        if not st or st['gen'] != getattr(self, '_gen_galeria', 0):
+            return  # relevada por otra sincronización
         try:
             self.galeria.blockSignals(True)
-            self.galeria.clear()
-            self._galeria_items = {}
-            for r in range(self.tabla.rowCount()):
+            self.galeria.setUpdatesEnabled(False)
+            total = self.tabla.rowCount()
+            ini = st['r']
+            fin = min(ini + self._TRAMO_TARJETAS, total)
+            for r in range(ini, fin):
                 item_ruta = self.tabla.item(r, 0)
                 item_nombre = self.tabla.item(r, 5)
                 if not item_ruta or not item_nombre:
@@ -2263,8 +2303,10 @@ class BuscadorPiezas(QMainWindow):
                 card.setData(Qt.UserRole, ruta)
                 card.setToolTip(f"{nombre}\n{meta}\n{ruta}")
                 card.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
-                if (ruta, 256) in self.cache_miniaturas:
-                    card.setIcon(QIcon(self.cache_miniaturas[(ruta, 256)]))
+                icono_tabla = self.tabla.item(r, 4)
+                if icono_tabla and not icono_tabla.icon().isNull():
+                    # Reutilizar el icono ya resuelto en la tabla (BD o badge)
+                    card.setIcon(icono_tabla.icon())
                 else:
                     ext = Path(nombre).suffix.lower()
                     if ext not in self._badge_cache:
@@ -2272,10 +2314,15 @@ class BuscadorPiezas(QMainWindow):
                     card.setIcon(self._badge_cache[ext])
                 self.galeria.addItem(card)
                 self._galeria_items[ruta] = card
-            self.galeria.blockSignals(False)
+            st['r'] = fin
         except Exception as e:
-            self.galeria.blockSignals(False)
             logger.debug(f"Error sincronizando galería: {e}")
+            st['r'] = self.tabla.rowCount()  # abortar tramos restantes
+        finally:
+            self.galeria.setUpdatesEnabled(True)
+            self.galeria.blockSignals(False)
+        if st['r'] < self.tabla.rowCount():
+            QTimer.singleShot(0, self._llenar_tramo_galeria)
 
     def _set_preview_imagen(self, pixmap):
         """Muestra la miniatura en el label auto-contenido (paintEvent la ajusta)."""
@@ -2824,6 +2871,15 @@ class BuscadorPiezas(QMainWindow):
                 except (TypeError, RuntimeError):
                     pass
                 self.thumb_worker.wait(1000)
+            # V2.0.3: esperar brevemente a los search workers (evita
+            # 'QThread destroyed while running' al cerrar en plena búsqueda)
+            for w in list(getattr(self, '_search_workers', [])):
+                try:
+                    w.listo.disconnect(self._on_resultados_busqueda)
+                    w.fallo.disconnect(self._on_error_busqueda)
+                except (TypeError, RuntimeError):
+                    pass
+                w.wait(1500)
         except Exception as e:
             logger.debug(f"Error deteniendo tareas al cerrar: {e}")
         self.save_window_state()
@@ -2993,60 +3049,101 @@ class BuscadorPiezas(QMainWindow):
             tratamientos_sel = self.get_selected_items(self.list_tratamientos) or None
             espesores_sel = self.get_selected_items(self.list_espesores) or None
 
-            t0_busqueda = time.time()  # V2.0.0: cronómetro de búsqueda
-            resultados = self.controller.perform_search(
-                termino,
-                comp_sel,
-                años_sel,
-                extensiones,
-                carpetas_sel,
-                clientes_sel,
-                proyectos_sel,
-                None, # ordenes
-                props_fabricacion,
-                props_bandas,
-                materiales_sel,
-                tratamientos_sel,
-                espesores_sel,
-                solo_placa_ce=self.btn_placa_ce.isChecked()  # V2.1.0
-            )
-            
-            # Prealocar filas de golpe (mucho más rápido que insertRow en bucle)
-            self.tabla.setRowCount(len(resultados))
-            vistas_pendientes = []
+            # V2.0.3: la consulta corre en un SearchWorker (hilo aparte) — la UI
+            # no se congela nunca. Generación para descartar respuestas viejas
+            # si se encadenan búsquedas/filtros.
+            self._gen_busqueda = getattr(self, '_gen_busqueda', 0) + 1
+            gen = self._gen_busqueda
+            if not hasattr(self, '_busquedas_ctx'):
+                self._busquedas_ctx = {}
+            self._busquedas_ctx[gen] = {'termino': termino, 'auto': auto, 't0': time.time()}
 
-            # V2.0.3: precargar miniaturas de la caché de BD en UNA consulta y
-            # ponerlas directas (sin parpadeo badge→miniatura ni relectura del
-            # NAS). Cap para no cargar el hilo de UI en búsquedas enormes: el
-            # resto las trae el worker (también de BD, en segundo plano).
-            minis_bd = {}
-            if len(resultados) <= 300:
-                try:
-                    minis_bd = self.db.obtener_miniaturas_lote(
-                        [d[10] for d in resultados if d[10]])
-                except Exception as e:
-                    logger.debug(f"Precarga de miniaturas falló: {e}")
+            args = (termino, comp_sel, años_sel, extensiones, carpetas_sel,
+                    clientes_sel, proyectos_sel, None, props_fabricacion,
+                    props_bandas, materiales_sel, tratamientos_sel, espesores_sel)
+            worker = SearchWorker(gen, self.controller, args,
+                                  {'solo_placa_ce': self.btn_placa_ce.isChecked()})
+            worker.listo.connect(self._on_resultados_busqueda)
+            worker.fallo.connect(self._on_error_busqueda)
+            if not hasattr(self, '_search_workers'):
+                self._search_workers = []
+            self._search_workers.append(worker)
+            worker.finished.connect(lambda w=worker: self._limpiar_search_worker(w))
+            worker.start()
 
-            for row, data in enumerate(resultados):
-                # V1.0.5 Final Clean Mapping:
+        except Exception as e:
+            self.lbl_status.setText("❌ Error en la búsqueda")
+            self.tabla.setRowCount(0)
+            QMessageBox.critical(self, "Error de Búsqueda",
+                               f"Se ha producido un error al realizar la búsqueda:\n\n{str(e)}\n\n"
+                               "Si el error persiste, intenta actualizar el índice.")
+
+    def _limpiar_search_worker(self, worker):
+        try:
+            self._search_workers.remove(worker)
+        except (ValueError, AttributeError):
+            pass
+
+    def _on_error_busqueda(self, gen, mensaje):
+        if gen != getattr(self, '_gen_busqueda', 0):
+            return  # búsqueda superada por otra más reciente
+        self._busquedas_ctx.pop(gen, None)
+        self.lbl_status.setText("❌ Error en la búsqueda")
+        self.tabla.setRowCount(0)
+        QMessageBox.critical(self, "Error de Búsqueda",
+                             f"Se ha producido un error al realizar la búsqueda:\n\n{mensaje}\n\n"
+                             "Si el error persiste, intenta actualizar el índice.")
+
+    def _on_resultados_busqueda(self, gen, resultados):
+        """Llega la respuesta del SearchWorker: pintar por TRAMOS para que la
+        UI siga viva aunque haya 5000 filas (V2.0.3)."""
+        if gen != getattr(self, '_gen_busqueda', 0):
+            self._busquedas_ctx.pop(gen, None)
+            return  # obsoleta: hay una búsqueda más nueva en curso
+        ctx = self._busquedas_ctx.pop(gen, {})
+
+        self.tabla.setSortingEnabled(False)
+        self.tabla.setRowCount(len(resultados))
+
+        # Precarga de miniaturas de BD en UNA consulta (sin parpadeo). Cap para
+        # no cargar el hilo de UI; el resto las trae el ThumbnailWorker.
+        minis_bd = {}
+        if len(resultados) <= 300:
+            try:
+                minis_bd = self.db.obtener_miniaturas_lote(
+                    [d[10] for d in resultados if d[10]])
+            except Exception as e:
+                logger.debug(f"Precarga de miniaturas falló: {e}")
+
+        self._fill = {'gen': gen, 'res': resultados, 'i': 0,
+                      'vistas': [], 'minis': minis_bd, 'ctx': ctx}
+        self._llenar_tramo_tabla()
+
+    _TRAMO_FILAS = 600  # filas por tanda de pintado
+
+    def _llenar_tramo_tabla(self):
+        """Pinta un tramo de filas y cede el control al event loop (V2.0.3)."""
+        st = getattr(self, '_fill', None)
+        if not st or st['gen'] != getattr(self, '_gen_busqueda', 0):
+            return  # una búsqueda más nueva ha tomado el relevo
+        resultados = st['res']
+        minis_bd = st['minis']
+        vistas_pendientes = st['vistas']
+        ini = st['i']
+        fin = min(ini + self._TRAMO_FILAS, len(resultados))
+
+        self.tabla.setUpdatesEnabled(False)
+        try:
+            for row in range(ini, fin):
+                data = resultados[row]
                 # [nombre, comp, año, cliente, proy, tipo, codProy, nomProy, codOrd, nomOrd, ruta]
-                
-                # Columna oculta 0: Ruta
                 ruta = data[10]
                 self.tabla.setItem(row, 0, QTableWidgetItem(ruta))
-
-                # Columna oculta 1: Orden Original
                 self.tabla.setItem(row, 1, QTableWidgetItem(str(row).zfill(6)))
-
-                # Columna oculta 2: Cod Proy
                 self.tabla.setItem(row, 2, QTableWidgetItem(str(data[6]) if data[6] else ""))
-
-                # Columna oculta 3: Nom Proy
                 self.tabla.setItem(row, 3, QTableWidgetItem(str(data[7]) if data[7] else ""))
 
-                # Columna 4: Vista. V2.0.3: miniatura de BD directa si está en la
-                # precarga; si no, badge de extensión y se deja pendiente para el
-                # worker (miss de caché → shell/extracción).
+                # Columna 4: Vista — miniatura de BD directa o badge + pendiente
                 thumb_item = QTableWidgetItem()
                 thumb_item.setData(Qt.UserRole, ruta)
                 thumb_item.setTextAlignment(Qt.AlignCenter)
@@ -3055,7 +3152,6 @@ class BuscadorPiezas(QMainWindow):
                 if data_bd:
                     img = QImage.fromData(data_bd)
                     if not img.isNull():
-                        # Escalar al tamaño de vista (memoria acotada: ~96px)
                         pm = QPixmap.fromImage(img).scaled(
                             96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                         thumb_item.setIcon(QIcon(pm))
@@ -3067,75 +3163,64 @@ class BuscadorPiezas(QMainWindow):
                     thumb_item.setIcon(self._badge_cache[ext_badge])
                     vistas_pendientes.append((row, ruta))
                 self.tabla.setItem(row, 4, thumb_item)
-                
-                # Resto de columnas visibles:
+
                 map_cols = {
-                    0: 5,  # nombre_archivo -> col 5
-                    1: 6,  # compañero -> col 6 (Origen)
-                    2: 7,  # año -> col 7
-                    3: 8,  # cliente -> col 8
-                    4: 9,  # proyecto -> col 9
-                    5: 20, # tipo_carpeta -> col 20 (FINAL STRETCH)
-                    11: 11, # sw_material -> col 11
-                    12: 12, # sw_tratamiento -> col 12
-                    13: 13, # sw_espesor -> col 13
-                    14: 14, # sw_laser -> col 14
-                    15: 15, # sw_torno -> col 15
-                    16: 16, # sw_fresa -> col 16
-                    17: 17, # sw_soldadura -> col 17
-                    18: 18, # sw_pintura -> col 18
-                    19: 19, # sw_montaje -> col 19
+                    0: 5, 1: 6, 2: 7, 3: 8, 4: 9, 5: 20,
+                    11: 11, 12: 12, 13: 13, 14: 14, 15: 15,
+                    16: 16, 17: 17, 18: 18, 19: 19,
                 }
                 for i_data, i_tabla in map_cols.items():
                     val = data[i_data]
                     texto = str(val) if val else ""
-                    # V2.0.0: etiquetas unificadas (PROYECTOS / BIBLIOTECA 3D /
-                    # ALSI ESTANDAR) en las columnas Origen (6) y Proyecto (9)
                     if i_tabla in (6, 9) and texto:
                         texto = etiqueta_origen(texto)
-                    item = QTableWidgetItem(texto)
-                    self.tabla.setItem(row, i_tabla, item)
-                    
-                # Combinar Orden y Nombre Orden en la columna 10
+                    self.tabla.setItem(row, i_tabla, QTableWidgetItem(texto))
+
                 cod_ord = str(data[8]) if data[8] else ""
                 nom_ord = str(data[9]) if data[9] else ""
-                orden_completa = f"{cod_ord} {nom_ord}".strip()
-                self.tabla.setItem(row, 10, QTableWidgetItem(orden_completa))
-            
-            # Lanzamos hilo de miniaturas (V2.0.3: swap sin bloquear la UI)
-            self._swap_thumb_worker(vistas_pendientes)
-            
-            # Re-activar ordenación después de cargar datos
-            self.tabla.setSortingEnabled(True)
+                self.tabla.setItem(row, 10, QTableWidgetItem(f"{cod_ord} {nom_ord}".strip()))
+        finally:
+            self.tabla.setUpdatesEnabled(True)
 
-            # V2.0.0: refrescar galería si es la vista activa
-            if self.stack_vistas.currentIndex() == 1:
-                self._sincronizar_galeria()
-            
-            if len(resultados) >= 5000:
-                self.lbl_status.setText("⚠ Mostrando 5000 de 5000+ resultados. Refina tu búsqueda.")
-            else:
-                self.lbl_status.setText("Listo")
-                
-            # V2.0.0: contador con separador de miles + tiempo de búsqueda (toque pro)
-            n_fmt = f"{len(resultados):,}".replace(",", ".")
-            dt_txt = f"{time.time() - t0_busqueda:.2f}".replace(".", ",")
-            self.lbl_count.setText(f"{n_fmt} resultados · {dt_txt} s")
-            if not resultados and termino:
-                txt = f"No se encontraron resultados para '{termino}'"
-                self.lbl_status.setText(txt)
+        st['i'] = fin
+        if fin < len(resultados):
+            self.lbl_status.setText(f"Cargando resultados… {fin}/{len(resultados)}")
+            QTimer.singleShot(0, self._llenar_tramo_tabla)
+        else:
+            self._finalizar_busqueda()
 
-            # V2.0.1: refrescar barra de contexto y recientes
-            self._actualizar_chips_contexto()
-            if not auto and termino and resultados:
-                self._push_reciente(termino)
-                
-        except Exception as e:
-            self.lbl_status.setText("❌ Error en la búsqueda")
-            self.tabla.setRowCount(0)
-            QMessageBox.critical(self, "Error de Búsqueda", 
-                               f"Se ha producido un error al realizar la búsqueda:\n\n{str(e)}\n\n"
-                               "Si el error persiste, intenta actualizar el índice.")
+    def _finalizar_busqueda(self):
+        """Cierre de la búsqueda: miniaturas pendientes, galería, contadores."""
+        st = getattr(self, '_fill', None)
+        if not st or st['gen'] != getattr(self, '_gen_busqueda', 0):
+            return
+        resultados = st['res']
+        ctx = st['ctx']
+        termino = ctx.get('termino', '')
+        auto = ctx.get('auto', False)
+        t0_busqueda = ctx.get('t0', time.time())
+
+        self._swap_thumb_worker(st['vistas'])
+        self.tabla.setSortingEnabled(True)
+
+        # Refrescar galería si es la vista activa (también por tramos)
+        if self.stack_vistas.currentIndex() == 1:
+            self._sincronizar_galeria()
+
+        if len(resultados) >= 5000:
+            self.lbl_status.setText("⚠ Mostrando 5000 de 5000+ resultados. Refina tu búsqueda.")
+        else:
+            self.lbl_status.setText("Listo")
+
+        n_fmt = f"{len(resultados):,}".replace(",", ".")
+        dt_txt = f"{time.time() - t0_busqueda:.2f}".replace(".", ",")
+        self.lbl_count.setText(f"{n_fmt} resultados · {dt_txt} s")
+        if not resultados and termino:
+            self.lbl_status.setText(f"No se encontraron resultados para '{termino}'")
+
+        self._actualizar_chips_contexto()
+        if not auto and termino and resultados:
+            self._push_reciente(termino)
 
     # ═══════════════════════════════════════════
     # INDEXACIÓN (Cambio 2: modal selectivo + cancelar)
@@ -3912,8 +3997,10 @@ class BuscadorPiezas(QMainWindow):
             ruta = ruta_accesible(ruta_canonica)
             if ruta and os.path.exists(ruta):
                 menu.addSeparator()
+                # OJO: triggered pasa 'checked' (bool) como 1er argumento — hay que
+                # absorberlo o os.startfile recibiría True (bug reportado V2.0.2)
                 menu.addAction(svg_icon("arrastrar-solidworks"), "Abrir/Insertar en SolidWorks").triggered.connect(
-                    lambda r=ruta: os.startfile(r)
+                    lambda checked=False, r=ruta: os.startfile(r)
                 )
 
             # Export selection option

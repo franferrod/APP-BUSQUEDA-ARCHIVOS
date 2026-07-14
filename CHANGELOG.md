@@ -1,6 +1,9 @@
 # Changelog - Buscador de Piezas ALSI
 
 ## [2.0.2] - 2026-07-13 (Despiece, comparación, miniaturas sin SolidWorks y PDFs)
+- **La app ya no se congela nunca al buscar**: la consulta corre en segundo plano y los resultados se pintan por tramos — puedes seguir usando la interfaz aunque la búsqueda tarde (Placa CE, 5000 resultados, galería...). Si encadenas búsquedas, siempre gana la última.
+- **Galería instantánea**: pintar miles de tarjetas congelaba la app ~10 s; ahora se rellena por tramos reutilizando los iconos ya resueltos (5000 tarjetas en ~0,1 s).
+- **Fix "Abrir/Insertar en SolidWorks"**: en algunos equipos daba "startfile: filepath should be string... not bool" — corregido.
 - **Miniaturas al instante desde la base de datos**: las miniaturas de la lista y la galería ahora se sirven de la caché en BD sin releer el NAS en cada búsqueda (antes se regeneraban una y otra vez). Búsquedas más rápidas y sin tirones.
 - **Fin de los cuelgues al encadenar filtros/botones**: el cambio de miniaturas ya no bloquea la interfaz al hacer búsquedas o tocar filtros seguidos.
 - **Barra de título oscura**: la ventana principal y todos los diálogos usan la barra de título en oscuro, a juego con la app (se acabó la franja blanca de Windows).
