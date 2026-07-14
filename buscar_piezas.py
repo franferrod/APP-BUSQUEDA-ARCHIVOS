@@ -24,7 +24,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QDialog, QDialogButtonBox, QSplitter, QGroupBox, QFrame, QScrollArea,
                              QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser, QFileDialog, QListView, QGraphicsDropShadowEffect,
                              QStyledItemDelegate, QStyleOptionViewItem, QStyle, QButtonGroup, QStackedWidget)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent, QSettings, QRect
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent, QSettings, QRect, QObject
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage, QPainter, QPen, QPalette
 from PyQt5.QtWidgets import QFileIconProvider
 import pythoncom
@@ -4015,30 +4015,45 @@ class BuscadorPiezas(QMainWindow):
             lay.addWidget(lbl_n)
 
             tabla = QTableWidget()
-            tabla.setColumnCount(5)
-            tabla.setHorizontalHeaderLabels(["Componente", "Cliente", "Proyecto", "Año", "Origen"])
+            tabla.setColumnCount(6)
+            tabla.setHorizontalHeaderLabels(["Vista", "Componente", "Cliente", "Proyecto", "Año", "Origen"])
             tabla.setRowCount(len(filas))
             tabla.setEditTriggers(QTableWidget.NoEditTriggers)
             tabla.setSelectionBehavior(QTableWidget.SelectRows)
             tabla.verticalHeader().setVisible(False)
-            tabla.setSortingEnabled(True)
+            tabla.setIconSize(QSize(48, 48))
+            tabla.verticalHeader().setDefaultSectionSize(54)
+            # V2.0.3: miniaturas desde la caché de BD (un solo query para todos)
+            minis = self.db.obtener_miniaturas_lote([f[6] for f in filas if f[6]])
             for i, (comp, nom_a, origen, anio, cliente, proyecto, ruta_c) in enumerate(filas):
-                it0 = QTableWidgetItem(comp)
-                it0.setData(Qt.UserRole, ruta_c or "")
+                it_vista = QTableWidgetItem()
+                it_vista.setData(Qt.UserRole, ruta_c or "")
+                data_img = minis.get(ruta_c)
+                if data_img:
+                    img = QImage.fromData(data_img)
+                    if not img.isNull():
+                        it_vista.setIcon(QIcon(QPixmap.fromImage(img)))
+                else:
+                    ext = os.path.splitext(comp)[1].lower()
+                    it_vista.setIcon(QIcon(pixmap_badge_extension(ext, size=44)))
+                it1 = QTableWidgetItem(comp)
+                it1.setData(Qt.UserRole, ruta_c or "")
                 celdas = [
-                    it0,
+                    it_vista, it1,
                     QTableWidgetItem(cliente or ("—" if nom_a else "no indexado")),
                     QTableWidgetItem(etiqueta_origen(proyecto or "") if proyecto else "—"),
                     QTableWidgetItem(str(anio) if anio else "—"),
                     QTableWidgetItem(etiqueta_origen(origen or "") if origen else "—"),
                 ]
                 for j, it in enumerate(celdas):
-                    if not nom_a:  # componente no encontrado en el índice
+                    if not nom_a and j >= 1:  # componente no encontrado en el índice
                         it.setForeground(QColor("#888888"))
                     tabla.setItem(i, j, it)
-            tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-            for j in (1, 2, 3, 4):
+            tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            for j in (2, 3, 4, 5):
                 tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
+            tabla.setSortingEnabled(True)
             lay.addWidget(tabla, stretch=1)
 
             if not filas:
@@ -4548,6 +4563,39 @@ class BuscadorPiezas(QMainWindow):
 
     # Eliminadas funciones duplicadas y closeEvent que sobreescribía el original.
 
+def aplicar_barra_titulo_oscura(hwnd):
+    """Pone la barra de título nativa de Windows en modo oscuro (V2.0.3).
+    Usa DWMWA_USE_IMMERSIVE_DARK_MODE (attr 20 en Win10 2004+/Win11, 19 en
+    versiones anteriores). Silencioso si no está disponible."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        dwm = ctypes.windll.dwmapi
+        dwm.DwmSetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD,
+                                              ctypes.c_void_p, wintypes.DWORD]
+        valor = ctypes.c_int(1)
+        for attr in (20, 19):
+            hr = dwm.DwmSetWindowAttribute(wintypes.HWND(int(hwnd)), attr,
+                                           ctypes.byref(valor), ctypes.sizeof(valor))
+            if hr == 0:
+                break
+    except Exception:
+        pass
+
+
+class _TemaBarraTitulo(QObject):
+    """Filtro de eventos: aplica la barra de título oscura a CADA ventana de la
+    app (principal, diálogos, QMessageBox, menús desplegables) al mostrarse."""
+    def eventFilter(self, obj, event):
+        try:
+            if event.type() in (QEvent.Show, QEvent.WinIdChange) \
+                    and isinstance(obj, QWidget) and obj.isWindow():
+                aplicar_barra_titulo_oscura(obj.winId())
+        except Exception:
+            pass
+        return False
+
+
 if __name__ == "__main__":
     # V2.0.0: registrar avisos de Qt (p.ej. detalles de parseo QSS) en el log
     from PyQt5.QtCore import qInstallMessageHandler
@@ -4557,6 +4605,10 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
+    # V2.0.3: barra de título oscura en todas las ventanas (fin de la franja blanca)
+    _tema_barra = _TemaBarraTitulo()
+    app.installEventFilter(_tema_barra)
 
     # V2.0.0 - Fuentes de marca + tema oscuro ALSI
     cargar_fuentes_marca()
@@ -4570,5 +4622,6 @@ if __name__ == "__main__":
         app.setStyleSheet(MODERN_QSS)
 
     window = BuscadorPiezas()
+    aplicar_barra_titulo_oscura(window.winId())  # V2.0.3: sin parpadeo blanco inicial
     window.show()
     sys.exit(app.exec_())

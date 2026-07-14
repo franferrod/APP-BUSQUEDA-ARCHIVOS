@@ -351,6 +351,23 @@ class IndexManager:
                 imagen = EXCLUDED.imagen, mtime = EXCLUDED.mtime, actualizado = NOW()
         ''', (ruta_completa, psycopg2.Binary(imagen_bytes), mtime))
 
+    def obtener_miniaturas_lote(self, rutas):
+        """Dict {ruta: bytes} de las miniaturas cacheadas para esa lista de
+        rutas (una sola consulta). Para diálogos con muchos ítems (V2.0.3)."""
+        if not rutas:
+            return {}
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute("SELECT ruta_completa, imagen FROM buscador.miniaturas "
+                           "WHERE ruta_completa = ANY(%s)", (list(rutas),))
+            return {r[0]: bytes(r[1]) for r in cursor.fetchall() if r[1]}
+        except Exception as e:
+            logger.debug(f"Error leyendo miniaturas en lote: {e}")
+            return {}
+        finally:
+            wrapper.close()
+
     def obtener_miniatura(self, ruta_completa):
         """Bytes de la miniatura cacheada en BD, o None si no existe."""
         wrapper = self.get_connection()

@@ -1,6 +1,8 @@
 # Changelog - Buscador de Piezas ALSI
 
 ## [2.0.2] - 2026-07-13 (Despiece, comparación, miniaturas sin SolidWorks y PDFs)
+- **Barra de título oscura**: la ventana principal y todos los diálogos usan la barra de título en oscuro, a juego con la app (se acabó la franja blanca de Windows).
+- **Miniaturas en el despiece**: el diálogo "Ver componentes" muestra la miniatura de cada componente.
 - **Miniaturas en equipos SIN SolidWorks**: las miniaturas de piezas, ensamblajes y planos ahora también se ven en ordenadores que no tienen SolidWorks instalado (se sirven desde una caché central en la base de datos, alimentada por la indexación nocturna). De regalo: miniaturas más rápidas para todos.
 - **Previsualización de DWG**: las miniaturas y el previsualizador muestran el dibujo embebido en el propio DWG (sin necesidad de AutoCAD), en lugar del icono.
 - **Previsualización de STEP/IGES**: miniaturas 3D sombreadas (vista isométrica) generadas automáticamente por la indexación nocturna — visibles en todos los equipos sin ningún programa CAD.
