@@ -29,6 +29,35 @@ RUTAS_NAS = {
     'ALSI_ESTANDAR': r'\\192.168.1.10\Oficina Tecnica\ALSI ESTANDAR',
 }
 
+# V2.0.3: hosts del NAS a probar (IP y nombre) y reintentos, para que un hipo
+# puntual de SMB no deje la reindexación en 0 (como pasó el 13-jul, con el pase
+# nocturno saturando el NAS a la misma hora). Igual que el fallback de la app.
+NAS_HOSTS = ["192.168.1.10", "NASCENTRAL"]
+
+
+def resolver_ruta_nas(ruta, reintentos=3, espera=5):
+    """Devuelve una variante accesible de la ruta (probando IP y NASCENTRAL,
+    con reintentos ante fallos transitorios), o None si de verdad no se llega."""
+    candidatas = [ruta]
+    for host in NAS_HOSTS:
+        alt = re.sub(r'\\\\[^\\]+\\', rf'\\\\{host}\\', ruta, count=1)
+        if alt not in candidatas:
+            candidatas.append(alt)
+    for intento in range(reintentos):
+        for cand in candidatas:
+            try:
+                if os.path.exists(cand):
+                    if intento > 0 or cand != ruta:
+                        logger.info(f"  NAS accesible como: {cand} (intento {intento+1})")
+                    return cand
+            except Exception:
+                pass
+        if intento < reintentos - 1:
+            logger.warning(f"  NAS no responde para {ruta} — reintento en {espera}s "
+                           f"({intento+1}/{reintentos})")
+            time.sleep(espera)
+    return None
+
 CARPETAS_EXCLUIDAS = {
     'ARCHIVOS REPETIDOS', 'REVISION MIGRACION', '__pycache__',
     'BACKUPS', 'build', 'dist', '.git',
@@ -463,25 +492,29 @@ def main():
         sys.exit(1)
 
     total = 0
+    ok_origenes = set()  # V2.0.3: solo estos actualizan el sello de "última indexación"
     try:
         # 1. BIBLIOTECA_3D (completa)
-        ruta = RUTAS_NAS.get('BIBLIOTECA_3D')
-        if ruta and os.path.exists(ruta):
+        ruta = resolver_ruta_nas(RUTAS_NAS.get('BIBLIOTECA_3D'))
+        if ruta:
             total += indexar_completo(conn, cursor, 'BIBLIOTECA_3D', ruta)
+            ok_origenes.add('BIBLIOTECA_3D')
         else:
-            logger.warning(f"Ruta BIBLIOTECA_3D no accesible: {ruta}")
+            logger.warning(f"Ruta BIBLIOTECA_3D no accesible: {RUTAS_NAS.get('BIBLIOTECA_3D')}")
 
         # 2. ALSI_ESTANDAR (completa)
-        ruta = RUTAS_NAS.get('ALSI_ESTANDAR')
-        if ruta and os.path.exists(ruta):
+        ruta = resolver_ruta_nas(RUTAS_NAS.get('ALSI_ESTANDAR'))
+        if ruta:
             total += indexar_completo(conn, cursor, 'ALSI_ESTANDAR', ruta)
+            ok_origenes.add('ALSI_ESTANDAR')
         else:
-            logger.warning(f"Ruta ALSI_ESTANDAR no accesible: {ruta}")
+            logger.warning(f"Ruta ALSI_ESTANDAR no accesible: {RUTAS_NAS.get('ALSI_ESTANDAR')}")
 
         # 3. PROYECTOS (solo recientes)
-        ruta = RUTAS_NAS.get('PROYECTOS')
-        if ruta and os.path.exists(ruta):
+        ruta = resolver_ruta_nas(RUTAS_NAS.get('PROYECTOS'))
+        if ruta:
             total += indexar_proyectos_recientes(conn, cursor, ruta)
+            ok_origenes.add('PROYECTOS')
             # V2.0.3: los VIERNES, barrido de purga — el incremental nunca borra,
             # así que sin esto los archivos eliminados del NAS quedan de fantasmas
             if datetime.datetime.now().weekday() == 4:
@@ -503,10 +536,20 @@ def main():
                 except Exception as ex:
                     logger.warning(f"  Limpieza satélite falló: {ex}")
         else:
-            logger.warning(f"Ruta PROYECTOS no accesible: {ruta}")
+            logger.warning(f"Ruta PROYECTOS no accesible: {RUTAS_NAS.get('PROYECTOS')}")
 
-        # Actualizar estado
-        for origen in RUTAS_NAS:
+        if not ok_origenes:
+            # Ningún origen accesible: NO tocar el sello de "última indexación"
+            # (si no, el footer se pondría verde engañosamente). Salir con error
+            # para que la tarea programada figure como fallida y sea visible.
+            logger.error("NINGÚN origen del NAS accesible — no se actualiza el estado. "
+                         "Revisar red/SMB en el equipo indexador.")
+            conn.commit()
+            conn.close()
+            sys.exit(2)
+
+        # Actualizar estado SOLO de los orígenes realmente indexados
+        for origen in ok_origenes:
             cursor.execute('''
                 INSERT INTO buscador.estado_indexacion (origen, ruta_base, ultima_indexacion, archivos_indexados)
                 VALUES (%s, %s, %s, %s)
