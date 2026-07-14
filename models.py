@@ -219,6 +219,8 @@ class IndexManager:
                 'CREATE INDEX IF NOT EXISTS idx_comp_ensamblaje ON buscador.componentes(ensamblaje_ruta)',
                 # V2.0.2 - Despiece: cruce componente_nombre -> archivos por nombre en mayúsculas
                 'CREATE INDEX IF NOT EXISTS idx_ba_nombre_upper ON buscador.archivos(UPPER(nombre_archivo))',
+                # V2.0.3 - Código de pieza (primer token del nombre): plano/PDF de una pieza
+                "CREATE INDEX IF NOT EXISTS idx_ba_codigo ON buscador.archivos (UPPER(split_part(nombre_archivo, ' ', 1)))",
             ]
             for idx_sql in indices:
                 cursor.execute(idx_sql)
@@ -396,6 +398,137 @@ class IndexManager:
             return cursor.fetchall()
         except Exception as e:
             logger.error(f"Error obteniendo componentes de {ensamblaje_ruta}: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    # ═══════════════════════════════════════════════════════════════════
+    # ANÁLISIS SOBRE DATOS YA INDEXADOS (V2.0.3)
+    # ═══════════════════════════════════════════════════════════════════
+    @staticmethod
+    def _codigo_de_nombre(nombre_archivo):
+        """Primer token del nombre si parece un código de pieza ALSI
+        (contiene dígitos y puntos, ej. '23018.P166', 'CTS.E164'). None si no."""
+        import re as _re
+        token = (nombre_archivo or "").split(' ', 1)[0].strip()
+        if _re.match(r'^[A-Za-z0-9\-]+(\.[A-Za-z0-9\-]+)+$', token) and _re.search(r'\d', token):
+            return token.upper()
+        return None
+
+    def buscar_documentacion_de(self, nombre_archivo):
+        """Planos (.slddrw) y PDFs con el mismo código que la pieza.
+        Filas: (extension, ruta_completa). Vacío si el nombre no lleva código."""
+        codigo = self._codigo_de_nombre(nombre_archivo)
+        if not codigo:
+            return []
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute('''
+                SELECT extension, ruta_completa FROM buscador.archivos
+                WHERE UPPER(split_part(nombre_archivo, ' ', 1)) = %s
+                  AND extension IN ('.slddrw', '.pdf')
+                ORDER BY extension LIMIT 6
+            ''', (codigo,))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.debug(f"Error buscando documentación de {nombre_archivo}: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def resumen_componentes(self, ensamblaje_ruta):
+        """(total_componentes, no_indexados) del ensamblaje — para avisar de
+        referencias rotas en el preview sin abrir el despiece."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute('''
+                SELECT count(*),
+                       count(*) FILTER (WHERE NOT EXISTS (
+                           SELECT 1 FROM buscador.archivos a
+                           WHERE UPPER(a.nombre_archivo) = c.componente_nombre))
+                FROM buscador.componentes c
+                WHERE c.ensamblaje_ruta = %s
+            ''', (ensamblaje_ruta,))
+            fila = cursor.fetchone()
+            return (fila[0], fila[1]) if fila else (0, 0)
+        except Exception as e:
+            logger.debug(f"Error en resumen_componentes de {ensamblaje_ruta}: {e}")
+            return (0, 0)
+        finally:
+            wrapper.close()
+
+    def piezas_mas_reutilizadas(self, limite=50):
+        """Ranking de piezas usadas en más proyectos distintos y que NO están en
+        biblioteca/estándar — candidatas a estandarizar. Filas:
+        (componente_nombre, n_proyectos, n_ensamblajes, ruta_ejemplo)."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute('''
+                SELECT c.componente_nombre,
+                       COUNT(DISTINCT a.proyecto) AS n_proy,
+                       COUNT(DISTINCT c.ensamblaje_ruta) AS n_ens,
+                       (SELECT b.ruta_completa FROM buscador.archivos b
+                        WHERE UPPER(b.nombre_archivo) = c.componente_nombre
+                        ORDER BY b.anio DESC NULLS LAST LIMIT 1) AS ruta_ejemplo
+                FROM buscador.componentes c
+                JOIN buscador.archivos a ON a.ruta_completa = c.ensamblaje_ruta
+                WHERE a.origen = 'PROYECTOS'
+                  AND NOT EXISTS (SELECT 1 FROM buscador.archivos e
+                                  WHERE UPPER(e.nombre_archivo) = c.componente_nombre
+                                    AND e.origen IN ('ALSI_ESTANDAR', 'BIBLIOTECA_3D'))
+                GROUP BY c.componente_nombre
+                HAVING COUNT(DISTINCT a.proyecto) >= 2
+                ORDER BY n_proy DESC, n_ens DESC
+                LIMIT %s
+            ''', (limite,))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error en piezas_mas_reutilizadas: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def buscar_similares(self, ruta_completa, limite=60):
+        """Piezas con el mismo material + espesor + patrón de procesos que la
+        dada (excluyéndola). Filas: (nombre, anio, cliente, proyecto, ruta)."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute('''SELECT sw_material, sw_espesor, sw_laser, sw_torno,
+                                     sw_fresa, sw_soldadura, sw_pintura
+                              FROM buscador.archivos WHERE ruta_completa = %s''',
+                           (ruta_completa,))
+            fila = cursor.fetchone()
+            if not fila or not fila[0]:
+                return None  # sin material: no hay base para comparar
+            material, espesor = fila[0], fila[1]
+            procesos = fila[2:]
+            condiciones = ["extension = '.sldprt'", "ruta_completa <> %s", "sw_material = %s"]
+            params = [ruta_completa, material]
+            if espesor:
+                condiciones.append("sw_espesor = %s")
+                params.append(espesor)
+            for col, val in zip(('sw_laser', 'sw_torno', 'sw_fresa', 'sw_soldadura', 'sw_pintura'),
+                                procesos):
+                if val:
+                    condiciones.append(f"{col} = %s")
+                    params.append(val)
+                else:
+                    condiciones.append(f"({col} IS NULL OR {col} = '' OR {col} ILIKE 'NO')")
+            params.append(limite)
+            cursor.execute(f'''
+                SELECT nombre_archivo, anio, cliente, proyecto, ruta_completa
+                FROM buscador.archivos
+                WHERE {' AND '.join(condiciones)}
+                ORDER BY anio DESC NULLS LAST, nombre_archivo
+                LIMIT %s
+            ''', params)
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error buscando similares de {ruta_completa}: {e}")
             return []
         finally:
             wrapper.close()

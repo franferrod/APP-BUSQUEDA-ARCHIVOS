@@ -5,6 +5,11 @@
 - **Previsualización de DWG**: las miniaturas y el previsualizador muestran el dibujo embebido en el propio DWG (sin necesidad de AutoCAD), en lugar del icono.
 - **Previsualización de STEP/IGES**: miniaturas 3D sombreadas (vista isométrica) generadas automáticamente por la indexación nocturna — visibles en todos los equipos sin ningún programa CAD.
 - **Previsualización de PDFs**: el previsualizador y las miniaturas muestran la primera página real del PDF (antes solo el icono de Adobe), sin necesidad de tener Adobe instalado.
+- **Indicador "sin plano"**: el previsualizador muestra si la pieza/ensamblaje tiene plano (.slddrw) y PDF con su mismo código, con enlace "abrir" directo — y avisa en ámbar si no tiene documentación. Detecta trabajo pendiente antes de que taller lo eche en falta.
+- **Aviso de referencias rotas**: al seleccionar un ensamblaje, el previsualizador muestra cuántos componentes tiene y avisa (⚠) si alguno ya no existe en el índice (pieza borrada o renombrada).
+- **"Piezas similares"**: botón en el previsualizador que lista piezas con el mismo material, espesor y procesos de fabricación — para reaprovechar en vez de rediseñar.
+- **Botón "Análisis" → "Piezas más reutilizadas"**: ranking de las piezas usadas en más proyectos que NO están en la biblioteca — candidatas a estandarizar, exportable a CSV.
+- **Ctrl+C copia el código + nombre sin extensión** ("23018.P166 Pletina sujeción"), listo para pegar en correos o el ERP.
 - **"Ver componentes (despiece)"**: clic derecho sobre un ensamblaje muestra su lista de piezas (BOM) al instante — con cliente, proyecto, año y origen de cada componente — sin abrir SolidWorks. Doble clic abre la carpeta de la pieza y botón "Exportar CSV" para llevarlo a Excel. Los componentes con referencia rota o fuera del índice se marcan en gris.
 - **"Comparar componentes de los 2 ensamblajes"**: seleccionando dos ensamblajes, el clic derecho ofrece un diff de componentes — qué piezas tiene solo A, solo B y cuáles comparten (ej. qué cambió entre la cinta de 2023 y la de 2025). Exportable a CSV con matriz de presencia.
 - **Fix indexado de propiedades SW**: el reindexado automático guardaba en blanco las propiedades con acentos (LÁSER=SÍ, SOLDADURA=SÍ...) por un error de codificación; los filtros de fabricación no devolvían resultados. Corregido y repoblado el histórico.

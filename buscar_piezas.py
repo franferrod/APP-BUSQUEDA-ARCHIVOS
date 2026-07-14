@@ -1761,6 +1761,18 @@ class BuscadorPiezas(QMainWindow):
         self.btn_exportar.setCursor(Qt.PointingHandCursor)
         toolbar_layout.addWidget(self.btn_exportar)
 
+        # V2.0.3: análisis sobre datos ya indexados
+        self.btn_analisis = QPushButton("Análisis")
+        self.btn_analisis.setIcon(svg_icon("fabricacion", size=15))
+        self.btn_analisis.setToolTip("Análisis sobre el índice (candidatas a biblioteca...)")
+        self.btn_analisis.setCursor(Qt.PointingHandCursor)
+        self.menu_analisis = QMenu(self)
+        self.menu_analisis.addAction(
+            svg_icon("capas-tipos"), "Piezas más reutilizadas (candidatas a biblioteca)",
+            self.mostrar_reutilizadas)
+        self.btn_analisis.setMenu(self.menu_analisis)
+        toolbar_layout.addWidget(self.btn_analisis)
+
         # Contenedor central: toolbar + stack de vistas (Lista / Galería)
         self.stack_vistas = QStackedWidget()
         self.stack_vistas.addWidget(self.tabla)
@@ -1846,9 +1858,12 @@ class BuscadorPiezas(QMainWindow):
         self.meta_grid.setVerticalSpacing(6)
         self.meta_grid.setColumnStretch(1, 1)
         self._meta_vals = {}
+        self._meta_keys = {}
         for fila, (clave, etiqueta) in enumerate([
             ('origen', 'Origen'), ('anio', 'Año'), ('cliente', 'Cliente'),
-            ('proyecto', 'Proyecto'), ('orden', 'Orden'), ('tamano', 'Tamaño')]):
+            ('proyecto', 'Proyecto'), ('orden', 'Orden'), ('tamano', 'Tamaño'),
+            # V2.0.3: documentación de la pieza y salud del ensamblaje
+            ('plano', 'Plano'), ('comps', 'Componentes')]):
             lbl_k = QLabel(etiqueta)
             lbl_k.setObjectName("MetaKey")
             lbl_v = QLabel("—")
@@ -1857,10 +1872,20 @@ class BuscadorPiezas(QMainWindow):
             self.meta_grid.addWidget(lbl_k, fila, 0, Qt.AlignTop)
             self.meta_grid.addWidget(lbl_v, fila, 1, Qt.AlignTop)
             self._meta_vals[clave] = lbl_v
+            self._meta_keys[clave] = lbl_k
+        # Los enlaces "abrir" de Plano seleccionan el archivo en el Explorador
+        self._meta_vals['plano'].linkActivated.connect(self._abrir_en_explorer)
+        # V2.0.3: botón "Piezas similares" (solo piezas con material indexado)
+        self.btn_similares = QPushButton("Piezas similares")
+        self.btn_similares.setIcon(svg_icon("buscar", size=14))
+        self.btn_similares.setCursor(Qt.PointingHandCursor)
+        self.btn_similares.setVisible(False)
+        self.btn_similares.clicked.connect(self.mostrar_similares)
         self.meta_widget = QWidget()
         self.meta_widget.setLayout(self.meta_grid)
         self.meta_widget.setVisible(False)
         preview_layout.addWidget(self.meta_widget)
+        preview_layout.addWidget(self.btn_similares, alignment=Qt.AlignLeft)
 
         # Ruta completa (discreta, seleccionable)
         self.lbl_preview_ruta = QLabel("")
@@ -3603,12 +3628,53 @@ class BuscadorPiezas(QMainWindow):
             header.setSortIndicator(logicalIndex, Qt.AscendingOrder)
             self.tabla.sortItems(logicalIndex, Qt.AscendingOrder)
 
+    def _actualizar_info_documental(self, ruta_canonica):
+        """V2.0.3: filas 'Plano' y 'Componentes' del preview + botón similares.
+        Consultas indexadas (~ms) sobre datos ya en BD."""
+        ext = Path(ruta_canonica).suffix.lower()
+        nombre = os.path.basename(ruta_canonica)
+        fila_plano = fila_comps = False
+        similares = False
+        try:
+            if ext in ('.sldprt', '.sldasm'):
+                codigo = self.db._codigo_de_nombre(nombre)
+                if codigo:
+                    docs = self.db.buscar_documentacion_de(nombre)
+                    partes = []
+                    for d_ext, d_ruta in docs:
+                        etq = "plano" if d_ext == '.slddrw' else d_ext.lstrip('.').upper()
+                        partes.append(f'✓ {etq} <a href="{d_ruta}" style="color:#E66C32;">abrir</a>')
+                    if partes:
+                        self._meta_vals['plano'].setText(" · ".join(partes))
+                    else:
+                        self._meta_vals['plano'].setText(
+                            '<span style="color:#C7A23F;">✗ sin plano ni PDF</span>')
+                    fila_plano = True
+                similares = (ext == '.sldprt')
+            if ext == '.sldasm':
+                total, rotos = self.db.resumen_componentes(ruta_canonica)
+                if total:
+                    if rotos:
+                        self._meta_vals['comps'].setText(
+                            f'{total} · <span style="color:#C7A23F;">⚠ {rotos} no indexado(s)</span>')
+                    else:
+                        self._meta_vals['comps'].setText(str(total))
+                    fila_comps = True
+        except Exception as e:
+            logger.debug(f"Error en info documental de {ruta_canonica}: {e}")
+        self._meta_keys['plano'].setVisible(fila_plano)
+        self._meta_vals['plano'].setVisible(fila_plano)
+        self._meta_keys['comps'].setVisible(fila_comps)
+        self._meta_vals['comps'].setVisible(fila_comps)
+        self.btn_similares.setVisible(similares)
+
     def _actualizar_preview_recursos_pesados(self):
         """Ejecutado por el timer_preview tras 100ms de inactividad (V1.0.5)"""
         try:
             data = self.current_preview_data
             ruta = data.get('ruta')
             if not ruta: return
+            self._actualizar_info_documental(ruta)  # V2.0.3 (usa ruta canónica)
             ruta = ruta_accesible(ruta)  # V2.0.1: host accesible (IP/NASCENTRAL)
 
             # Verificar existencia (IO Pesado en red)
@@ -4117,14 +4183,138 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.error(f"Error comparando {ruta_a} vs {ruta_b}: {e}")
 
+    def _dialogo_tabla(self, titulo, cab_html, subtexto, columnas, filas_datos,
+                       nombre_csv, col_ruta_userrole=0):
+        """Diálogo genérico de resultados tabulares (V2.0.3): tabla ordenable,
+        doble clic abre carpeta (UserRole de la col indicada), Exportar CSV.
+        filas_datos: lista de tuplas; el último elemento de cada tupla es la
+        ruta para abrir (no se muestra como columna)."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(titulo)
+        dlg.resize(840, 560)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        cab = QLabel(cab_html)
+        cab.setTextFormat(Qt.RichText)
+        cab.setStyleSheet(
+            f'font-family: "{FUENTES["h2"]}"; font-size: 14px; font-weight: 800; '
+            f'color: #F5F5F5; background: transparent;')
+        cab.setWordWrap(True)
+        lay.addWidget(cab)
+
+        lbl_n = QLabel(subtexto)
+        lbl_n.setObjectName("StatusDim")
+        lay.addWidget(lbl_n)
+
+        tabla = QTableWidget()
+        tabla.setColumnCount(len(columnas))
+        tabla.setHorizontalHeaderLabels(columnas)
+        tabla.setRowCount(len(filas_datos))
+        tabla.setEditTriggers(QTableWidget.NoEditTriggers)
+        tabla.setSelectionBehavior(QTableWidget.SelectRows)
+        tabla.verticalHeader().setVisible(False)
+        tabla.setSortingEnabled(True)
+        for i, fila in enumerate(filas_datos):
+            ruta_abrir = fila[-1]
+            for j, val in enumerate(fila[:-1]):
+                it = QTableWidgetItem()
+                if isinstance(val, int):
+                    it.setData(Qt.DisplayRole, val)  # ordena numéricamente
+                else:
+                    it.setText(str(val) if val else "—")
+                if j == col_ruta_userrole:
+                    it.setData(Qt.UserRole, ruta_abrir or "")
+                tabla.setItem(i, j, it)
+        tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        for j in range(1, len(columnas)):
+            tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
+        lay.addWidget(tabla, stretch=1)
+
+        def abrir_sel():
+            it = tabla.item(tabla.currentRow(), col_ruta_userrole) if tabla.currentRow() >= 0 else None
+            if it and it.data(Qt.UserRole):
+                self._abrir_en_explorer(it.data(Qt.UserRole))
+        tabla.itemDoubleClicked.connect(lambda _: abrir_sel())
+
+        footer = QHBoxLayout()
+        btn_export = QPushButton("Exportar CSV")
+        btn_export.setIcon(svg_icon("exportar-descargar", size=15))
+        btn_export.setCursor(Qt.PointingHandCursor)
+        btn_export.clicked.connect(lambda: self._export_csv_generico(
+            columnas + ["Ruta"], [tuple(f[:-1]) + (f[-1] or "",) for f in filas_datos], nombre_csv))
+        footer.addWidget(btn_export)
+        footer.addStretch()
+        btn_abrir = QPushButton("Abrir carpeta")
+        btn_abrir.setIcon(svg_icon("carpeta", size=15))
+        btn_abrir.setCursor(Qt.PointingHandCursor)
+        btn_abrir.clicked.connect(abrir_sel)
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setCursor(Qt.PointingHandCursor)
+        btn_cerrar.clicked.connect(dlg.accept)
+        footer.addWidget(btn_abrir)
+        footer.addWidget(btn_cerrar)
+        lay.addLayout(footer)
+        dlg.exec_()
+
+    def mostrar_similares(self):
+        """V2.0.3: piezas con el mismo material + espesor + procesos que la
+        seleccionada. Evita rediseñar lo que ya existe."""
+        try:
+            row = self.tabla.currentRow()
+            if row < 0:
+                return
+            ruta = self.tabla.item(row, 0).text()
+            nombre = os.path.basename(ruta)
+            filas = self.db.buscar_similares(ruta)
+            if filas is None:
+                self.toast.show_message("La pieza no tiene material indexado:\nno hay base para comparar.")
+                return
+            datos = [(nom, anio or 0, cli or "", etiqueta_origen(pro or "") if pro else "", rr)
+                     for nom, anio, cli, pro, rr in filas]
+            self._dialogo_tabla(
+                "Piezas similares",
+                f'Similares a <span style="color:#E66C32;">{nombre}</span>'
+                f'<br><span style="font-size:11px; color:#999999;">mismo material, espesor y procesos de fabricación</span>',
+                f"{len(datos)} pieza(s) encontradas",
+                ["Pieza", "Año", "Cliente", "Proyecto"],
+                datos,
+                f"Similares_{os.path.splitext(nombre)[0]}.csv")
+        except Exception as e:
+            logger.error(f"Error en similares: {e}")
+
+    def mostrar_reutilizadas(self):
+        """V2.0.3: ranking de piezas usadas en más proyectos que NO están en
+        biblioteca/estándar — candidatas a estandarizar."""
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                filas = self.db.piezas_mas_reutilizadas(50)
+            finally:
+                QApplication.restoreOverrideCursor()
+            datos = [(nom, n_proy, n_ens, ruta or "") for nom, n_proy, n_ens, ruta in filas]
+            self._dialogo_tabla(
+                "Candidatas a biblioteca",
+                'Piezas más reutilizadas <span style="color:#E66C32;">fuera de la biblioteca</span>',
+                f"Top {len(datos)} piezas presentes en 2+ proyectos y que no están en "
+                f"ALSI ESTANDAR ni BIBLIOTECA 3D — candidatas a estandarizar",
+                ["Pieza", "Proyectos", "Ensamblajes"],
+                datos,
+                "Candidatas_a_biblioteca.csv")
+        except Exception as e:
+            logger.error(f"Error en reutilizadas: {e}")
+
     def copiar_nombre_seleccionado(self):
-        """Acción proactiva: copiar solo el nombre del archivo"""
+        """Acción proactiva: copiar el nombre del archivo SIN extensión
+        (V2.0.3: 'código + descripción' listo para pegar en correos/ERP)"""
         row = self.tabla.currentRow()
         if row >= 0:
             nombre = self.tabla.item(row, 5).text() # Columna 5 = Nombre
-            QApplication.clipboard().setText(nombre)
-            self.lbl_status.setText(f"✅ Nombre copiado: {nombre}")
-            self.toast.show_message(f"✅ Nombre copiado:\n{nombre}")
+            limpio = os.path.splitext(nombre)[0].strip()
+            QApplication.clipboard().setText(limpio)
+            self.lbl_status.setText(f"✅ Nombre copiado: {limpio}")
+            self.toast.show_message(f"✅ Nombre copiado:\n{limpio}")
 
     # ═══════════════════════════════════════════
     # AYUDA E INFORMACIÓN (V1.0)
