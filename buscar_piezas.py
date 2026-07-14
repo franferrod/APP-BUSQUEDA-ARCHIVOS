@@ -2357,6 +2357,22 @@ class BuscadorPiezas(QMainWindow):
             total = self.tabla.rowCount()
             ini = st['r']
             fin = min(ini + self._TRAMO_TARJETAS, total)
+
+            # V2.0.3: lote de miniaturas de BD para ESTE tramo (una consulta).
+            # A 160px fijos: nítidas en tamaño L y con memoria acotada. El icono
+            # de la celda de tabla NO sirve aquí (está reducido a ~50px y Qt no
+            # amplía: salían miniaturas enanas).
+            rutas_tramo = []
+            for r in range(ini, fin):
+                it = self.tabla.item(r, 0)
+                if it:
+                    rutas_tramo.append(it.text())
+            minis_bd = {}
+            try:
+                minis_bd = self.db.obtener_miniaturas_lote(rutas_tramo)
+            except Exception as e:
+                logger.debug(f"Lote de galería falló: {e}")
+
             for r in range(ini, fin):
                 item_ruta = self.tabla.item(r, 0)
                 item_nombre = self.tabla.item(r, 5)
@@ -2372,15 +2388,24 @@ class BuscadorPiezas(QMainWindow):
                 card.setData(Qt.UserRole, ruta)
                 card.setToolTip(f"{nombre}\n{meta}\n{ruta}")
                 card.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
-                icono_tabla = self.tabla.item(r, 4)
-                if icono_tabla and not icono_tabla.icon().isNull():
-                    # Reutilizar el icono ya resuelto en la tabla (BD o badge)
-                    card.setIcon(icono_tabla.icon())
-                else:
-                    ext = Path(nombre).suffix.lower()
-                    if ext not in self._badge_cache:
-                        self._badge_cache[ext] = QIcon(pixmap_badge_extension(ext, size=48))
-                    card.setIcon(self._badge_cache[ext])
+                icono_puesto = False
+                data_bd = minis_bd.get(ruta)
+                if data_bd:
+                    img = QImage.fromData(data_bd)
+                    if not img.isNull():
+                        card.setIcon(QIcon(QPixmap.fromImage(img).scaled(
+                            160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                        icono_puesto = True
+                if not icono_puesto:
+                    pm_full = self.cache_miniaturas.get((ruta, 256))
+                    if pm_full and not pm_full.isNull():
+                        card.setIcon(QIcon(pm_full.scaled(
+                            160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                    else:
+                        ext = Path(nombre).suffix.lower()
+                        if ext not in self._badge_cache:
+                            self._badge_cache[ext] = QIcon(pixmap_badge_extension(ext, size=48))
+                        card.setIcon(self._badge_cache[ext])
                 self.galeria.addItem(card)
                 self._galeria_items[ruta] = card
             st['r'] = fin
@@ -3788,6 +3813,13 @@ class BuscadorPiezas(QMainWindow):
                 pixmap = QPixmap.fromImage(image)
 
             if pixmap and not pixmap.isNull():
+                # V2.0.3: acotar memoria — a 160px (nítido en galería L) en vez
+                # del pixmap completo; con 5000 resultados la diferencia es de
+                # cientos de MB. La caché limita a ~100 entradas igualmente.
+                pixmap = pixmap.scaled(160, 160, Qt.KeepAspectRatio,
+                                       Qt.SmoothTransformation)
+                if len(self.cache_miniaturas) > 100:
+                    self.cache_miniaturas.clear()
                 self.cache_miniaturas[(ruta, 256)] = pixmap
 
                 # Poner miniatura en la celda correcta (busca por ruta, no por row)
