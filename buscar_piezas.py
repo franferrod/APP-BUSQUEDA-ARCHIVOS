@@ -1884,6 +1884,7 @@ class BuscadorPiezas(QMainWindow):
         self.galeria.customContextMenuRequested.connect(
             lambda pos: self.mostrar_menu_contextual(pos, origen_widget=self.galeria))
         self._galeria_items = {}  # ruta -> QListWidgetItem (para actualizar miniaturas)
+        self._items_vista = {}    # V2.0.3: ruta -> QTableWidgetItem col. Vista (O(1))
         self.stack_vistas.addWidget(self.galeria)
 
         contenedor_central = QWidget()
@@ -2499,7 +2500,10 @@ class BuscadorPiezas(QMainWindow):
             "QPushButton { background: transparent; border: none; color: #F0A377; "
             "font-weight: 800; font-size: 13px; padding: 0; } "
             "QPushButton:hover { color: #FFFFFF; }")
-        btn.clicked.connect(on_reset)
+        # V2.0.3: clicked(bool) pasa 'checked' como 1er argumento posicional y
+        # pisaba el default de las lambdas tipo 'lambda lw=lw:' (llegaba False
+        # en vez del widget → "'bool' object has no attribute 'blockSignals'")
+        btn.clicked.connect(lambda *_args, cb=on_reset: cb())
         lay.addWidget(lbl)
         lay.addWidget(btn)
         return marco
@@ -3223,6 +3227,7 @@ class BuscadorPiezas(QMainWindow):
 
         self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(resultados))
+        self._items_vista = {}  # V2.0.3: se reconstruye al llenar la tabla
 
         # Precarga de miniaturas de BD en UNA consulta (sin parpadeo). Cap para
         # no cargar el hilo de UI; el resto las trae el ThumbnailWorker.
@@ -3284,6 +3289,7 @@ class BuscadorPiezas(QMainWindow):
                     thumb_item.setIcon(self._badge_cache[ext_badge])
                     vistas_pendientes.append((row, ruta))
                 self.tabla.setItem(row, 4, thumb_item)
+                self._items_vista[ruta] = thumb_item
 
                 map_cols = {
                     0: 5, 1: 6, 2: 7, 3: 8, 4: 9, 5: 20,
@@ -3804,14 +3810,24 @@ class BuscadorPiezas(QMainWindow):
 
     def set_cell_thumbnail(self, ruta, pixmap):
         """Helper para poner el pixmap como icono del QTableWidgetItem de la celda Vista (V1.0.4 Fix).
-        Busca la fila por el UserRole(ruta) almacenado en la columna 0."""
+        V2.0.3: acceso O(1) por el índice ruta->item. Antes recorría las 5000
+        filas por CADA miniatura que llegaba del worker (25M comparaciones en
+        el hilo de UI con búsquedas grandes) — era LA causa de que la app se
+        quedara pillada tras una búsqueda con miles de resultados."""
         try:
             scaled = pixmap.scaled(50, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             icon = QIcon(scaled)
+            item_vista = self._items_vista.get(ruta)
+            if item_vista is not None:
+                try:
+                    item_vista.setIcon(icon)
+                    return
+                except RuntimeError:
+                    self._items_vista.pop(ruta, None)  # item destruido (tabla repoblada)
+            # Fallback: barrido clásico por si el índice no tiene la ruta
             for r in range(self.tabla.rowCount()):
                 item_ruta = self.tabla.item(r, 0)
                 if item_ruta and item_ruta.text() == ruta:
-                    # Aplicamos el icono en la columna VISTA (4)
                     item_vista = self.tabla.item(r, 4)
                     if item_vista:
                         item_vista.setIcon(icon)

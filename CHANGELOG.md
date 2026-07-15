@@ -1,5 +1,10 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.3] - en preparación
+- **Fix filtro Placa CE con planos antiguos**: el filtro solo reconocía planos con formato moderno (`26047.E107`); las placas cuyo plano usa el formato antiguo con segmento intermedio (`20029.530.E017`), prefijo de letras (`TRD-002.E000`, `CRV520-001.E004`) o doble segmento (`HP-002.15.550.E400`) no aparecían nunca — eran 4.329 de 7.753 placas (56%), p. ej. 20-0276 y 20-0214. La cobertura pasa al 97,6% (el resto son entradas del Excel sin plano real: "SIN ASIGNAR", "-", planos .CE de componentes...).
+- **Fix error "'bool' object has no attribute 'blockSignals'"**: al quitar con la × los chips de filtro de Clientes, Proyectos, Material, Tratamiento, Cierre o Espesor saltaba un error inesperado (la señal `clicked` pisaba el widget con un booleano). Corregido para todos los chips.
+- **Fix app pillada tras búsquedas grandes**: cada miniatura que llegaba recorría las ~5000 filas de la tabla para encontrar su celda (millones de comparaciones en el hilo de la interfaz con miles de resultados). Ahora se localiza al instante con un índice ruta→celda: la app sigue fluida mientras cargan las miniaturas.
+
 ## [2.0.2] - 2026-07-13 (Despiece, comparación, miniaturas sin SolidWorks y PDFs)
 - **Previsualizador instantáneo**: al clicar una pieza, la imagen sale al momento de la caché en BD y la versión en alta calidad llega en segundo plano — clicar ya no congela la interfaz 1-2 s.
 - **Miniaturas de lista/galería por lotes**: el hilo de miniaturas las trae de la BD en bloques de 400 (una consulta por bloque) — cientos de miniaturas en décimas de segundo.

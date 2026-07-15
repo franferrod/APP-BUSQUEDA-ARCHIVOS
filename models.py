@@ -754,10 +754,15 @@ class IndexManager:
             base_where = f"({where_clause})"
 
         # V2.1.0 - Filtro "Solo máquinas con placa CE": el prefijo del nombre de
-        # archivo (ej. "26047.E107") debe existir como num_plano en placas_ce
+        # archivo (ej. "26047.E107") debe existir como num_plano en placas_ce.
+        # V2.0.3 - La regex cubre también los formatos antiguos de plano:
+        #   20029.530.E017 (segmento intermedio), TRD-002.E000 / CRV520-001.E004
+        #   (prefijo de letras), HP-002.15.550.E400 (dos segmentos intermedios).
+        #   Solo planos .E: los .CE son componentes de ensamblaje, no placas.
         if solo_placa_ce:
             base_where += (
-                " AND UPPER(SUBSTRING(nombre_archivo FROM '^[0-9]{4,6}\\.E[0-9]+'))"
+                " AND SUBSTRING(UPPER(nombre_archivo) FROM"
+                " '^[A-Z0-9]+(?:-[0-9]+)?(?:\\.[0-9]{1,4}){0,2}\\.E[0-9]+')"
                 " IN (SELECT UPPER(num_plano) FROM buscador.placas_ce"
                 "     WHERE num_plano IS NOT NULL AND num_plano != '')"
             )
