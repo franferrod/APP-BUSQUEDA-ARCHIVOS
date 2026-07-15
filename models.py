@@ -757,8 +757,7 @@ class IndexManager:
         # archivo (ej. "26047.E107") debe existir como num_plano en placas_ce
         if solo_placa_ce:
             base_where += (
-                # V2.0.3: C?E acepta planos formato E (26077.E010) y CE (26003.CE016)
-                " AND UPPER(SUBSTRING(nombre_archivo FROM '^[0-9]{4,6}\\.C?E[0-9]+'))"
+                " AND UPPER(SUBSTRING(nombre_archivo FROM '^[0-9]{4,6}\\.E[0-9]+'))"
                 " IN (SELECT UPPER(num_plano) FROM buscador.placas_ce"
                 "     WHERE num_plano IS NOT NULL AND num_plano != '')"
             )
