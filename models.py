@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 import unicodedata
 import psycopg2
@@ -70,9 +71,12 @@ class IndexManager:
             # V2.0.3: ThreadedConnectionPool (mismo API que SimpleConnectionPool
             # pero con locks) — las miniaturas ahora consultan la BD desde los
             # hilos de carga, además del hilo principal.
+            # V2.0.3: 10 conexiones — con la búsqueda asíncrona conviven varios
+            # consumidores (search worker, miniaturas por lotes, preview, galería,
+            # consultas del panel). Con 5 se agotaba en picos.
             self._pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=1,
-                maxconn=5,
+                maxconn=10,
                 **PG_CONFIG
             )
             logger.info("Pool de conexiones PostgreSQL inicializado correctamente")
@@ -81,11 +85,22 @@ class IndexManager:
             raise
 
     def get_connection(self):
-        """Obtiene una conexión del pool. Devuelve un PGConnectionWrapper."""
+        """Obtiene una conexión del pool. Devuelve un PGConnectionWrapper.
+        V2.0.3: si el pool está momentáneamente agotado (búsqueda + miniaturas
+        + preview a la vez), ESPERA y reintenta hasta ~8s en vez de reventar
+        con 'connection pool exhausted' al primer pico."""
         if self._pool is None or self._pool.closed:
             self._init_pool()
-        conn = self._pool.getconn()
-        return PGConnectionWrapper(conn, self._pool)
+        ultimo_error = None
+        for _ in range(32):
+            try:
+                conn = self._pool.getconn()
+                return PGConnectionWrapper(conn, self._pool)
+            except psycopg2.pool.PoolError as e:
+                ultimo_error = e
+                time.sleep(0.25)
+        logger.error(f"Pool agotado tras 8s de espera: {ultimo_error}")
+        raise ultimo_error
 
     @staticmethod
     def normalizar_texto(texto):
