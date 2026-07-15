@@ -4211,6 +4211,13 @@ class BuscadorPiezas(QMainWindow):
 
             lista = QListWidget()
             lista.setAlternatingRowColors(False)
+            # V2.0.3: miniaturas a la izquierda (caché de BD, una consulta)
+            lista.setIconSize(QSize(48, 48))
+            minis = {}
+            try:
+                minis = self.db.obtener_miniaturas_lote([r[5] for r in resultados if r[5]])
+            except Exception as e:
+                logger.debug(f"Miniaturas de 'dónde se usa' fallaron: {e}")
             for r in resultados:
                 nom, origen, anio, cliente, proyecto, ruta_ens = r
                 if nom:
@@ -4221,6 +4228,15 @@ class BuscadorPiezas(QMainWindow):
                     texto = os.path.basename(ruta_ens)
                 it = QListWidgetItem(texto)
                 it.setData(Qt.UserRole, ruta_ens)
+                icono_ok = False
+                data_img = minis.get(ruta_ens)
+                if data_img:
+                    img = QImage.fromData(data_img)
+                    if not img.isNull():
+                        it.setIcon(QIcon(QPixmap.fromImage(img)))
+                        icono_ok = True
+                if not icono_ok:
+                    it.setIcon(QIcon(pixmap_badge_extension('.sldasm', size=44)))
                 lista.addItem(it)
             lay.addWidget(lista, stretch=1)
 
@@ -4440,25 +4456,48 @@ class BuscadorPiezas(QMainWindow):
             lbl_n.setObjectName("StatusDim")
             lay.addWidget(lbl_n)
 
+            # V2.0.3: columna "Vista" con miniaturas (caché de BD, una consulta),
+            # igual que en el despiece
             tabla = QTableWidget()
-            tabla.setColumnCount(2)
-            tabla.setHorizontalHeaderLabels(["Componente", "Estado"])
+            tabla.setColumnCount(3)
+            tabla.setHorizontalHeaderLabels(["Vista", "Componente", "Estado"])
             tabla.setEditTriggers(QTableWidget.NoEditTriggers)
             tabla.setSelectionBehavior(QTableWidget.SelectRows)
             tabla.verticalHeader().setVisible(False)
+            tabla.setIconSize(QSize(48, 48))
+            tabla.verticalHeader().setDefaultSectionSize(54)
             datos = ([(c, "Solo en A", COL_A, comp_a[c][6]) for c in solo_a] +
                      [(c, "Solo en B", COL_B, comp_b[c][6]) for c in solo_b] +
                      [(c, "En ambos", COL_COMUN, comp_a[c][6]) for c in comunes])
+            minis = {}
+            try:
+                minis = self.db.obtener_miniaturas_lote([d[3] for d in datos if d[3]])
+            except Exception as e:
+                logger.debug(f"Miniaturas de comparación fallaron: {e}")
             tabla.setRowCount(len(datos))
             for i, (comp, estado, color, ruta_c) in enumerate(datos):
+                it_v = QTableWidgetItem()
+                it_v.setData(Qt.UserRole, ruta_c or "")
+                icono_ok = False
+                data_img = minis.get(ruta_c)
+                if data_img:
+                    img = QImage.fromData(data_img)
+                    if not img.isNull():
+                        it_v.setIcon(QIcon(QPixmap.fromImage(img)))
+                        icono_ok = True
+                if not icono_ok:
+                    ext_b = os.path.splitext(comp)[1].lower()
+                    it_v.setIcon(QIcon(pixmap_badge_extension(ext_b, size=44)))
                 it0 = QTableWidgetItem(comp)
                 it0.setData(Qt.UserRole, ruta_c or "")
                 it1 = QTableWidgetItem(estado)
                 it1.setForeground(QColor(color))
-                tabla.setItem(i, 0, it0)
-                tabla.setItem(i, 1, it1)
-            tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-            tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+                tabla.setItem(i, 0, it_v)
+                tabla.setItem(i, 1, it0)
+                tabla.setItem(i, 2, it1)
+            tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+            tabla.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
             lay.addWidget(tabla, stretch=1)
 
             if not comp_a or not comp_b:
@@ -4527,32 +4566,53 @@ class BuscadorPiezas(QMainWindow):
         lbl_n.setObjectName("StatusDim")
         lay.addWidget(lbl_n)
 
+        # V2.0.3: columna "Vista" con la miniatura de cada fila (caché de BD,
+        # una sola consulta) — igual que en el despiece, en TODOS los diálogos.
         tabla = QTableWidget()
-        tabla.setColumnCount(len(columnas))
-        tabla.setHorizontalHeaderLabels(columnas)
+        tabla.setColumnCount(len(columnas) + 1)
+        tabla.setHorizontalHeaderLabels(["Vista"] + columnas)
         tabla.setRowCount(len(filas_datos))
         tabla.setEditTriggers(QTableWidget.NoEditTriggers)
         tabla.setSelectionBehavior(QTableWidget.SelectRows)
         tabla.verticalHeader().setVisible(False)
-        tabla.setSortingEnabled(True)
+        tabla.setIconSize(QSize(48, 48))
+        tabla.verticalHeader().setDefaultSectionSize(54)
+        minis = {}
+        try:
+            minis = self.db.obtener_miniaturas_lote([f[-1] for f in filas_datos if f[-1]])
+        except Exception as e:
+            logger.debug(f"Miniaturas de diálogo fallaron: {e}")
         for i, fila in enumerate(filas_datos):
             ruta_abrir = fila[-1]
+            it_v = QTableWidgetItem()
+            it_v.setData(Qt.UserRole, ruta_abrir or "")
+            data_img = minis.get(ruta_abrir)
+            icono_ok = False
+            if data_img:
+                img = QImage.fromData(data_img)
+                if not img.isNull():
+                    it_v.setIcon(QIcon(QPixmap.fromImage(img)))
+                    icono_ok = True
+            if not icono_ok:
+                ext_b = os.path.splitext(str(ruta_abrir or fila[0]))[1].lower()
+                it_v.setIcon(QIcon(pixmap_badge_extension(ext_b, size=44)))
+            tabla.setItem(i, 0, it_v)
             for j, val in enumerate(fila[:-1]):
                 it = QTableWidgetItem()
                 if isinstance(val, int):
                     it.setData(Qt.DisplayRole, val)  # ordena numéricamente
                 else:
                     it.setText(str(val) if val else "—")
-                if j == col_ruta_userrole:
-                    it.setData(Qt.UserRole, ruta_abrir or "")
-                tabla.setItem(i, j, it)
-        tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for j in range(1, len(columnas)):
+                tabla.setItem(i, j + 1, it)
+        tabla.setSortingEnabled(True)
+        tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        for j in range(2, len(columnas) + 1):
             tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
         lay.addWidget(tabla, stretch=1)
 
         def abrir_sel():
-            it = tabla.item(tabla.currentRow(), col_ruta_userrole) if tabla.currentRow() >= 0 else None
+            it = tabla.item(tabla.currentRow(), 0) if tabla.currentRow() >= 0 else None
             if it and it.data(Qt.UserRole):
                 self._abrir_en_explorer(it.data(Qt.UserRole))
         tabla.itemDoubleClicked.connect(lambda _: abrir_sel())

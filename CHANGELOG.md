@@ -12,7 +12,7 @@
 - **Miniaturas al instante desde la base de datos**: las miniaturas de la lista y la galería ahora se sirven de la caché en BD sin releer el NAS en cada búsqueda (antes se regeneraban una y otra vez). Búsquedas más rápidas y sin tirones.
 - **Fin de los cuelgues al encadenar filtros/botones**: el cambio de miniaturas ya no bloquea la interfaz al hacer búsquedas o tocar filtros seguidos.
 - **Barra de título oscura**: la ventana principal y todos los diálogos usan la barra de título en oscuro, a juego con la app (se acabó la franja blanca de Windows).
-- **Miniaturas en el despiece**: el diálogo "Ver componentes" muestra la miniatura de cada componente.
+- **Miniaturas en todos los diálogos**: comparar componentes, ensamblajes similares, piezas similares, duplicados, candidatas a biblioteca, "dónde se usa" y el despiece muestran la miniatura de cada elemento a la izquierda.
 - **Miniaturas en equipos SIN SolidWorks**: las miniaturas de piezas, ensamblajes y planos ahora también se ven en ordenadores que no tienen SolidWorks instalado (se sirven desde una caché central en la base de datos, alimentada por la indexación nocturna). De regalo: miniaturas más rápidas para todos.
 - **Previsualización de DWG**: las miniaturas y el previsualizador muestran el dibujo embebido en el propio DWG (sin necesidad de AutoCAD), en lugar del icono.
 - **Previsualización de STEP/IGES**: miniaturas 3D sombreadas (vista isométrica) generadas automáticamente por la indexación nocturna — visibles en todos los equipos sin ningún programa CAD.
