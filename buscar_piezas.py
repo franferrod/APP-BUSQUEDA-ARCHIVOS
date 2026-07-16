@@ -3515,6 +3515,9 @@ class BuscadorPiezas(QMainWindow):
         QMessageBox.information(self, "Éxito", f"Se han indexado {total} archivos en {tiempo:.1f} segundos.")
         self.lbl_status.setText(f"Última indexación: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
         self.refrescar_filtros_jerarquicos()
+        # V2.0.2: el índice ha cambiado — recalcular la cascada de propiedades
+        self._props_ctx_kwargs = None
+        self._refrescar_props_contexto()
 
     # ═══════════════════════════════════════════
     # PREVISUALIZACIÓN (Cambio 4)
