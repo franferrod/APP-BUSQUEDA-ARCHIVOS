@@ -545,6 +545,10 @@ class SearchController:
                 
         return sorted(materiales_filtrados)
         
+    def get_propiedades_contexto(self, companions=None, years=None, clientes=None, proyectos=None):
+        """V2.0.2 - Cascada de filtros de propiedades (ver models)."""
+        return self.db.obtener_propiedades_contexto(companions, years, clientes, proyectos)
+
     def get_all_tratamientos(self):
         return self.db.obtener_tratamientos()
 
