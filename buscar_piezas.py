@@ -3164,10 +3164,21 @@ class BuscadorPiezas(QMainWindow):
                 
             logger.info(f"Ejecutando búsqueda auto={auto} | Term: {termino} | Comp: {len(comp_sel)} | Años: {len(años_sel)}")
             self.lbl_status.setText("Buscando...")
-            QApplication.processEvents()
-            
-            # Desactivar ordenación visual durante la carga para evitar inconsistencias
+
+            # V2.0.3: vaciar la rejilla AL LANZAR — con la búsqueda asíncrona,
+            # dejar los resultados anteriores visibles durante el "Buscando…"
+            # llevaba a leerlos como si fueran la respuesta del filtro nuevo.
             self.tabla.setSortingEnabled(False)
+            self.tabla.setRowCount(0)
+            self.galeria.blockSignals(True)
+            self.galeria.clear()
+            self.galeria.blockSignals(False)
+            self._galeria_items = {}
+            self.lbl_count.setText("…")
+            self._res_base = []
+            self._refinados = []
+            self._actualizar_barra_refinar()
+            QApplication.processEvents()
             
             # Obtener filtros (V1.0.0: Filtros Jerárquicos)
             carpetas_sel = self.get_selected_items(self.list_carpetas)
