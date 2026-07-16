@@ -1891,6 +1891,44 @@ class BuscadorPiezas(QMainWindow):
         central_v.setContentsMargins(0, 0, 0, 0)
         central_v.setSpacing(6)
         central_v.addLayout(toolbar_layout)
+
+        # ── V2.0.3: BARRA DE REFINADO (sub-búsqueda sobre los resultados) ──
+        # Apilable por niveles (chips); Esc deshace el último nivel.
+        self.barra_refinar = QFrame()
+        self.barra_refinar.setObjectName("BarraRefinar")
+        self.barra_refinar.setStyleSheet(
+            "#BarraRefinar { background: #1D1D1D; border: 1px solid #333333; "
+            "border-radius: 6px; }")
+        ref_lay = QHBoxLayout(self.barra_refinar)
+        ref_lay.setContentsMargins(10, 4, 10, 4)
+        ref_lay.setSpacing(8)
+        lbl_ref = QLabel("Refinar")
+        lbl_ref.setStyleSheet(
+            f'font-family: "{FUENTES["h2"]}"; font-weight: 800; color: #E66C32; '
+            f'background: transparent;')
+        ref_lay.addWidget(lbl_ref)
+        self.combo_refinar = QComboBox()
+        self.combo_refinar.addItems(["En el nombre", "Que contenga (pieza/ensamblaje)"])
+        self.combo_refinar.setToolTip(
+            "En el nombre: filtra los resultados por su nombre.\n"
+            "Que contenga: deja solo los ensamblajes que llevan dentro esa "
+            "pieza o subensamblaje (componentes directos).")
+        ref_lay.addWidget(self.combo_refinar)
+        self.input_refinar = QLineEdit()
+        self.input_refinar.setPlaceholderText(
+            "Refina estos resultados…  (Enter añade nivel · Esc deshace · "
+            "espacio=frase, ;=Y, ,=O)")
+        self.input_refinar.returnPressed.connect(self._agregar_refinado)
+        ref_lay.addWidget(self.input_refinar, stretch=1)
+        self.chips_refinar = QHBoxLayout()
+        self.chips_refinar.setSpacing(4)
+        ref_lay.addLayout(self.chips_refinar)
+        self.lbl_refinar_count = QLabel("")
+        self.lbl_refinar_count.setObjectName("StatusDim")
+        ref_lay.addWidget(self.lbl_refinar_count)
+        self.barra_refinar.setVisible(False)
+        central_v.addWidget(self.barra_refinar)
+
         central_v.addWidget(self.stack_vistas)
 
         self.splitter.addWidget(contenedor_central)
@@ -3221,6 +3259,14 @@ class BuscadorPiezas(QMainWindow):
             return  # obsoleta: hay una búsqueda más nueva en curso
         ctx = self._busquedas_ctx.pop(gen, {})
 
+        # V2.0.3: nueva búsqueda base — resetea la pila de refinados
+        self._res_base = resultados
+        self._refinados = []
+        self._pintar_resultados(resultados, ctx)
+
+    def _pintar_resultados(self, resultados, ctx):
+        """Arranca el pintado por tramos de un conjunto de resultados (búsqueda
+        base o refinada). Reutilizado por el refinado (V2.0.3)."""
         self.tabla.setSortingEnabled(False)
         self.tabla.setRowCount(len(resultados))
 
@@ -3234,8 +3280,8 @@ class BuscadorPiezas(QMainWindow):
             except Exception as e:
                 logger.debug(f"Precarga de miniaturas falló: {e}")
 
-        self._fill = {'gen': gen, 'res': resultados, 'i': 0,
-                      'vistas': [], 'minis': minis_bd, 'ctx': ctx}
+        self._fill = {'gen': getattr(self, '_gen_busqueda', 0), 'res': resultados,
+                      'i': 0, 'vistas': [], 'minis': minis_bd, 'ctx': ctx}
         self._llenar_tramo_tabla()
 
     _TRAMO_FILAS = 600  # filas por tanda de pintado
@@ -3328,20 +3374,128 @@ class BuscadorPiezas(QMainWindow):
         if self.stack_vistas.currentIndex() == 1:
             self._sincronizar_galeria()
 
-        if len(resultados) >= 5000:
-            self.lbl_status.setText("⚠ Mostrando 5000 de 5000+ resultados. Refina tu búsqueda.")
-        else:
-            self.lbl_status.setText("Listo")
-
         n_fmt = f"{len(resultados):,}".replace(",", ".")
-        dt_txt = f"{time.time() - t0_busqueda:.2f}".replace(".", ",")
-        self.lbl_count.setText(f"{n_fmt} resultados · {dt_txt} s")
-        if not resultados and termino:
-            self.lbl_status.setText(f"No se encontraron resultados para '{termino}'")
+        if ctx.get('refino') is not None:
+            # V2.0.3: cierre de un REFINADO — contador X → Y
+            base_fmt = f"{ctx['refino']:,}".replace(",", ".")
+            self.lbl_status.setText(
+                f"Refinado: {n_fmt} de {base_fmt} resultados"
+                + ("" if resultados else " — sin coincidencias (Esc para deshacer)"))
+            self.lbl_count.setText(f"{n_fmt} de {base_fmt} · refinado")
+        else:
+            if len(resultados) >= 5000:
+                self.lbl_status.setText("⚠ Mostrando 5000 de 5000+ resultados. Refina tu búsqueda.")
+            else:
+                self.lbl_status.setText("Listo")
+            dt_txt = f"{time.time() - t0_busqueda:.2f}".replace(".", ",")
+            self.lbl_count.setText(f"{n_fmt} resultados · {dt_txt} s")
+            if not resultados and termino:
+                self.lbl_status.setText(f"No se encontraron resultados para '{termino}'")
+            if not auto and termino and resultados:
+                self._push_reciente(termino)
 
         self._actualizar_chips_contexto()
-        if not auto and termino and resultados:
-            self._push_reciente(termino)
+        self._actualizar_barra_refinar()
+
+    # ═══════════════════════════════════════════
+    # REFINADO DE RESULTADOS (V2.0.3)
+    # ═══════════════════════════════════════════
+    def _casa_termino_local(self, nombre, termino):
+        """Matcher en cliente con la MISMA sintaxis del buscador:
+        espacio=frase exacta, ';'=Y, ','=O (sin acentos, sin mayúsculas)."""
+        norm = self.db.normalizar_texto
+        n = norm(nombre)
+        if ';' in termino:
+            kws = [k.strip() for k in termino.split(';') if k.strip()]
+            return all(norm(k) in n for k in kws)
+        if ',' in termino:
+            kws = [k.strip() for k in termino.split(',') if k.strip()]
+            return any(norm(k) in n for k in kws)
+        return norm(termino.strip()) in n
+
+    def _agregar_refinado(self):
+        """Enter en la barra de refinado: apila un nivel y aplica."""
+        term = self.input_refinar.text().strip()
+        if not term or not getattr(self, '_res_base', None):
+            return
+        modo = 'contiene' if self.combo_refinar.currentIndex() == 1 else 'nombre'
+        if not hasattr(self, '_refinados'):
+            self._refinados = []
+        self._refinados.append((modo, term))
+        self.input_refinar.clear()
+        self._aplicar_refinados()
+
+    def _quitar_refinado(self, idx=None):
+        """Quita el último nivel (Esc) o uno concreto (✕ de su chip).
+        Devuelve True si había algo que quitar."""
+        refs = getattr(self, '_refinados', [])
+        if not refs:
+            return False
+        if idx is None:
+            refs.pop()
+        elif 0 <= idx < len(refs):
+            refs.pop(idx)
+        self._aplicar_refinados()
+        return True
+
+    def _aplicar_refinados(self):
+        """Recalcula desde la base aplicando la pila de refinados en orden y
+        repinta con el mismo pipeline por tramos de la búsqueda."""
+        base = getattr(self, '_res_base', []) or []
+        res = base
+        try:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            for modo, term in getattr(self, '_refinados', []):
+                if not res:
+                    break
+                if modo == 'nombre':
+                    res = [d for d in res if self._casa_termino_local(d[0], term)]
+                else:
+                    keep = self.db.filtrar_por_componente([d[10] for d in res], term)
+                    res = [d for d in res if d[10] in keep]
+        except Exception as e:
+            logger.error(f"Error aplicando refinados: {e}")
+        finally:
+            QApplication.restoreOverrideCursor()
+        # invalidar cualquier pintado en curso y repintar el subconjunto
+        self._gen_busqueda = getattr(self, '_gen_busqueda', 0) + 1
+        ctx = {'termino': '', 'auto': True, 't0': time.time(), 'refino': len(base)}
+        if not getattr(self, '_refinados', []):
+            ctx.pop('refino')  # sin niveles: vuelve al estado de búsqueda normal
+        self._pintar_resultados(res, ctx)
+
+    def _actualizar_barra_refinar(self):
+        """Visibilidad de la barra, chips por nivel y contador X → Y."""
+        try:
+            base = getattr(self, '_res_base', []) or []
+            refs = getattr(self, '_refinados', [])
+            self.barra_refinar.setVisible(bool(base))
+            # reconstruir chips
+            while self.chips_refinar.count():
+                w = self.chips_refinar.takeAt(0).widget()
+                if w:
+                    w.deleteLater()
+            for i, (modo, term) in enumerate(refs):
+                icono = "≡" if modo == 'nombre' else "⚙"
+                chip = QPushButton(f"{icono} {term}  ✕")
+                chip.setCursor(Qt.PointingHandCursor)
+                chip.setToolTip(
+                    ("En el nombre: " if modo == 'nombre' else "Que contenga: ")
+                    + term + "\nClic para quitar este nivel")
+                chip.setStyleSheet(
+                    "QPushButton { background: #2A1B12; color: #E66C32; border: 1px solid "
+                    "#E66C32; border-radius: 9px; padding: 1px 8px; font-size: 11px; }"
+                    "QPushButton:hover { background: #3A2418; }")
+                chip.clicked.connect(lambda _, k=i: self._quitar_refinado(k))
+                self.chips_refinar.addWidget(chip)
+            if refs:
+                n_fmt = f"{self.tabla.rowCount():,}".replace(",", ".")
+                b_fmt = f"{len(base):,}".replace(",", ".")
+                self.lbl_refinar_count.setText(f"{b_fmt} → {n_fmt}")
+            else:
+                self.lbl_refinar_count.setText("")
+        except Exception as e:
+            logger.debug(f"Error actualizando barra de refinado: {e}")
 
     # ═══════════════════════════════════════════
     # INDEXACIÓN (Cambio 2: modal selectivo + cancelar)
@@ -4084,7 +4238,12 @@ class BuscadorPiezas(QMainWindow):
             self.input_buscar.selectAll()
             event.accept()
         elif event.key() == Qt.Key_Escape:
-            if self.input_buscar.hasFocus():
+            # V2.0.3: Esc deshace el refinado nivel a nivel hasta la búsqueda base
+            if self.input_refinar.hasFocus() and self.input_refinar.text():
+                self.input_refinar.clear()
+            elif getattr(self, '_refinados', []):
+                self._quitar_refinado()
+            elif self.input_buscar.hasFocus():
                 self.input_buscar.clear()
             elif self.panel_preview.isVisible():
                 # Usar el toggle para que el botón del footer quede coherente

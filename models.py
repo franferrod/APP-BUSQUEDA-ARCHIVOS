@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 import unicodedata
 import psycopg2
@@ -70,9 +71,12 @@ class IndexManager:
             # V2.0.3: ThreadedConnectionPool (mismo API que SimpleConnectionPool
             # pero con locks) — las miniaturas ahora consultan la BD desde los
             # hilos de carga, además del hilo principal.
+            # V2.0.3: 10 conexiones — con la búsqueda asíncrona conviven varios
+            # consumidores (search worker, miniaturas por lotes, preview, galería,
+            # consultas del panel). Con 5 se agotaba en picos.
             self._pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=1,
-                maxconn=5,
+                maxconn=10,
                 **PG_CONFIG
             )
             logger.info("Pool de conexiones PostgreSQL inicializado correctamente")
@@ -81,11 +85,22 @@ class IndexManager:
             raise
 
     def get_connection(self):
-        """Obtiene una conexión del pool. Devuelve un PGConnectionWrapper."""
+        """Obtiene una conexión del pool. Devuelve un PGConnectionWrapper.
+        V2.0.3: si el pool está momentáneamente agotado (búsqueda + miniaturas
+        + preview a la vez), ESPERA y reintenta hasta ~8s en vez de reventar
+        con 'connection pool exhausted' al primer pico."""
         if self._pool is None or self._pool.closed:
             self._init_pool()
-        conn = self._pool.getconn()
-        return PGConnectionWrapper(conn, self._pool)
+        ultimo_error = None
+        for _ in range(32):
+            try:
+                conn = self._pool.getconn()
+                return PGConnectionWrapper(conn, self._pool)
+            except psycopg2.pool.PoolError as e:
+                ultimo_error = e
+                time.sleep(0.25)
+        logger.error(f"Pool agotado tras 8s de espera: {ultimo_error}")
+        raise ultimo_error
 
     @staticmethod
     def normalizar_texto(texto):
@@ -550,6 +565,48 @@ class IndexManager:
         except Exception as e:
             logger.error(f"Error buscando similares de {ruta_completa}: {e}")
             return []
+        finally:
+            wrapper.close()
+
+    def filtrar_por_componente(self, rutas, termino):
+        """Refinado 'que contenga' (V2.0.3): de las rutas dadas (ensamblajes de
+        los resultados actuales), devuelve el SET de las que contienen algún
+        componente directo (pieza o subensamblaje) cuyo nombre casa con el
+        término. Misma sintaxis que el buscador: espacio=frase, ';'=Y, ','=O."""
+        if not rutas or not (termino or "").strip():
+            return set()
+
+        if ';' in termino:
+            keywords = [k.strip() for k in termino.split(';') if k.strip()]
+            modo_and = True
+        elif ',' in termino:
+            keywords = [k.strip() for k in termino.split(',') if k.strip()]
+            modo_and = False
+        else:
+            keywords = [termino.strip()]
+            modo_and = True
+
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            conjuntos = []
+            for kw in keywords:
+                kw_norm = self.normalizar_texto(kw)
+                cursor.execute('''
+                    SELECT DISTINCT ensamblaje_ruta FROM buscador.componentes
+                    WHERE ensamblaje_ruta = ANY(%s)
+                      AND UPPER(unaccent(componente_nombre)) LIKE %s
+                ''', (list(rutas), f'%{kw_norm}%'))
+                conjuntos.append({r[0] for r in cursor.fetchall()})
+            if not conjuntos:
+                return set()
+            resultado = conjuntos[0]
+            for c in conjuntos[1:]:
+                resultado = (resultado & c) if modo_and else (resultado | c)
+            return resultado
+        except Exception as e:
+            logger.error(f"Error en filtrar_por_componente: {e}")
+            return set()
         finally:
             wrapper.close()
 
