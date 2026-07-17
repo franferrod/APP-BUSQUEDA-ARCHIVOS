@@ -2966,7 +2966,14 @@ class BuscadorPiezas(QMainWindow):
         # de preferencias es diferida y podía llegar DESPUÉS de una búsqueda
         # del usuario, sustituyendo su término por el de la sesión anterior.
         if not self.input_buscar.text() and not getattr(self, '_gen_busqueda', 0):
-            self.input_buscar.setText(self.controller.load_preference("ultimo_termino", ""))
+            # V2.0.3: el último término es LOCAL de cada equipo (QSettings), no
+            # compartido en la BD — cada uno arranca con SU última búsqueda.
+            # Compatibilidad: si este equipo aún no tiene valor local, se toma
+            # una única vez el de la BD (comportamiento previo) como semilla.
+            local = str(self.qsettings.value("ultimo_termino", ""))
+            if not local:
+                local = self.controller.load_preference("ultimo_termino", "")
+            self.input_buscar.setText(local)
         
         # Restaurar Checkbox Biblioteca (V1.0.0) - ELIMINADO PARA NAS NUEVO
 
@@ -3022,7 +3029,8 @@ class BuscadorPiezas(QMainWindow):
         rect = self.geometry()
         val = f"{rect.x()},{rect.y()},{rect.width()},{rect.height()}"
         self.controller.save_preference("geometria", val)
-        self.controller.save_preference("ultimo_termino", self.input_buscar.text())
+        # V2.0.3: guardar el último término SOLO en local (privacidad por equipo)
+        self.qsettings.setValue("ultimo_termino", self.input_buscar.text())
         
         # Guardar Checkbox Biblioteca (V1.0.0) - ELIMINADO PARA NAS NUEVO
 
