@@ -2761,9 +2761,17 @@ class BuscadorPiezas(QMainWindow):
             # cmd /s /c con TODO envuelto en comillas externas: a prueba de
             # rutas con espacios también en el propio .bat (usuarios con
             # espacios en el nombre tienen %TEMP% con espacios).
+            # ENTORNO LIMPIO (V2.0.3): sin las variables _MEI*/_PYI* de
+            # PyInstaller — si el exe nuevo las hereda, intenta cargar las DLL
+            # desde la carpeta temporal del app VIEJO (ya borrada) y revienta
+            # con "Failed to load Python DLL ..._MEIxxxx\python311.dll".
+            entorno = {k: v for k, v in os.environ.items()
+                       if not k.startswith(('_MEI', '_PYI'))}
+            entorno['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
             DETACHED = 0x00000008
             linea = f'cmd /s /c ""{bat}" "{RUTA_DESPLIEGUE_APP}" "{local_dir}""'
-            subprocess.Popen(linea, creationflags=DETACHED, close_fds=True)
+            subprocess.Popen(linea, creationflags=DETACHED, close_fds=True,
+                             env=entorno)
             self.close()
             QApplication.quit()
         except Exception as e:
