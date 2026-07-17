@@ -1892,40 +1892,81 @@ class BuscadorPiezas(QMainWindow):
         central_v.setSpacing(6)
         central_v.addLayout(toolbar_layout)
 
-        # ── V2.0.3: BARRA DE REFINADO (sub-búsqueda sobre los resultados) ──
-        # Apilable por niveles (chips); Esc deshace el último nivel.
+        # ── V2.0.3: BARRA DE REFINADO (sub-búsqueda en cascada) ──
+        # Niveles apilables con chips; Esc deshace el último; Ctrl+R enfoca.
+        # Modo "Nombre" filtra EN VIVO mientras escribes; "Contiene pieza"
+        # consulta la BD al pulsar Enter.
         self.barra_refinar = QFrame()
         self.barra_refinar.setObjectName("BarraRefinar")
-        self.barra_refinar.setStyleSheet(
-            "#BarraRefinar { background: #1D1D1D; border: 1px solid #333333; "
-            "border-radius: 6px; }")
         ref_lay = QHBoxLayout(self.barra_refinar)
-        ref_lay.setContentsMargins(10, 4, 10, 4)
+        ref_lay.setContentsMargins(12, 6, 12, 6)
         ref_lay.setSpacing(8)
+
+        ico_ref = QLabel()
+        ico_ref.setPixmap(svg_pixmap("buscar", color="#E66C32", size=14))
+        ico_ref.setStyleSheet("background: transparent;")
+        ref_lay.addWidget(ico_ref)
         lbl_ref = QLabel("Refinar")
+        lbl_ref.setToolTip(
+            "Sub-búsqueda sobre los resultados actuales (Ctrl+R).\n"
+            "Nombre: filtra en vivo mientras escribes; Enter fija el nivel.\n"
+            "Contiene pieza: ensamblajes que llevan esa pieza/subensamblaje (Enter).\n"
+            "Sintaxis: espacio = frase exacta · ; = Y · , = O.\n"
+            "Esc deshace el último nivel hasta la búsqueda general.")
         lbl_ref.setStyleSheet(
             f'font-family: "{FUENTES["h2"]}"; font-weight: 800; color: #E66C32; '
             f'background: transparent;')
         ref_lay.addWidget(lbl_ref)
-        self.combo_refinar = QComboBox()
-        self.combo_refinar.addItems(["En el nombre", "Que contenga (pieza/ensamblaje)"])
-        self.combo_refinar.setToolTip(
-            "En el nombre: filtra los resultados por su nombre.\n"
-            "Que contenga: deja solo los ensamblajes que llevan dentro esa "
-            "pieza o subensamblaje (componentes directos).")
-        ref_lay.addWidget(self.combo_refinar)
+
+        # Control segmentado Nombre | Contiene pieza
+        self.btn_ref_nombre = QPushButton("Nombre")
+        self.btn_ref_contiene = QPushButton("Contiene pieza")
+        for b in (self.btn_ref_nombre, self.btn_ref_contiene):
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+        self.btn_ref_nombre.setChecked(True)
+        self.btn_ref_nombre.clicked.connect(lambda: self._set_modo_refinar('nombre'))
+        self.btn_ref_contiene.clicked.connect(lambda: self._set_modo_refinar('contiene'))
+        seg = QWidget()
+        seg_lay = QHBoxLayout(seg)
+        seg_lay.setContentsMargins(0, 0, 0, 0)
+        seg_lay.setSpacing(0)
+        seg_lay.addWidget(self.btn_ref_nombre)
+        seg_lay.addWidget(self.btn_ref_contiene)
+        ref_lay.addWidget(seg)
+
         self.input_refinar = QLineEdit()
-        self.input_refinar.setPlaceholderText(
-            "Refina estos resultados…  (Enter añade nivel · Esc deshace · "
-            "espacio=frase, ;=Y, ,=O)")
+        self.input_refinar.setObjectName("InputRefinar")
+        self.input_refinar.setClearButtonEnabled(True)
         self.input_refinar.returnPressed.connect(self._agregar_refinado)
+        # Debounce del filtrado en vivo (modo Nombre)
+        self.timer_refinar = QTimer(self)
+        self.timer_refinar.setSingleShot(True)
+        self.timer_refinar.setInterval(300)
+        self.timer_refinar.timeout.connect(self._refinar_en_vivo)
+        self.input_refinar.textChanged.connect(
+            lambda _: self.timer_refinar.start())
         ref_lay.addWidget(self.input_refinar, stretch=1)
+
         self.chips_refinar = QHBoxLayout()
         self.chips_refinar.setSpacing(4)
         ref_lay.addLayout(self.chips_refinar)
+
+        self.btn_ref_limpiar = QPushButton("Limpiar")
+        self.btn_ref_limpiar.setCursor(Qt.PointingHandCursor)
+        self.btn_ref_limpiar.setToolTip("Quitar todos los niveles de refinado")
+        self.btn_ref_limpiar.clicked.connect(self._limpiar_refinados)
+        self.btn_ref_limpiar.setVisible(False)
+        ref_lay.addWidget(self.btn_ref_limpiar)
+
         self.lbl_refinar_count = QLabel("")
-        self.lbl_refinar_count.setObjectName("StatusDim")
+        self.lbl_refinar_count.setStyleSheet(
+            "color: #E66C32; font-weight: 700; background: transparent;")
         ref_lay.addWidget(self.lbl_refinar_count)
+
+        self._modo_refinar = 'nombre'
+        self._ref_draft = None
+        self._pintar_estilo_refinar()
         self.barra_refinar.setVisible(False)
         central_v.addWidget(self.barra_refinar)
 
@@ -2937,7 +2978,11 @@ class BuscadorPiezas(QMainWindow):
     # PREFERENCIAS
     # ═══════════════════════════════════════════
     def cargar_preferencias(self):
-        self.input_buscar.setText(self.controller.load_preference("ultimo_termino", ""))
+        # V2.0.3: NO pisar lo que el usuario ya haya escrito/buscado — la carga
+        # de preferencias es diferida y podía llegar DESPUÉS de una búsqueda
+        # del usuario, sustituyendo su término por el de la sesión anterior.
+        if not self.input_buscar.text() and not getattr(self, '_gen_busqueda', 0):
+            self.input_buscar.setText(self.controller.load_preference("ultimo_termino", ""))
         
         # Restaurar Checkbox Biblioteca (V1.0.0) - ELIMINADO PARA NAS NUEVO
 
@@ -3177,6 +3222,11 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_count.setText("…")
             self._res_base = []
             self._refinados = []
+            self._ref_draft = None
+            self.timer_refinar.stop()
+            self.input_refinar.blockSignals(True)
+            self.input_refinar.clear()
+            self.input_refinar.blockSignals(False)
             self._actualizar_barra_refinar()
             QApplication.processEvents()
             
@@ -3401,7 +3451,13 @@ class BuscadorPiezas(QMainWindow):
             dt_txt = f"{time.time() - t0_busqueda:.2f}".replace(".", ",")
             self.lbl_count.setText(f"{n_fmt} resultados · {dt_txt} s")
             if not resultados and termino:
-                self.lbl_status.setText(f"No se encontraron resultados para '{termino}'")
+                if self.btn_placa_ce.isChecked():
+                    # V2.0.3: con el filtro CE activo, decirlo claro
+                    self.lbl_status.setText(
+                        f"0 máquinas con placa CE para '{termino}' con estos filtros "
+                        f"— prueba a desactivar 'Placa CE' o ampliar años")
+                else:
+                    self.lbl_status.setText(f"No se encontraron resultados para '{termino}'")
             if not auto and termino and resultados:
                 self._push_reciente(termino)
 
@@ -3424,16 +3480,88 @@ class BuscadorPiezas(QMainWindow):
             return any(norm(k) in n for k in kws)
         return norm(termino.strip()) in n
 
+    def _pintar_estilo_refinar(self):
+        """Estilos de la barra: segmentado, input con focus naranja y borde de
+        la barra encendido cuando hay refinados activos (V2.0.3)."""
+        activo = bool(getattr(self, '_refinados', []) or getattr(self, '_ref_draft', None))
+        borde = "#E66C32" if activo else "#333333"
+        self.barra_refinar.setStyleSheet(
+            f"#BarraRefinar {{ background: #1D1D1D; border: 1px solid {borde}; "
+            f"border-radius: 8px; }}"
+            "#InputRefinar { background: #242424; border: 1px solid #3A3A3A; "
+            "border-radius: 6px; padding: 4px 8px; color: #EAEAEA; }"
+            "#InputRefinar:focus { border: 1px solid #E66C32; }")
+        SEG_ON = ("background: #E66C32; color: #141414; font-weight: 700; "
+                  "border: 1px solid #E66C32; padding: 3px 12px;")
+        SEG_OFF = ("background: #242424; color: #BBBBBB; "
+                   "border: 1px solid #3A3A3A; padding: 3px 12px;")
+        nombre_on = self._modo_refinar == 'nombre'
+        self.btn_ref_nombre.setChecked(nombre_on)
+        self.btn_ref_contiene.setChecked(not nombre_on)
+        self.btn_ref_nombre.setStyleSheet(
+            "QPushButton { border-top-left-radius: 6px; border-bottom-left-radius: 6px; "
+            "border-top-right-radius: 0; border-bottom-right-radius: 0; "
+            + (SEG_ON if nombre_on else SEG_OFF) + " }")
+        self.btn_ref_contiene.setStyleSheet(
+            "QPushButton { border-top-right-radius: 6px; border-bottom-right-radius: 6px; "
+            "border-top-left-radius: 0; border-bottom-left-radius: 0; "
+            + (SEG_OFF if nombre_on else SEG_ON) + " }")
+        self.btn_ref_limpiar.setStyleSheet(
+            "QPushButton { background: transparent; color: #999999; border: 1px solid "
+            "#3A3A3A; border-radius: 6px; padding: 3px 10px; }"
+            "QPushButton:hover { color: #E66C32; border-color: #E66C32; }")
+        if self._modo_refinar == 'nombre':
+            self.input_refinar.setPlaceholderText(
+                "Filtra por nombre mientras escribes…  (Enter fija el nivel · ;=Y · ,=O)")
+        else:
+            self.input_refinar.setPlaceholderText(
+                "Pieza o ensamblaje que deben CONTENER…  (Enter aplica · ;=Y · ,=O)")
+
+    def _set_modo_refinar(self, modo):
+        """Cambia el modo del segmentado. Si había filtrado en vivo, se limpia."""
+        self._modo_refinar = modo
+        if self._ref_draft is not None:
+            self._ref_draft = None
+            self._aplicar_refinados()
+        self._pintar_estilo_refinar()
+        self.input_refinar.setFocus()
+
+    def _refinar_en_vivo(self):
+        """Debounce del textChanged: en modo Nombre filtra EN VIVO (borrador,
+        sin chip). En modo Contiene no se filtra en vivo (consulta a BD)."""
+        if not getattr(self, '_res_base', None):
+            return
+        if self._modo_refinar != 'nombre':
+            return
+        texto = self.input_refinar.text().strip()
+        draft = texto or None
+        if draft != self._ref_draft:
+            self._ref_draft = draft
+            self._aplicar_refinados()
+
     def _agregar_refinado(self):
-        """Enter en la barra de refinado: apila un nivel y aplica."""
+        """Enter en la barra de refinado: apila un nivel (chip) y aplica."""
         term = self.input_refinar.text().strip()
         if not term or not getattr(self, '_res_base', None):
             return
-        modo = 'contiene' if self.combo_refinar.currentIndex() == 1 else 'nombre'
         if not hasattr(self, '_refinados'):
             self._refinados = []
-        self._refinados.append((modo, term))
+        self._refinados.append((self._modo_refinar, term))
+        self._ref_draft = None
+        self.timer_refinar.stop()
+        self.input_refinar.blockSignals(True)
         self.input_refinar.clear()
+        self.input_refinar.blockSignals(False)
+        self._aplicar_refinados()
+
+    def _limpiar_refinados(self):
+        """Quita todos los niveles y el borrador: vuelve a la búsqueda base."""
+        self._refinados = []
+        self._ref_draft = None
+        self.timer_refinar.stop()
+        self.input_refinar.blockSignals(True)
+        self.input_refinar.clear()
+        self.input_refinar.blockSignals(False)
         self._aplicar_refinados()
 
     def _quitar_refinado(self, idx=None):
@@ -3450,8 +3578,9 @@ class BuscadorPiezas(QMainWindow):
         return True
 
     def _aplicar_refinados(self):
-        """Recalcula desde la base aplicando la pila de refinados en orden y
-        repinta con el mismo pipeline por tramos de la búsqueda."""
+        """Recalcula desde la base aplicando la pila de refinados en orden
+        (+ el borrador en vivo del modo Nombre) y repinta con el pipeline
+        por tramos de la búsqueda."""
         base = getattr(self, '_res_base', []) or []
         res = base
         try:
@@ -3464,6 +3593,9 @@ class BuscadorPiezas(QMainWindow):
                 else:
                     keep = self.db.filtrar_por_componente([d[10] for d in res], term)
                     res = [d for d in res if d[10] in keep]
+            # Borrador en vivo (modo Nombre, sin chip todavía)
+            if self._ref_draft and res:
+                res = [d for d in res if self._casa_termino_local(d[0], self._ref_draft)]
         except Exception as e:
             logger.error(f"Error aplicando refinados: {e}")
         finally:
@@ -3471,40 +3603,47 @@ class BuscadorPiezas(QMainWindow):
         # invalidar cualquier pintado en curso y repintar el subconjunto
         self._gen_busqueda = getattr(self, '_gen_busqueda', 0) + 1
         ctx = {'termino': '', 'auto': True, 't0': time.time(), 'refino': len(base)}
-        if not getattr(self, '_refinados', []):
+        if not getattr(self, '_refinados', []) and not self._ref_draft:
             ctx.pop('refino')  # sin niveles: vuelve al estado de búsqueda normal
         self._pintar_resultados(res, ctx)
 
     def _actualizar_barra_refinar(self):
-        """Visibilidad de la barra, chips por nivel y contador X → Y."""
+        """Visibilidad de la barra, chips por nivel, botón Limpiar, contador
+        X → Y y borde activo (V2.0.3)."""
         try:
             base = getattr(self, '_res_base', []) or []
             refs = getattr(self, '_refinados', [])
+            activo = bool(refs or self._ref_draft)
             self.barra_refinar.setVisible(bool(base))
-            # reconstruir chips
+            # reconstruir chips (solo niveles fijados; el borrador vive en el input)
             while self.chips_refinar.count():
                 w = self.chips_refinar.takeAt(0).widget()
                 if w:
                     w.deleteLater()
             for i, (modo, term) in enumerate(refs):
                 icono = "≡" if modo == 'nombre' else "⚙"
-                chip = QPushButton(f"{icono} {term}  ✕")
+                etiqueta = term if len(term) <= 22 else term[:20] + "…"
+                chip = QPushButton(f"{i+1}· {icono} {etiqueta}  ✕")
                 chip.setCursor(Qt.PointingHandCursor)
                 chip.setToolTip(
-                    ("En el nombre: " if modo == 'nombre' else "Que contenga: ")
+                    ("Nivel %d — En el nombre: " if modo == 'nombre'
+                     else "Nivel %d — Contiene la pieza: ") % (i + 1)
                     + term + "\nClic para quitar este nivel")
                 chip.setStyleSheet(
                     "QPushButton { background: #2A1B12; color: #E66C32; border: 1px solid "
-                    "#E66C32; border-radius: 9px; padding: 1px 8px; font-size: 11px; }"
-                    "QPushButton:hover { background: #3A2418; }")
+                    "#E66C32; border-radius: 10px; padding: 2px 10px; font-size: 11px; "
+                    "font-weight: 600; }"
+                    "QPushButton:hover { background: #E66C32; color: #141414; }")
                 chip.clicked.connect(lambda _, k=i: self._quitar_refinado(k))
                 self.chips_refinar.addWidget(chip)
-            if refs:
+            self.btn_ref_limpiar.setVisible(activo)
+            if activo:
                 n_fmt = f"{self.tabla.rowCount():,}".replace(",", ".")
                 b_fmt = f"{len(base):,}".replace(",", ".")
                 self.lbl_refinar_count.setText(f"{b_fmt} → {n_fmt}")
             else:
                 self.lbl_refinar_count.setText("")
+            self._pintar_estilo_refinar()
         except Exception as e:
             logger.debug(f"Error actualizando barra de refinado: {e}")
 
@@ -4248,10 +4387,16 @@ class BuscadorPiezas(QMainWindow):
             self.input_buscar.setFocus()
             self.input_buscar.selectAll()
             event.accept()
+        elif event.key() == Qt.Key_R and event.modifiers() == Qt.ControlModifier:
+            # V2.0.3: Ctrl+R → saltar a la barra de refinado
+            if self.barra_refinar.isVisible():
+                self.input_refinar.setFocus()
+                self.input_refinar.selectAll()
+            event.accept()
         elif event.key() == Qt.Key_Escape:
             # V2.0.3: Esc deshace el refinado nivel a nivel hasta la búsqueda base
-            if self.input_refinar.hasFocus() and self.input_refinar.text():
-                self.input_refinar.clear()
+            if self.input_refinar.text():
+                self.input_refinar.clear()  # limpia el borrador en vivo
             elif getattr(self, '_refinados', []):
                 self._quitar_refinado()
             elif self.input_buscar.hasFocus():
