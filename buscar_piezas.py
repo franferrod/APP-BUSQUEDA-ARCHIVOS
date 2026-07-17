@@ -3287,7 +3287,19 @@ class BuscadorPiezas(QMainWindow):
                 self._search_workers = []
             self._search_workers.append(worker)
             worker.finished.connect(lambda w=worker: self._limpiar_search_worker(w))
+            logger.info(f"Búsqueda gen={gen} lanzada (placaCE={self.btn_placa_ce.isChecked()})")
             worker.start()
+
+            # V2.0.3: latido visible mientras se busca ('Buscando… Ns') y
+            # watchdog — si en 90s no hay respuesta, avisar en vez de quedar
+            # mudo con la rejilla vacía (reportado con Placa CE).
+            if not hasattr(self, 'timer_busqueda_tick'):
+                self.timer_busqueda_tick = QTimer(self)
+                self.timer_busqueda_tick.setInterval(1000)
+                self.timer_busqueda_tick.timeout.connect(self._tick_busqueda)
+            self._tick_gen = gen
+            self._tick_t0 = time.time()
+            self.timer_busqueda_tick.start()
 
         except Exception as e:
             self.lbl_status.setText("❌ Error en la búsqueda")
@@ -3300,6 +3312,26 @@ class BuscadorPiezas(QMainWindow):
         try:
             self._search_workers.remove(worker)
         except (ValueError, AttributeError):
+            pass
+
+    def _tick_busqueda(self):
+        """Latido del 'Buscando…' + watchdog de 90s (V2.0.3)."""
+        try:
+            # ¿sigue vigente esta búsqueda y sin respuesta?
+            if getattr(self, '_tick_gen', -1) != getattr(self, '_gen_busqueda', 0) \
+                    or self._tick_gen not in getattr(self, '_busquedas_ctx', {}):
+                self.timer_busqueda_tick.stop()
+                return
+            transcurrido = int(time.time() - self._tick_t0)
+            if transcurrido >= 90:
+                self.timer_busqueda_tick.stop()
+                logger.error(f"Watchdog: búsqueda gen={self._tick_gen} sin respuesta en 90s")
+                self._busquedas_ctx.pop(self._tick_gen, None)
+                self.lbl_status.setText(
+                    "⚠ La búsqueda no responde (¿red/BD saturada?) — vuelve a intentarlo")
+            elif transcurrido >= 3:
+                self.lbl_status.setText(f"Buscando… ({transcurrido} s)")
+        except Exception:
             pass
 
     def _on_error_busqueda(self, gen, mensaje):
@@ -3316,14 +3348,22 @@ class BuscadorPiezas(QMainWindow):
         """Llega la respuesta del SearchWorker: pintar por TRAMOS para que la
         UI siga viva aunque haya 5000 filas (V2.0.3)."""
         if gen != getattr(self, '_gen_busqueda', 0):
+            logger.info(f"Búsqueda gen={gen} descartada (vigente: {getattr(self, '_gen_busqueda', 0)})")
             self._busquedas_ctx.pop(gen, None)
             return  # obsoleta: hay una búsqueda más nueva en curso
         ctx = self._busquedas_ctx.pop(gen, {})
+        logger.info(f"Búsqueda gen={gen} completada: {len(resultados)} filas "
+                    f"en {time.time() - ctx.get('t0', time.time()):.1f}s")
 
         # V2.0.3: nueva búsqueda base — resetea la pila de refinados
         self._res_base = resultados
         self._refinados = []
-        self._pintar_resultados(resultados, ctx)
+        try:
+            self._pintar_resultados(resultados, ctx)
+        except Exception as e:
+            # Nunca dejar la app muda en 'Buscando…' por un fallo de pintado
+            logger.error(f"Error pintando resultados gen={gen}: {e}")
+            self.lbl_status.setText("❌ Error mostrando resultados — reintenta la búsqueda")
 
     def _pintar_resultados(self, resultados, ctx):
         """Arranca el pintado por tramos de un conjunto de resultados (búsqueda
@@ -3413,9 +3453,22 @@ class BuscadorPiezas(QMainWindow):
         st['i'] = fin
         if fin < len(resultados):
             self.lbl_status.setText(f"Cargando resultados… {fin}/{len(resultados)}")
-            QTimer.singleShot(0, self._llenar_tramo_tabla)
+            QTimer.singleShot(0, self._llenar_tramo_tabla_seguro)
         else:
             self._finalizar_busqueda()
+
+    def _llenar_tramo_tabla_seguro(self):
+        """Envoltorio de los tramos por QTimer: si un tramo revienta, cerrar la
+        búsqueda con mensaje en vez de dejar 'Cargando…' congelado (V2.0.3)."""
+        try:
+            self._llenar_tramo_tabla()
+        except Exception as e:
+            logger.error(f"Error en tramo de tabla: {e}")
+            try:
+                self.tabla.setSortingEnabled(True)
+                self.lbl_status.setText("❌ Error mostrando resultados — reintenta la búsqueda")
+            except Exception:
+                pass
 
     def _finalizar_busqueda(self):
         """Cierre de la búsqueda: miniaturas pendientes, galería, contadores."""

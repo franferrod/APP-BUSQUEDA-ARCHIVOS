@@ -230,12 +230,17 @@ class IndexManager:
                 'CREATE INDEX IF NOT EXISTS idx_ba_cod_ord ON buscador.archivos(codigo_orden)',
                 'CREATE INDEX IF NOT EXISTS idx_ba_origen_anio ON buscador.archivos(origen, anio)',
                 'CREATE INDEX IF NOT EXISTS idx_placas_plano ON buscador.placas_ce(num_plano)',
+                # V2.0.3 - Sondeo del filtro Placa CE (EXISTS por código en mayúsculas)
+                'CREATE INDEX IF NOT EXISTS idx_placas_plano_upper ON buscador.placas_ce(UPPER(num_plano))',
                 'CREATE INDEX IF NOT EXISTS idx_comp_nombre ON buscador.componentes(componente_nombre)',
                 'CREATE INDEX IF NOT EXISTS idx_comp_ensamblaje ON buscador.componentes(ensamblaje_ruta)',
                 # V2.0.2 - Despiece: cruce componente_nombre -> archivos por nombre en mayúsculas
                 'CREATE INDEX IF NOT EXISTS idx_ba_nombre_upper ON buscador.archivos(UPPER(nombre_archivo))',
                 # V2.0.3 - Código de pieza (primer token del nombre): plano/PDF de una pieza
                 "CREATE INDEX IF NOT EXISTS idx_ba_codigo ON buscador.archivos (UPPER(split_part(nombre_archivo, ' ', 1)))",
+                # V2.0.3 - Filtro Placa CE: índice funcional de la expresión exacta
+                "CREATE INDEX IF NOT EXISTS idx_ba_plano_e ON buscador.archivos "
+                "(UPPER(SUBSTRING(nombre_archivo FROM '^[0-9]{4,6}\\.E[0-9]+')))",
                 # V2.0.3 - Duplicados: mismo tamaño de archivo / misma miniatura (hash)
                 'CREATE INDEX IF NOT EXISTS idx_ba_tamano ON buscador.archivos(tamano_bytes)',
                 'CREATE INDEX IF NOT EXISTS idx_min_md5 ON buscador.miniaturas(md5(imagen))',
@@ -813,10 +818,15 @@ class IndexManager:
         # V2.1.0 - Filtro "Solo máquinas con placa CE": el prefijo del nombre de
         # archivo (ej. "26047.E107") debe existir como num_plano en placas_ce
         if solo_placa_ce:
+            # V2.0.3: MISMA regla (código .E del nombre presente en placas_ce)
+            # reescrita como EXISTS correlacionado: el planificador filtra
+            # primero por término/años/tipo y sondea placas_ce por índice
+            # (con IN(subconsulta) elegía un plan de ~20s; ahora ~0.1s).
             base_where += (
-                " AND UPPER(SUBSTRING(nombre_archivo FROM '^[0-9]{4,6}\\.E[0-9]+'))"
-                " IN (SELECT UPPER(num_plano) FROM buscador.placas_ce"
-                "     WHERE num_plano IS NOT NULL AND num_plano != '')"
+                " AND EXISTS (SELECT 1 FROM buscador.placas_ce pce"
+                "  WHERE pce.num_plano IS NOT NULL AND pce.num_plano != ''"
+                "    AND UPPER(pce.num_plano) ="
+                "        UPPER(SUBSTRING(nombre_archivo FROM '^[0-9]{4,6}\\.E[0-9]+')))"
             )
 
         # Filtro Global contra Temporales
