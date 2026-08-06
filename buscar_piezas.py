@@ -1446,21 +1446,37 @@ class BuscadorPiezas(QMainWindow):
         self.btn_buscar.setMinimumHeight(38)
         self.btn_buscar.setFixedWidth(120)
         self.btn_buscar.clicked.connect(self.ejecutar_busqueda)
+        # V2.0.3: esquinas derechas rectas — se une con el selector de modo (▾)
+        self.btn_buscar.setStyleSheet(
+            "border-top-right-radius: 0px; border-bottom-right-radius: 0px;")
         header_layout.addWidget(self.btn_buscar)
 
-        # V2.0.3: menú de modo de búsqueda (▾ junto a Buscar)
+        # V2.0.3: selector de modo de búsqueda, pegado al botón Buscar
         # - Por nombre (clásico)
         # - Conjuntos que LLEVEN la pieza escrita (cruza la tabla componentes)
         self.modo_busqueda = 'nombre'
         self.btn_modo_busqueda = QPushButton("▾")
-        self.btn_modo_busqueda.setObjectName("Primary")
+        self.btn_modo_busqueda.setObjectName("BtnModoBusqueda")
         self.btn_modo_busqueda.setCursor(Qt.PointingHandCursor)
         self.btn_modo_busqueda.setMinimumHeight(38)
-        self.btn_modo_busqueda.setFixedWidth(28)
-        self.btn_modo_busqueda.setToolTip("Modo de búsqueda")
+        self.btn_modo_busqueda.setFixedWidth(26)
+        self.btn_modo_busqueda.setToolTip(
+            "Modo de búsqueda:\n"
+            "· Por nombre (lo habitual)\n"
+            "· Conjuntos que lleven la pieza escrita")
+        # Sin indicador de menú nativo (dibuja una flecha extra descolgada) y
+        # visualmente unido al botón Buscar como un solo control.
+        self.btn_modo_busqueda.setStyleSheet(
+            "QPushButton#BtnModoBusqueda { background-color: #E66C32; color: #FFFFFF; "
+            "border: none; border-left: 1px solid rgba(0,0,0,0.25); "
+            "border-top-right-radius: 6px; border-bottom-right-radius: 6px; "
+            "border-top-left-radius: 0px; border-bottom-left-radius: 0px; "
+            "font-size: 11px; font-weight: 700; padding: 0px; }"
+            "QPushButton#BtnModoBusqueda:hover { background-color: #D35400; }"
+            "QPushButton#BtnModoBusqueda::menu-indicator { image: none; width: 0px; }")
         menu_modo = QMenu(self)
         self.act_modo_nombre = menu_modo.addAction("Buscar por nombre")
-        self.act_modo_contiene = menu_modo.addAction("Buscar conjuntos que lo lleven")
+        self.act_modo_contiene = menu_modo.addAction("Buscar conjuntos que lleven esa pieza")
         for a in (self.act_modo_nombre, self.act_modo_contiene):
             a.setCheckable(True)
         self.act_modo_nombre.setChecked(True)
@@ -2867,12 +2883,14 @@ class BuscadorPiezas(QMainWindow):
         self.act_modo_nombre.setChecked(not contiene)
         self.act_modo_contiene.setChecked(contiene)
         if contiene:
-            self.btn_buscar.setText("Buscar ▣")
+            # Texto explícito: cualquiera entiende qué va a hacer el botón
+            self.btn_buscar.setText("Conjuntos")
             self.btn_buscar.setToolTip(
-                "MODO: conjuntos que lleven la pieza escrita.\n"
+                "MODO ACTIVO: buscar conjuntos que lleven la pieza escrita.\n"
                 "Escribe la pieza o referencia (ej. AC30-Q6A014) y pulsa Enter:\n"
                 "saldrán los ENSAMBLAJES que la contienen.\n"
-                "Sintaxis: ; = todas las piezas · , = cualquiera de ellas.")
+                "Sintaxis: ; = que lleven todas · , = cualquiera de ellas.\n"
+                "Cambia de modo con la flecha ▾ de la derecha.")
             self.input_buscar.setPlaceholderText(
                 "Pieza o referencia que deben llevar los conjuntos…  ej: AC30-Q6A014")
         else:
