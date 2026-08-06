@@ -1,6 +1,7 @@
 # Changelog - Buscador de Piezas ALSI
 
 ## [2.0.3] - 2026-07-16 (Búsqueda en cascada — refinar resultados)
+- **Buscar conjuntos que lleven una pieza**: el botón Buscar tiene ahora un menú (▾) con "Buscar conjuntos que lo lleven" — escribes una pieza o referencia (ej. AC30-Q6A014) y salen los ENSAMBLAJES que la contienen, respetando todos los filtros (años, cliente, Placa CE…). Sintaxis: ; = que lleven todas · , = cualquiera de ellas.
 - **Refinar resultados (búsqueda en cascada)**: sobre los resultados de una búsqueda se pueden apilar niveles de refinado — "En el nombre" o "Que contenga (pieza/ensamblaje)" (ej. cintas A450 → que lleven el MOTOR REM 0.37KW). Cada nivel deja un chip quitable; Esc deshace el último nivel hasta volver a la búsqueda general. Misma sintaxis del buscador (espacio=frase, ;=Y, ,=O) y contador X → Y.
 - **Fix "connection pool exhausted"**: más conexiones simultáneas a la base de datos y espera automática en picos (búsqueda + miniaturas + preview a la vez).
 - **Fix resultados obsoletos**: al lanzar una búsqueda la rejilla se vacía al instante — ya no se quedan los resultados anteriores visibles durante el "Buscando…" (podían leerse como si fueran la respuesta del filtro nuevo).

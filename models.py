@@ -573,6 +573,86 @@ class IndexManager:
         finally:
             wrapper.close()
 
+    def buscar_ensamblajes_que_contienen(self, termino, compañeros=None, años=None,
+                                         carpetas=None, clientes=None, proyectos=None,
+                                         solo_placa_ce=False, limite=5000):
+        """Busca ENSAMBLAJES que contengan la pieza/subensamblaje indicado
+        (V2.0.3). El término se busca en los nombres de los componentes
+        (tabla 'componentes'), no en el nombre del ensamblaje.
+        Misma sintaxis del buscador: espacio=frase, ';'=Y, ','=O.
+        Devuelve filas con el MISMO formato que buscar(), para que la vista
+        las pinte igual."""
+        if not (termino or "").strip():
+            return []
+
+        if ';' in termino:
+            keywords = [k.strip() for k in termino.split(';') if k.strip()]
+            modo_and = True
+        elif ',' in termino:
+            keywords = [k.strip() for k in termino.split(',') if k.strip()]
+            modo_and = False
+        else:
+            keywords = [termino.strip()]
+            modo_and = True
+
+        base_cols = """a.nombre_archivo, a.origen, a.anio, a.cliente, a.proyecto, a.tipo_carpeta,
+                       a.codigo_proyecto, a.nombre_proyecto, a.codigo_orden, a.nombre_orden,
+                       a.ruta_completa, a.sw_material, a.sw_tratamiento, a.sw_espesor,
+                       a.sw_laser, a.sw_torno, a.sw_fresa, a.sw_soldadura, a.sw_pintura,
+                       a.sw_montaje"""
+
+        # Un EXISTS por keyword: AND = todas las piezas, OR = cualquiera
+        cond_kw = []
+        params = []
+        for kw in keywords:
+            cond_kw.append(
+                "EXISTS (SELECT 1 FROM buscador.componentes c"
+                "  WHERE c.ensamblaje_ruta = a.ruta_completa"
+                "    AND UPPER(unaccent(c.componente_nombre)) LIKE %s)")
+            params.append(f"%{self.normalizar_texto(kw)}%")
+        where = [f"({(' AND ' if modo_and else ' OR ').join(cond_kw)})"]
+
+        if compañeros:
+            where.append("a.origen IN (%s)" % ','.join(['%s'] * len(compañeros)))
+            params.extend(compañeros)
+        if años:
+            where.append("a.anio IN (%s)" % ','.join(['%s'] * len(años)))
+            params.extend([int(x) for x in años])
+        if carpetas:
+            where.append("a.tipo_carpeta IN (%s)" % ','.join(['%s'] * len(carpetas)))
+            params.extend(carpetas)
+        if clientes:
+            where.append("a.cliente IN (%s)" % ','.join(['%s'] * len(clientes)))
+            params.extend(clientes)
+        if proyectos:
+            where.append("a.codigo_proyecto IN (%s)" % ','.join(['%s'] * len(proyectos)))
+            params.extend(proyectos)
+        if solo_placa_ce:
+            where.append(
+                "EXISTS (SELECT 1 FROM buscador.placas_ce pce"
+                "  WHERE pce.num_plano IS NOT NULL AND pce.num_plano != ''"
+                "    AND UPPER(pce.num_plano) ="
+                "        UPPER(SUBSTRING(a.nombre_archivo FROM '^[0-9]{4,6}\\.E[0-9]+')))")
+
+        params.append(limite)
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute(f'''
+                SELECT {base_cols}
+                FROM buscador.archivos a
+                WHERE a.extension = '.sldasm'
+                  AND {' AND '.join(where)}
+                ORDER BY a.anio DESC NULLS LAST, a.nombre_archivo
+                LIMIT %s
+            ''', params)
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error en buscar_ensamblajes_que_contienen('{termino}'): {e}")
+            return []
+        finally:
+            wrapper.close()
+
     def filtrar_por_componente(self, rutas, termino):
         """Refinado 'que contenga' (V2.0.3): de las rutas dadas (ensamblajes de
         los resultados actuales), devuelve el SET de las que contienen algún

@@ -1009,20 +1009,28 @@ class SearchWorker(QThread):
     """V2.0.3: la consulta SQL corre fuera del hilo de UI — la app nunca se
     congela buscando (Placa CE, filtros pesados, etc.). Cada búsqueda lleva un
     número de generación: si el usuario encadena clics, las respuestas viejas
-    se descartan al llegar."""
+    se descartan al llegar.
+    modo='contiene' busca ENSAMBLAJES que lleven la pieza escrita."""
     listo = pyqtSignal(int, list)   # generacion, resultados
     fallo = pyqtSignal(int, str)    # generacion, mensaje
 
-    def __init__(self, generacion, controller, args, kwargs):
+    def __init__(self, generacion, controller, args, kwargs, modo='nombre',
+                 db=None, contiene_kwargs=None):
         super().__init__()
         self.generacion = generacion
         self.controller = controller
         self.args = args
         self.kwargs = kwargs
+        self.modo = modo
+        self.db = db
+        self.contiene_kwargs = contiene_kwargs or {}
 
     def run(self):
         try:
-            resultados = self.controller.perform_search(*self.args, **self.kwargs)
+            if self.modo == 'contiene':
+                resultados = self.db.buscar_ensamblajes_que_contienen(**self.contiene_kwargs)
+            else:
+                resultados = self.controller.perform_search(*self.args, **self.kwargs)
             self.listo.emit(self.generacion, resultados or [])
         except Exception as e:
             self.fallo.emit(self.generacion, str(e))
@@ -1366,7 +1374,8 @@ class BuscadorPiezas(QMainWindow):
         # Barra de búsqueda
         self.input_buscar = QLineEdit()
         self.input_buscar.setObjectName("SearchBox")
-        self.input_buscar.setPlaceholderText("Buscar: travesaño, cama, inox (separar por comas)")
+        self._placeholder_busqueda_original = "Buscar: travesaño, cama, inox (separar por comas)"
+        self.input_buscar.setPlaceholderText(self._placeholder_busqueda_original)
         self.input_buscar.setToolTip("Introduce palabras separadas por comas para una búsqueda inteligente")
         self.input_buscar.setMinimumHeight(38)
         # V2.0.0: buscador amplio pero con tope, y un separador elástico después,
@@ -1437,8 +1446,30 @@ class BuscadorPiezas(QMainWindow):
         self.btn_buscar.setMinimumHeight(38)
         self.btn_buscar.setFixedWidth(120)
         self.btn_buscar.clicked.connect(self.ejecutar_busqueda)
-        # Main Menu
         header_layout.addWidget(self.btn_buscar)
+
+        # V2.0.3: menú de modo de búsqueda (▾ junto a Buscar)
+        # - Por nombre (clásico)
+        # - Conjuntos que LLEVEN la pieza escrita (cruza la tabla componentes)
+        self.modo_busqueda = 'nombre'
+        self.btn_modo_busqueda = QPushButton("▾")
+        self.btn_modo_busqueda.setObjectName("Primary")
+        self.btn_modo_busqueda.setCursor(Qt.PointingHandCursor)
+        self.btn_modo_busqueda.setMinimumHeight(38)
+        self.btn_modo_busqueda.setFixedWidth(28)
+        self.btn_modo_busqueda.setToolTip("Modo de búsqueda")
+        menu_modo = QMenu(self)
+        self.act_modo_nombre = menu_modo.addAction("Buscar por nombre")
+        self.act_modo_contiene = menu_modo.addAction("Buscar conjuntos que lo lleven")
+        for a in (self.act_modo_nombre, self.act_modo_contiene):
+            a.setCheckable(True)
+        self.act_modo_nombre.setChecked(True)
+        self.act_modo_nombre.triggered.connect(
+            lambda _=False: self._set_modo_busqueda('nombre'))
+        self.act_modo_contiene.triggered.connect(
+            lambda _=False: self._set_modo_busqueda('contiene'))
+        self.btn_modo_busqueda.setMenu(menu_modo)
+        header_layout.addWidget(self.btn_modo_busqueda)
 
         main_layout.addWidget(self.header_frame)
 
@@ -2632,6 +2663,10 @@ class BuscadorPiezas(QMainWindow):
             # V2.1.0 - Toggle Placa CE activo
             if self.btn_placa_ce.isChecked():
                 chips.append(("Solo placa CE", lambda: self.btn_placa_ce.setChecked(False)))
+            # V2.0.3: modo "conjuntos que lo lleven" bien visible y quitable
+            if getattr(self, 'modo_busqueda', 'nombre') == 'contiene':
+                chips.insert(0, ("Conjuntos que lo lleven",
+                                 lambda: self._set_modo_busqueda('nombre')))
 
             for texto, cb in chips[:8]:
                 self.chips_activos_lay.addWidget(self._chip_activo(texto, cb))
@@ -2823,6 +2858,30 @@ class BuscadorPiezas(QMainWindow):
                 f"Haz clic para reindexar ahora.")
         except Exception as e:
             logger.debug(f"Error estado índice: {e}")
+
+    def _set_modo_busqueda(self, modo):
+        """Cambia entre buscar por nombre y buscar conjuntos que CONTENGAN la
+        pieza escrita (V2.0.3). Deja el buscador con pistas claras del modo."""
+        self.modo_busqueda = modo
+        contiene = (modo == 'contiene')
+        self.act_modo_nombre.setChecked(not contiene)
+        self.act_modo_contiene.setChecked(contiene)
+        if contiene:
+            self.btn_buscar.setText("Buscar ▣")
+            self.btn_buscar.setToolTip(
+                "MODO: conjuntos que lleven la pieza escrita.\n"
+                "Escribe la pieza o referencia (ej. AC30-Q6A014) y pulsa Enter:\n"
+                "saldrán los ENSAMBLAJES que la contienen.\n"
+                "Sintaxis: ; = todas las piezas · , = cualquiera de ellas.")
+            self.input_buscar.setPlaceholderText(
+                "Pieza o referencia que deben llevar los conjuntos…  ej: AC30-Q6A014")
+        else:
+            self.btn_buscar.setText("Buscar")
+            self.btn_buscar.setToolTip("Haz clic para iniciar la búsqueda (o pulsa Enter)")
+            self.input_buscar.setPlaceholderText(self._placeholder_busqueda_original)
+        self._actualizar_chips_contexto()
+        if self.input_buscar.text().strip():
+            self.ejecutar_busqueda(auto=True)
 
     def _on_placa_ce_toggled(self, activo):
         """Toggle 'Solo máquinas con placa CE' (V2.1.0)."""
@@ -3270,8 +3329,20 @@ class BuscadorPiezas(QMainWindow):
             args = (termino, comp_sel, años_sel, extensiones, carpetas_sel,
                     clientes_sel, proyectos_sel, None, props_fabricacion,
                     props_bandas, materiales_sel, tratamientos_sel, espesores_sel)
-            worker = SearchWorker(gen, self.controller, args,
-                                  {'solo_placa_ce': self.btn_placa_ce.isChecked()})
+            worker = SearchWorker(
+                gen, self.controller, args,
+                {'solo_placa_ce': self.btn_placa_ce.isChecked()},
+                modo=getattr(self, 'modo_busqueda', 'nombre'),
+                db=self.db,
+                contiene_kwargs={
+                    'termino': termino,
+                    'compañeros': comp_sel,
+                    'años': años_sel,
+                    'carpetas': carpetas_sel,
+                    'clientes': clientes_sel,
+                    'proyectos': proyectos_sel,
+                    'solo_placa_ce': self.btn_placa_ce.isChecked(),
+                })
             worker.listo.connect(self._on_resultados_busqueda)
             worker.fallo.connect(self._on_error_busqueda)
             if not hasattr(self, '_search_workers'):
