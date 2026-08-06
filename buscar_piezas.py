@@ -2554,7 +2554,10 @@ class BuscadorPiezas(QMainWindow):
             "QPushButton { background: transparent; border: none; color: #F0A377; "
             "font-weight: 800; font-size: 13px; padding: 0; } "
             "QPushButton:hover { color: #FFFFFF; }")
-        btn.clicked.connect(on_reset)
+        # V2.0.3: absorber el 'checked' que Qt pasa en clicked — si no, el bool
+        # ocupa el primer parámetro de la lambda (p. ej. lambda lw=lw: ...) y
+        # peta con "'bool' object has no attribute 'blockSignals'" (chip Clientes)
+        btn.clicked.connect(lambda _checked=False: on_reset())
         lay.addWidget(lbl)
         lay.addWidget(btn)
         return marco
