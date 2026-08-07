@@ -1,6 +1,9 @@
 # Changelog - Buscador de Piezas ALSI
 
 ## [2.0.3] - 2026-07-16 (Búsqueda en cascada — refinar resultados)
+- **Vista previa ampliable**: al arrastrar el divisor del panel derecho la imagen crece de verdad (antes se quedaba fija en un recuadro pequeño).
+- **Galería con tamaño XL y zoom libre**: además de S/M/L/XL, un deslizador para el tamaño exacto que quieras (y Ctrl + rueda del ratón sobre la galería). Se recuerda en cada equipo.
+- **Botón "Subconjuntos" (búsqueda en profundidad)**: al buscar/refinar por pieza contenida, encuentra también las que están dentro de subconjuntos, a cualquier nivel (ej. MOTOR REM 0.37: 241 conjuntos directos → 627 en total).
 - **Buscar conjuntos que lleven una pieza**: el botón Buscar tiene ahora un menú (▾) con "Buscar conjuntos que lo lleven" — escribes una pieza o referencia (ej. AC30-Q6A014) y salen los ENSAMBLAJES que la contienen, respetando todos los filtros (años, cliente, Placa CE…). Sintaxis: ; = que lleven todas · , = cualquiera de ellas.
 - **Refinar resultados (búsqueda en cascada)**: sobre los resultados de una búsqueda se pueden apilar niveles de refinado — "En el nombre" o "Que contenga (pieza/ensamblaje)" (ej. cintas A450 → que lleven el MOTOR REM 0.37KW). Cada nivel deja un chip quitable; Esc deshace el último nivel hasta volver a la búsqueda general. Misma sintaxis del buscador (espacio=frase, ;=Y, ,=O) y contador X → Y.
 - **Fix "connection pool exhausted"**: más conexiones simultáneas a la base de datos y espera automática en picos (búsqueda + miniaturas + preview a la vez).

@@ -2011,6 +2011,18 @@ class BuscadorPiezas(QMainWindow):
         self.input_refinar.returnPressed.connect(self._agregar_refinado)
         ref_lay.addWidget(self.input_refinar, stretch=1)
 
+        # V2.0.3: profundidad — buscar también dentro de los subconjuntos
+        self.btn_profundo = QPushButton("Subconjuntos")
+        self.btn_profundo.setCheckable(True)
+        self.btn_profundo.setCursor(Qt.PointingHandCursor)
+        self.btn_profundo.setToolTip(
+            "Buscar también DENTRO de los subconjuntos (cualquier nivel).\n"
+            "Desactivado: solo componentes directos del despiece (más rápido).\n"
+            "Activado: encuentra la pieza aunque esté dentro de un subconjunto\n"
+            "del conjunto (tarda unos segundos más).")
+        self.btn_profundo.toggled.connect(self._on_profundo_toggled)
+        ref_lay.addWidget(self.btn_profundo)
+
         self.chips_refinar = QHBoxLayout()
         self.chips_refinar.setSpacing(4)
         ref_lay.addLayout(self.chips_refinar)
@@ -2448,6 +2460,12 @@ class BuscadorPiezas(QMainWindow):
             self.slider_zoom.setValue(zoom)
             self.slider_zoom.blockSignals(False)
             self._aplicar_zoom_galeria(zoom, guardar=False)
+            # V2.0.3: profundidad de búsqueda (local por equipo)
+            if int(self.qsettings.value("busqueda_profunda", 0)) == 1:
+                self.btn_profundo.blockSignals(True)
+                self.btn_profundo.setChecked(True)
+                self.btn_profundo.blockSignals(False)
+                self._pintar_estilo_refinar()
             if int(self.qsettings.value("vista_modo", 0)) == 1:
                 self.btn_vista_galeria.setChecked(True)
                 self._cambiar_vista(1)
@@ -3446,6 +3464,7 @@ class BuscadorPiezas(QMainWindow):
                     'clientes': clientes_sel,
                     'proyectos': proyectos_sel,
                     'solo_placa_ce': self.btn_placa_ce.isChecked(),
+                    'profundo': self.btn_profundo.isChecked(),  # V2.0.3
                 })
             worker.listo.connect(self._on_resultados_busqueda)
             worker.fallo.connect(self._on_error_busqueda)
@@ -3714,8 +3733,31 @@ class BuscadorPiezas(QMainWindow):
             "QPushButton { background: transparent; color: #999999; border: 1px solid "
             "#3A3A3A; border-radius: 6px; padding: 3px 10px; }"
             "QPushButton:hover { color: #E66C32; border-color: #E66C32; }")
+        # Botón de profundidad: encendido = naranja sólido
+        if self.btn_profundo.isChecked():
+            self.btn_profundo.setStyleSheet(
+                "QPushButton { background: #E66C32; color: #141414; font-weight: 700; "
+                "border: 1px solid #E66C32; border-radius: 6px; padding: 3px 10px; }")
+        else:
+            self.btn_profundo.setStyleSheet(
+                "QPushButton { background: transparent; color: #999999; border: 1px solid "
+                "#3A3A3A; border-radius: 6px; padding: 3px 10px; }"
+                "QPushButton:hover { color: #E66C32; border-color: #E66C32; }")
         self.input_refinar.setPlaceholderText(
             "ej: MOTOR REM 0.37KW   (Enter aplica · ;=Y · ,=O · Esc deshace)")
+
+    def _on_profundo_toggled(self, activo):
+        """Cambia entre componentes directos y cualquier nivel (V2.0.3).
+        Afecta al refinado y al modo 'conjuntos que lo lleven'."""
+        self._pintar_estilo_refinar()
+        self.qsettings.setValue("busqueda_profunda", 1 if activo else 0)
+        if activo:
+            self.toast.show_message(
+                "Buscando también dentro de los subconjuntos\n(puede tardar unos segundos más)", 3000)
+        if getattr(self, '_refinados', []):
+            self._aplicar_refinados()          # recalcular niveles con la nueva profundidad
+        elif getattr(self, 'modo_busqueda', 'nombre') == 'contiene' and self.input_buscar.text().strip():
+            self.ejecutar_busqueda(auto=True)  # relanzar la búsqueda de conjuntos
 
     def _agregar_refinado(self):
         """Enter en la barra de refinado: apila un nivel (chip) y aplica."""
@@ -3761,7 +3803,9 @@ class BuscadorPiezas(QMainWindow):
                 if modo == 'nombre':
                     res = [d for d in res if self._casa_termino_local(d[0], term)]
                 else:
-                    keep = self.db.filtrar_por_componente([d[10] for d in res], term)
+                    keep = self.db.filtrar_por_componente(
+                        [d[10] for d in res], term,
+                        profundo=self.btn_profundo.isChecked())
                     res = [d for d in res if d[10] in keep]
         except Exception as e:
             logger.error(f"Error aplicando refinados: {e}")

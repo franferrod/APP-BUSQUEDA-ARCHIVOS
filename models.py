@@ -575,7 +575,8 @@ class IndexManager:
 
     def buscar_ensamblajes_que_contienen(self, termino, compañeros=None, años=None,
                                          carpetas=None, clientes=None, proyectos=None,
-                                         solo_placa_ce=False, limite=5000):
+                                         solo_placa_ce=False, limite=5000,
+                                         profundo=False):
         """Busca ENSAMBLAJES que contengan la pieza/subensamblaje indicado
         (V2.0.3). El término se busca en los nombres de los componentes
         (tabla 'componentes'), no en el nombre del ensamblaje.
@@ -601,16 +602,33 @@ class IndexManager:
                        a.sw_laser, a.sw_torno, a.sw_fresa, a.sw_soldadura, a.sw_pintura,
                        a.sw_montaje"""
 
-        # Un EXISTS por keyword: AND = todas las piezas, OR = cualquiera
-        cond_kw = []
         params = []
-        for kw in keywords:
-            cond_kw.append(
-                "EXISTS (SELECT 1 FROM buscador.componentes c"
-                "  WHERE c.ensamblaje_ruta = a.ruta_completa"
-                "    AND UPPER(unaccent(c.componente_nombre)) LIKE %s)")
-            params.append(f"%{self.normalizar_texto(kw)}%")
-        where = [f"({(' AND ' if modo_and else ' OR ').join(cond_kw)})"]
+        if profundo:
+            # V2.0.3: cualquier nivel — se resuelve el conjunto de rutas con el
+            # CTE recursivo (por keyword) y se filtra por pertenencia.
+            wrapper_p = self.get_connection()
+            try:
+                cur_p = wrapper_p._conn.cursor()
+                conjuntos = [self._rutas_que_contienen(cur_p, kw, True) for kw in keywords]
+            finally:
+                wrapper_p.close()
+            rutas_ok = conjuntos[0] if conjuntos else set()
+            for c in conjuntos[1:]:
+                rutas_ok = (rutas_ok & c) if modo_and else (rutas_ok | c)
+            if not rutas_ok:
+                return []
+            where = ["a.ruta_completa = ANY(%s)"]
+            params.append(list(rutas_ok))
+        else:
+            # Un EXISTS por keyword: AND = todas las piezas, OR = cualquiera
+            cond_kw = []
+            for kw in keywords:
+                cond_kw.append(
+                    "EXISTS (SELECT 1 FROM buscador.componentes c"
+                    "  WHERE c.ensamblaje_ruta = a.ruta_completa"
+                    "    AND UPPER(unaccent(c.componente_nombre)) LIKE %s)")
+                params.append(f"%{self.normalizar_texto(kw)}%")
+            where = [f"({(' AND ' if modo_and else ' OR ').join(cond_kw)})"]
 
         if compañeros:
             where.append("a.origen IN (%s)" % ','.join(['%s'] * len(compañeros)))
@@ -653,7 +671,37 @@ class IndexManager:
         finally:
             wrapper.close()
 
-    def filtrar_por_componente(self, rutas, termino):
+    # SQL recursivo compartido: ensamblajes que contienen el término a
+    # CUALQUIER profundidad (pieza dentro de subconjunto dentro de conjunto).
+    # UNION (no UNION ALL) deduplica y corta ciclos automáticamente.
+    _SQL_CONTIENE_PROFUNDO = """
+        WITH RECURSIVE hallados AS (
+            SELECT DISTINCT c.ensamblaje_ruta AS ruta
+            FROM buscador.componentes c
+            WHERE UPPER(unaccent(c.componente_nombre)) LIKE %s
+          UNION
+            SELECT c2.ensamblaje_ruta
+            FROM hallados h
+            JOIN buscador.archivos a ON a.ruta_completa = h.ruta
+            JOIN buscador.componentes c2
+              ON UPPER(c2.componente_nombre) = UPPER(a.nombre_archivo)
+        )
+        SELECT ruta FROM hallados
+    """
+
+    def _rutas_que_contienen(self, cursor, keyword, profundo):
+        """Conjunto de rutas de ensamblajes que contienen la keyword.
+        profundo=False: componentes directos. True: cualquier nivel."""
+        kw = f"%{self.normalizar_texto(keyword)}%"
+        if profundo:
+            cursor.execute(self._SQL_CONTIENE_PROFUNDO, (kw,))
+        else:
+            cursor.execute(
+                "SELECT DISTINCT ensamblaje_ruta FROM buscador.componentes "
+                "WHERE UPPER(unaccent(componente_nombre)) LIKE %s", (kw,))
+        return {r[0] for r in cursor.fetchall()}
+
+    def filtrar_por_componente(self, rutas, termino, profundo=False):
         """Refinado 'que contenga' (V2.0.3): de las rutas dadas (ensamblajes de
         los resultados actuales), devuelve el SET de las que contienen algún
         componente directo (pieza o subensamblaje) cuyo nombre casa con el
@@ -674,15 +722,19 @@ class IndexManager:
         wrapper = self.get_connection()
         try:
             cursor = wrapper._conn.cursor()
+            pedidas = set(rutas)
             conjuntos = []
             for kw in keywords:
-                kw_norm = self.normalizar_texto(kw)
-                cursor.execute('''
-                    SELECT DISTINCT ensamblaje_ruta FROM buscador.componentes
-                    WHERE ensamblaje_ruta = ANY(%s)
-                      AND UPPER(unaccent(componente_nombre)) LIKE %s
-                ''', (list(rutas), f'%{kw_norm}%'))
-                conjuntos.append({r[0] for r in cursor.fetchall()})
+                if profundo:
+                    # cualquier nivel: se calcula global y se intersecta
+                    conjuntos.append(self._rutas_que_contienen(cursor, kw, True) & pedidas)
+                else:
+                    cursor.execute('''
+                        SELECT DISTINCT ensamblaje_ruta FROM buscador.componentes
+                        WHERE ensamblaje_ruta = ANY(%s)
+                          AND UPPER(unaccent(componente_nombre)) LIKE %s
+                    ''', (list(rutas), f'%{self.normalizar_texto(kw)}%'))
+                    conjuntos.append({r[0] for r in cursor.fetchall()})
             if not conjuntos:
                 return set()
             resultado = conjuntos[0]
