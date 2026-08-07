@@ -1,5 +1,15 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.4] - 2026-08-07 (Conjuntos que llevan una pieza, zoom de galería y profundidad)
+- **Buscar conjuntos que lleven una pieza**: junto al botón Buscar hay un selector (▾) con "Buscar conjuntos que lleven esa pieza" — escribes una referencia (ej. AC30-Q6A014) y salen los ENSAMBLAJES que la contienen, respetando todos los filtros (años, cliente, Placa CE…). Sintaxis: `;` = que lleven todas · `,` = cualquiera de ellas.
+- **Refinar resultados (búsqueda en cascada)**: sobre los resultados puedes ir acotando por piezas que deben contener, encadenando niveles. Cada nivel deja un chip quitable y Esc deshace el último hasta volver a la búsqueda general.
+- **Botón "Subconjuntos" (profundidad)**: encuentra la pieza aunque esté dentro de un subconjunto, a cualquier nivel (ej. MOTOR REM 0.37: 241 conjuntos directos → 627 en total).
+- **Vista previa ampliable**: al arrastrar el divisor del panel derecho la imagen crece de verdad (antes se quedaba en un recuadro fijo).
+- **Galería con XL y zoom libre**: presets S/M/L/XL, deslizador para el tamaño exacto y Ctrl + rueda del ratón. Se recuerda en cada equipo.
+- **Última búsqueda por equipo**: la app arranca con la última búsqueda de cada ordenador (antes se compartía la de quien buscara por último).
+- **Fix**: error al quitar el chip del filtro de Clientes ("'bool' object has no attribute 'blockSignals'").
+- **Fix**: tras pulsar "Actualizar ahora" la app vuelve a abrirse sola (fallaba el rearranque con "Failed to load Python DLL").
+
 ## [2.0.3] - 2026-07-16 (Búsqueda en cascada — refinar resultados)
 - **Vista previa ampliable**: al arrastrar el divisor del panel derecho la imagen crece de verdad (antes se quedaba fija en un recuadro pequeño).
 - **Galería con tamaño XL y zoom libre**: además de S/M/L/XL, un deslizador para el tamaño exacto que quieras (y Ctrl + rueda del ratón sobre la galería). Se recuerda en cada equipo.
