@@ -23,7 +23,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QMenu, QAction, QAbstractItemView, QListWidget, QListWidgetItem,
                              QDialog, QDialogButtonBox, QSplitter, QGroupBox, QFrame, QScrollArea,
                              QCheckBox, QSizePolicy, QGraphicsOpacityEffect, QTextBrowser, QFileDialog, QListView, QGraphicsDropShadowEffect,
-                             QStyledItemDelegate, QStyleOptionViewItem, QStyle, QButtonGroup, QStackedWidget)
+                             QStyledItemDelegate, QStyleOptionViewItem, QStyle, QButtonGroup, QStackedWidget,
+                             QSlider)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSize, QPoint, QMimeData, QUrl, QTimer, QPropertyAnimation, QEvent, QSettings, QRect, QObject
 from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage, QPainter, QPen, QPalette
 from PyQt5.QtWidgets import QFileIconProvider
@@ -788,6 +789,15 @@ class GaleriaArrastrable(QListWidget):
         # V2.0.0: NO uniformItemSizes — cacheaba el tamaño del primer item y no
         # recalculaba la zona de texto al cambiar S/M/L (etiquetas invisibles hasta
         # forzar un M→L). Sin él, cada cambio de rejilla recompone bien el texto.
+        self.zoom_callback = None  # V2.0.3: lo fija la ventana (Ctrl+rueda)
+
+    def wheelEvent(self, event):
+        """V2.0.3: Ctrl + rueda = zoom de las tarjetas (como en el Explorador)."""
+        if event.modifiers() == Qt.ControlModifier and self.zoom_callback:
+            self.zoom_callback(event.angleDelta().y())
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def mimeData(self, items):
         """file:/// URLs para arrastrar a SolidWorks (idéntico a TablaArrastrable)."""
@@ -890,10 +900,16 @@ class PreviewImagenLabel(QLabel):
         if self._pm is None or self._pm.isNull():
             return super().paintEvent(event)
         r = self.contentsRect()
-        # escalar a caber en el rect, pero nunca ampliar por encima del original
+        # Escalar para caber en el rect (KeepAspectRatio). V2.0.3: se permite
+        # AMPLIAR hasta 2.5x el original — así al ensanchar el panel la vista
+        # previa crece de verdad; el tope evita el pixelado feo cuando la
+        # miniatura cacheada es pequeña (256px).
+        MAX_AMPLIACION = 2.5
         destino = self._pm.size().scaled(r.size(), Qt.KeepAspectRatio)
-        destino.setWidth(min(destino.width(), self._pm.width()))
-        destino.setHeight(min(destino.height(), self._pm.height()))
+        tope_w = int(self._pm.width() * MAX_AMPLIACION)
+        tope_h = int(self._pm.height() * MAX_AMPLIACION)
+        destino.setWidth(min(destino.width(), tope_w))
+        destino.setHeight(min(destino.height(), tope_h))
         escalado = self._pm.scaled(destino, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         x = r.x() + (r.width() - escalado.width()) // 2
         y = r.y() + (r.height() - escalado.height()) // 2
@@ -1854,9 +1870,11 @@ class BuscadorPiezas(QMainWindow):
             seg_dens_layout.addWidget(b)
         toolbar_layout.addWidget(self.seg_dens_container)
 
-        # Segmento S/M/L: tamaño de tarjeta en galería (solo activo en vista Galería)
-        self.grupo_tam_galeria, botones_tam = _crear_segmento([("S", None), ("M", None), ("L", None)])
-        self.btn_tam_s, self.btn_tam_m, self.btn_tam_l = botones_tam
+        # Segmento S/M/L/XL + barra de zoom continua (solo en vista Galería).
+        # V2.0.3: se añade XL y un deslizador para cualquier tamaño intermedio.
+        self.grupo_tam_galeria, botones_tam = _crear_segmento(
+            [("S", None), ("M", None), ("L", None), ("XL", None)])
+        self.btn_tam_s, self.btn_tam_m, self.btn_tam_l, self.btn_tam_xl = botones_tam
         self.btn_tam_m.setChecked(True)
         self.grupo_tam_galeria.buttonClicked[int].connect(self._cambiar_tam_galeria)
         self.seg_tam_container = QWidget()
@@ -1867,6 +1885,25 @@ class BuscadorPiezas(QMainWindow):
             seg_tam_layout.addWidget(b)
         self.seg_tam_container.setVisible(False)  # Solo visible en vista Galería
         toolbar_layout.addWidget(self.seg_tam_container)
+
+        # Deslizador de zoom de la galería (72–420 px de icono)
+        self.slider_zoom = QSlider(Qt.Horizontal)
+        self.slider_zoom.setMinimum(self.ZOOM_MIN)
+        self.slider_zoom.setMaximum(self.ZOOM_MAX)
+        self.slider_zoom.setValue(128)
+        self.slider_zoom.setFixedWidth(120)
+        self.slider_zoom.setToolTip(
+            "Tamaño de las tarjetas de la galería.\n"
+            "Arrastra para el tamaño que quieras (o usa S/M/L/XL).\n"
+            "Atajo: Ctrl + rueda del ratón sobre la galería.")
+        self.slider_zoom.setStyleSheet(
+            "QSlider::groove:horizontal { height: 4px; background: #333333; border-radius: 2px; }"
+            "QSlider::handle:horizontal { width: 12px; height: 12px; margin: -5px 0; "
+            "background: #E66C32; border-radius: 6px; }"
+            "QSlider::sub-page:horizontal { background: #E66C32; border-radius: 2px; }")
+        self.slider_zoom.valueChanged.connect(self._on_zoom_galeria)
+        self.slider_zoom.setVisible(False)  # Solo en vista Galería
+        toolbar_layout.addWidget(self.slider_zoom)
 
         toolbar_layout.addStretch()
 
@@ -1918,6 +1955,7 @@ class BuscadorPiezas(QMainWindow):
 
         # Vista Galería (V2.0.0)
         self.galeria = GaleriaArrastrable()
+        self.galeria.zoom_callback = self._zoom_galeria_rueda  # V2.0.3: Ctrl+rueda
         pal_gal = self.galeria.palette()
         for grupo_pal in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
             pal_gal.setColor(grupo_pal, QPalette.Highlight, QColor("#3A2C21"))
@@ -2014,7 +2052,11 @@ class BuscadorPiezas(QMainWindow):
         #     SolidWorks (fondo claro) queda enmarcada intencionalmente V2.0.1 ---
         self.preview_image_card = QFrame()
         self.preview_image_card.setObjectName("PreviewImage")
-        self.preview_image_card.setFixedHeight(210)
+        # V2.0.3: altura ELÁSTICA — al ensanchar el panel (arrastrando el
+        # divisor) la imagen crece con él; antes estaba fija a 210px y la
+        # vista previa se quedaba pequeña por muy ancho que lo pusieras.
+        self.preview_image_card.setMinimumHeight(210)
+        self.preview_image_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         img_card_lay = QVBoxLayout(self.preview_image_card)
         img_card_lay.setContentsMargins(8, 8, 8, 8)
         # V2.0.1: label que pinta la imagen en su paintEvent → nunca desborda el
@@ -2031,7 +2073,8 @@ class BuscadorPiezas(QMainWindow):
         self.preview_opacity = QGraphicsOpacityEffect()
         self.anim_opacity = QPropertyAnimation(self.preview_opacity, b"opacity")
         self.anim_opacity.setDuration(400)
-        preview_layout.addWidget(self.preview_image_card)
+        # stretch=1: el espacio libre del panel va a la IMAGEN (V2.0.3)
+        preview_layout.addWidget(self.preview_image_card, stretch=1)
 
         # --- Nombre del archivo ---
         self.lbl_preview_nombre = QLabel("Seleccione un archivo")
@@ -2097,8 +2140,9 @@ class BuscadorPiezas(QMainWindow):
         self.lbl_preview_proyecto.setVisible(False)
         self.lbl_preview_tamaño = self._meta_vals['tamano']
 
-        preview_layout.addStretch()
-        
+        # V2.0.3: sin stretch aquí — el espacio libre lo toma la tarjeta de
+        # imagen (stretch=1), que es lo que interesa agrandar al ensanchar.
+
         tip_drag_layout = QHBoxLayout()
         tip_drag_layout.setSpacing(6)
         tip_drag_icon = QLabel()
@@ -2393,9 +2437,17 @@ class BuscadorPiezas(QMainWindow):
                     if col in self.columnas_actions:
                         self.columnas_actions[col].setChecked(False)
                         self.tabla.setColumnHidden(col, True)
-            tam = int(self.qsettings.value("galeria_tam", 1))
-            [self.btn_tam_s, self.btn_tam_m, self.btn_tam_l][max(0, min(tam, 2))].setChecked(True)
-            self._aplicar_tam_galeria(tam)
+            # V2.0.3: se restaura el zoom exacto (px). Si el equipo solo tiene la
+            # preferencia antigua S/M/L, se traduce a su preset.
+            zoom = self.qsettings.value("galeria_zoom", None)
+            if zoom is None:
+                tam = int(self.qsettings.value("galeria_tam", 1))
+                zoom = self.TAM_GALERIA_PX[max(0, min(tam, len(self.TAM_GALERIA_PX) - 1))]
+            zoom = max(self.ZOOM_MIN, min(int(zoom), self.ZOOM_MAX))
+            self.slider_zoom.blockSignals(True)
+            self.slider_zoom.setValue(zoom)
+            self.slider_zoom.blockSignals(False)
+            self._aplicar_zoom_galeria(zoom, guardar=False)
             if int(self.qsettings.value("vista_modo", 0)) == 1:
                 self.btn_vista_galeria.setChecked(True)
                 self._cambiar_vista(1)
@@ -2416,24 +2468,58 @@ class BuscadorPiezas(QMainWindow):
         # Cómoda/Compacta solo aplica a la Lista; S/M/L solo a la Galería
         self.seg_dens_container.setVisible(index == 0)
         self.seg_tam_container.setVisible(index == 1)
+        self.slider_zoom.setVisible(index == 1)  # V2.0.3: zoom solo en galería
         if index == 1:
             self._sincronizar_galeria()
         self.qsettings.setValue("vista_modo", index)
 
-    TAM_GALERIA = [(96, (150, 175)), (128, (180, 210)), (160, (220, 250))]  # S, M, L
+    # V2.0.3: presets S/M/L/XL en px de icono + zoom continuo con el deslizador
+    ZOOM_MIN, ZOOM_MAX = 72, 420
+    TAM_GALERIA_PX = [96, 128, 160, 260]  # S, M, L, XL
 
-    def _aplicar_tam_galeria(self, index):
-        icono, grid = self.TAM_GALERIA[max(0, min(index, 2))]
+    def _grid_para_icono(self, icono):
+        """Celda que envuelve al icono dejando sitio para 2-3 líneas de texto."""
+        return QSize(icono + 54, icono + int(icono * 0.28) + 42)
+
+    def _aplicar_zoom_galeria(self, icono, guardar=True):
+        """Aplica un tamaño de icono ARBITRARIO a la galería (V2.0.3)."""
+        icono = max(self.ZOOM_MIN, min(int(icono), self.ZOOM_MAX))
         self.galeria.setIconSize(QSize(icono, icono))
-        self.galeria.setGridSize(QSize(*grid))
+        self.galeria.setGridSize(self._grid_para_icono(icono))
         # Forzar recomposición inmediata para que las etiquetas se pinten ya
-        # (sin esperar a otra interacción)
         self.galeria.doItemsLayout()
         self.galeria.viewport().update()
+        # Marcar el preset correspondiente (si coincide) sin relanzar señales
+        botones = [self.btn_tam_s, self.btn_tam_m, self.btn_tam_l, self.btn_tam_xl]
+        for b, px in zip(botones, self.TAM_GALERIA_PX):
+            b.blockSignals(True)
+            b.setChecked(px == icono)
+            b.blockSignals(False)
+        if guardar:
+            self.qsettings.setValue("galeria_zoom", icono)
+        return icono
+
+    def _aplicar_tam_galeria(self, index):
+        """Preset S/M/L/XL (compatibilidad con la preferencia antigua)."""
+        icono = self.TAM_GALERIA_PX[max(0, min(index, len(self.TAM_GALERIA_PX) - 1))]
+        self.slider_zoom.blockSignals(True)
+        self.slider_zoom.setValue(icono)
+        self.slider_zoom.blockSignals(False)
+        self._aplicar_zoom_galeria(icono)
 
     def _cambiar_tam_galeria(self, index):
         self._aplicar_tam_galeria(index)
         self.qsettings.setValue("galeria_tam", index)
+
+    def _on_zoom_galeria(self, valor):
+        """Deslizador movido: tamaño libre."""
+        self._aplicar_zoom_galeria(valor)
+
+    def _zoom_galeria_rueda(self, delta):
+        """Ctrl + rueda sobre la galería: zoom en pasos de 16 px (V2.0.3)."""
+        paso = 16 if delta > 0 else -16
+        nuevo = max(self.ZOOM_MIN, min(self.slider_zoom.value() + paso, self.ZOOM_MAX))
+        self.slider_zoom.setValue(nuevo)  # dispara _on_zoom_galeria
 
     def _sincronizar_galeria(self):
         """Reconstruye las tarjetas de la galería a partir de la tabla (fuente
