@@ -319,10 +319,19 @@ def upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props):
 
 
 def indexar_completo(conn, cursor, origen, ruta_base):
-    """Indexación completa: borra todo el origen y reindexa."""
+    """Indexación completa del origen (V2.0.3: SEGURA ANTE INTERRUPCIONES).
+
+    Antes borraba el origen ANTES de reindexar: si el proceso moría a mitad
+    (apagón, cierre del PC, kill), la BD se quedaba con un origen a medias y
+    los archivos no reindexados DESAPARECÍAN de las búsquedas. Ocurrió el
+    2026-08-06: BIBLIOTECA_3D quedó en 4000 de 7927 archivos.
+
+    Ahora es 'mark & sweep': se upsertan todos los archivos vistos (marcando
+    indexado_en) y SOLO al terminar el recorrido se borran los que ya no
+    existen. Si el proceso se corta, no se pierde nada: la BD conserva los
+    datos anteriores (a lo sumo algo desactualizados)."""
     logger.info(f"  Indexación COMPLETA de {origen}...")
-    cursor.execute("DELETE FROM buscador.archivos WHERE origen = %s", (origen,))
-    conn.commit()
+    marca_inicio = datetime.datetime.now()
 
     tipo_map = {'BIBLIOTECA_3D': 'BIBLIOTECA', 'ALSI_ESTANDAR': 'ESTANDAR'}
     count = 0
@@ -361,6 +370,28 @@ def indexar_completo(conn, cursor, origen, ruta_base):
                 continue
 
     conn.commit()
+
+    # SWEEP: solo tras recorrer TODO el origen se borran los que ya no existen.
+    # Salvaguarda: si el recorrido devolvió muchos menos archivos de los que hay
+    # en BD (recorrido incompleto por red/permisos), no se borra nada.
+    try:
+        cursor.execute("SELECT count(*) FROM buscador.archivos WHERE origen = %s", (origen,))
+        en_bd = cursor.fetchone()[0]
+        if count and (not en_bd or count >= en_bd * 0.5):
+            cursor.execute(
+                "DELETE FROM buscador.archivos WHERE origen = %s AND indexado_en < %s",
+                (origen, marca_inicio))
+            borrados = cursor.rowcount
+            conn.commit()
+            if borrados:
+                logger.info(f"  {origen}: {borrados} rutas obsoletas eliminadas.")
+        else:
+            logger.warning(f"  {origen}: recorrido incompleto ({count} vistos frente a "
+                           f"{en_bd} en BD) — NO se purga para no perder datos.")
+    except Exception as ex:
+        logger.warning(f"  {origen}: fallo en la purga final: {ex}")
+        conn.rollback()
+
     logger.info(f"  {origen}: {count} archivos indexados.")
     return count
 
