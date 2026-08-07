@@ -2499,6 +2499,19 @@ class BuscadorPiezas(QMainWindow):
         """Celda que envuelve al icono dejando sitio para 2-3 líneas de texto."""
         return QSize(icono + 54, icono + int(icono * 0.28) + 42)
 
+    def _pixmap_para_galeria(self, pm):
+        """Escala un pixmap AL TAMAÑO DE ICONO ACTUAL de la galería (V2.0.3).
+        Clave: QIcon nunca amplía por encima del pixmap que se le da — si se
+        guardaba a 160px, en XL (260) las tarjetas se separaban pero la imagen
+        seguía igual de pequeña. Se permite ampliar hasta 2x el original para
+        que XL/zoom grande se vean de verdad sin pixelar en exceso."""
+        if pm is None or pm.isNull():
+            return pm
+        objetivo = self.galeria.iconSize().width() or 128
+        tope = int(max(pm.width(), pm.height()) * 2)
+        objetivo = min(objetivo, tope)
+        return pm.scaled(objetivo, objetivo, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
     def _aplicar_zoom_galeria(self, icono, guardar=True):
         """Aplica un tamaño de icono ARBITRARIO a la galería (V2.0.3)."""
         icono = max(self.ZOOM_MIN, min(int(icono), self.ZOOM_MAX))
@@ -2507,6 +2520,16 @@ class BuscadorPiezas(QMainWindow):
         # Forzar recomposición inmediata para que las etiquetas se pinten ya
         self.galeria.doItemsLayout()
         self.galeria.viewport().update()
+        # Los iconos ya creados tienen el tamaño ANTERIOR: hay que regenerarlos
+        # para que la imagen crezca (no solo la celda). Con debounce para que
+        # arrastrar el deslizador no reconstruya la galería en cada píxel.
+        if self.stack_vistas.currentIndex() == 1 and self.galeria.count():
+            if not hasattr(self, '_timer_regen_galeria'):
+                self._timer_regen_galeria = QTimer(self)
+                self._timer_regen_galeria.setSingleShot(True)
+                self._timer_regen_galeria.setInterval(180)
+                self._timer_regen_galeria.timeout.connect(self._sincronizar_galeria)
+            self._timer_regen_galeria.start()
         # Marcar el preset correspondiente (si coincide) sin relanzar señales
         botones = [self.btn_tam_s, self.btn_tam_m, self.btn_tam_l, self.btn_tam_xl]
         for b, px in zip(botones, self.TAM_GALERIA_PX):
@@ -2599,14 +2622,13 @@ class BuscadorPiezas(QMainWindow):
                 if data_bd:
                     img = QImage.fromData(data_bd)
                     if not img.isNull():
-                        card.setIcon(QIcon(QPixmap.fromImage(img).scaled(
-                            160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                        card.setIcon(QIcon(self._pixmap_para_galeria(
+                            QPixmap.fromImage(img))))
                         icono_puesto = True
                 if not icono_puesto:
                     pm_full = self.cache_miniaturas.get((ruta, 256))
                     if pm_full and not pm_full.isNull():
-                        card.setIcon(QIcon(pm_full.scaled(
-                            160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                        card.setIcon(QIcon(self._pixmap_para_galeria(pm_full)))
                     else:
                         ext = Path(nombre).suffix.lower()
                         if ext not in self._badge_cache:
@@ -3603,11 +3625,15 @@ class BuscadorPiezas(QMainWindow):
                 if data_bd:
                     img = QImage.fromData(data_bd)
                     if not img.isNull():
-                        # 160px = tamaño L de la galería (que reutiliza este icono);
-                        # en la tabla se muestra reducido sin pérdida
-                        pm = QPixmap.fromImage(img).scaled(
-                            160, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                        # V2.0.3: resolución nativa (tope 320px). QIcon NUNCA
+                        # amplía: guardarla a 160 hacía que en galería XL/zoom
+                        # la imagen no creciera (solo se separaban las tarjetas).
+                        pm = QPixmap.fromImage(img)
+                        if pm.width() > 320 or pm.height() > 320:
+                            pm = pm.scaled(320, 320, Qt.KeepAspectRatio,
+                                           Qt.SmoothTransformation)
                         thumb_item.setIcon(QIcon(pm))
+                        self.cache_miniaturas[(ruta, 256)] = pm
                         puesta = True
                 if not puesta:
                     ext_badge = Path(str(data[0])).suffix.lower()
@@ -4353,11 +4379,12 @@ class BuscadorPiezas(QMainWindow):
                 pixmap = QPixmap.fromImage(image)
 
             if pixmap and not pixmap.isNull():
-                # V2.0.3: acotar memoria — a 160px (nítido en galería L) en vez
-                # del pixmap completo; con 5000 resultados la diferencia es de
-                # cientos de MB. La caché limita a ~100 entradas igualmente.
-                pixmap = pixmap.scaled(160, 160, Qt.KeepAspectRatio,
-                                       Qt.SmoothTransformation)
+                # V2.0.3: guardar a 320px — suficiente para la galería XL/zoom
+                # (antes 160px: QIcon no amplía y en XL la imagen no crecía) y
+                # con memoria acotada (la caché limita a ~100 entradas).
+                if pixmap.width() > 320 or pixmap.height() > 320:
+                    pixmap = pixmap.scaled(320, 320, Qt.KeepAspectRatio,
+                                           Qt.SmoothTransformation)
                 if len(self.cache_miniaturas) > 100:
                     self.cache_miniaturas.clear()
                 self.cache_miniaturas[(ruta, 256)] = pixmap
@@ -4369,7 +4396,7 @@ class BuscadorPiezas(QMainWindow):
                 try:
                     card = self._galeria_items.get(ruta)
                     if card:
-                        card.setIcon(QIcon(pixmap))
+                        card.setIcon(QIcon(self._pixmap_para_galeria(pixmap)))
                 except RuntimeError:
                     pass
                 
