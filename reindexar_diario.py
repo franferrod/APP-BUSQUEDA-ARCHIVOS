@@ -331,7 +331,12 @@ def indexar_completo(conn, cursor, origen, ruta_base):
     existen. Si el proceso se corta, no se pierde nada: la BD conserva los
     datos anteriores (a lo sumo algo desactualizados)."""
     logger.info(f"  Indexación COMPLETA de {origen}...")
-    marca_inicio = datetime.datetime.now()
+    # V2.0.3-fix2: NADA de relojes. Se acumulan las rutas realmente vistas y al
+    # final se borran solo las que faltan. (La versión con marca de tiempo
+    # comparaba la hora LOCAL de Windows con indexado_en, que PostgreSQL
+    # escribe en UTC: al ir la BD 2h "por detrás", el barrido consideraba
+    # obsoleto TODO lo recién indexado y vació el origen. 2026-08-12.)
+    vistos = set()
 
     tipo_map = {'BIBLIOTECA_3D': 'BIBLIOTECA', 'ALSI_ESTANDAR': 'ESTANDAR'}
     count = 0
@@ -361,6 +366,7 @@ def indexar_completo(conn, cursor, origen, ruta_base):
                     sw_props = extraer_sw_props(full_path, preview=True)
                 upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props)
                 guardar_miniatura_bd(cursor, full_path, sw_props, int(stats.st_mtime))
+                vistos.add(full_path)
                 count += 1
                 if count % 2000 == 0:
                     conn.commit()
@@ -371,23 +377,28 @@ def indexar_completo(conn, cursor, origen, ruta_base):
 
     conn.commit()
 
-    # SWEEP: solo tras recorrer TODO el origen se borran los que ya no existen.
-    # Salvaguarda: si el recorrido devolvió muchos menos archivos de los que hay
-    # en BD (recorrido incompleto por red/permisos), no se borra nada.
+    # SWEEP por CONJUNTO DE RUTAS (sin relojes ni zonas horarias): solo tras
+    # recorrer TODO el origen se borran las rutas que ya no existen en el NAS.
+    # Triple salvaguarda: nada visto -> no se toca; recorrido < 50% de lo que
+    # hay en BD -> no se toca; y solo se borra lo que NO está en 'vistos'.
     try:
-        cursor.execute("SELECT count(*) FROM buscador.archivos WHERE origen = %s", (origen,))
-        en_bd = cursor.fetchone()[0]
-        if count and (not en_bd or count >= en_bd * 0.5):
-            cursor.execute(
-                "DELETE FROM buscador.archivos WHERE origen = %s AND indexado_en < %s",
-                (origen, marca_inicio))
-            borrados = cursor.rowcount
-            conn.commit()
-            if borrados:
-                logger.info(f"  {origen}: {borrados} rutas obsoletas eliminadas.")
+        cursor.execute("SELECT ruta_completa FROM buscador.archivos WHERE origen = %s",
+                       (origen,))
+        en_bd = {r[0] for r in cursor.fetchall()}
+        if not vistos:
+            logger.warning(f"  {origen}: 0 archivos vistos — NO se purga nada.")
+        elif en_bd and len(vistos) < len(en_bd) * 0.5:
+            logger.warning(f"  {origen}: recorrido incompleto ({len(vistos)} vistos frente "
+                           f"a {len(en_bd)} en BD) — NO se purga para no perder datos.")
         else:
-            logger.warning(f"  {origen}: recorrido incompleto ({count} vistos frente a "
-                           f"{en_bd} en BD) — NO se purga para no perder datos.")
+            huerfanas = list(en_bd - vistos)
+            LOTE = 500
+            for i in range(0, len(huerfanas), LOTE):
+                cursor.execute("DELETE FROM buscador.archivos WHERE ruta_completa = ANY(%s)",
+                               (huerfanas[i:i + LOTE],))
+                conn.commit()
+            if huerfanas:
+                logger.info(f"  {origen}: {len(huerfanas)} rutas obsoletas eliminadas.")
     except Exception as ex:
         logger.warning(f"  {origen}: fallo en la purga final: {ex}")
         conn.rollback()
@@ -610,6 +621,25 @@ def main():
 
         # 4. Placas CE (diario, barato: ~20 Excels) — V2.0.3
         actualizar_placas_ce(conn, cursor)
+
+        # 5. RED DE SEGURIDAD (V2.0.3-fix2): tras cada reindexado se comprueba
+        # que ningún origen se haya quedado vacío o claramente descuadrado.
+        # Si pasa, se AVISA en el log con [ALERTA] (nunca borra ni "arregla"
+        # solo: el objetivo es enterarse el mismo día, no otra sorpresa).
+        try:
+            for org in ('BIBLIOTECA_3D', 'ALSI_ESTANDAR', 'PROYECTOS'):
+                cursor.execute("SELECT count(*) FROM buscador.archivos WHERE origen=%s", (org,))
+                n = cursor.fetchone()[0]
+                if n == 0:
+                    logger.error(f"[ALERTA] El origen {org} está VACÍO en la base de datos. "
+                                 f"Revisar acceso al NAS y relanzar la indexación.")
+                elif org in ok_origenes and n < 100:
+                    logger.error(f"[ALERTA] El origen {org} solo tiene {n} archivos. "
+                                 f"Parece incompleto.")
+                else:
+                    logger.info(f"  Verificación {org}: {n} archivos en BD.")
+        except Exception as ex:
+            logger.warning(f"Verificación final falló: {ex}")
 
         if not ok_origenes:
             # Ningún origen accesible: NO tocar el sello de "última indexación"
