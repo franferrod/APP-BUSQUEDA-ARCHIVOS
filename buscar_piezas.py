@@ -2503,13 +2503,17 @@ class BuscadorPiezas(QMainWindow):
         """Escala un pixmap AL TAMAÑO DE ICONO ACTUAL de la galería (V2.0.3).
         Clave: QIcon nunca amplía por encima del pixmap que se le da — si se
         guardaba a 160px, en XL (260) las tarjetas se separaban pero la imagen
-        seguía igual de pequeña. Se permite ampliar hasta 2x el original para
-        que XL/zoom grande se vean de verdad sin pixelar en exceso."""
+        seguía igual de pequeña.
+
+        Parche sobre V2.0.4: SIN tope por resolución nativa. El tope anterior (2x el
+        original) hacía que los DWG dejasen de crecer a mitad del deslizador:
+        su previsualización embebida es de 163x97 px (la de SolidWorks/PDF es
+        de 256), así que se congelaban en 326 px mientras el resto llegaba a
+        420. Ahora TODAS las tarjetas escalan al mismo lado mayor, sea cual sea
+        el formato de origen."""
         if pm is None or pm.isNull():
             return pm
         objetivo = self.galeria.iconSize().width() or 128
-        tope = int(max(pm.width(), pm.height()) * 2)
-        objetivo = min(objetivo, tope)
         return pm.scaled(objetivo, objetivo, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
     def _aplicar_zoom_galeria(self, icono, guardar=True):

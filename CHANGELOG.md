@@ -1,6 +1,7 @@
 # Changelog - Buscador de Piezas ALSI
 
 ## [2.0.4] - 2026-08-07 (Conjuntos que llevan una pieza, zoom de galería y profundidad)
+- **Fix (parche 2026-08-13, misma versión)**: en la galería, las miniaturas de DWG dejaban de crecer a mitad del deslizador mientras las de SolidWorks y PDF seguían aumentando. Causa: un tope de ampliación de 2x la resolución nativa y los DWG solo llevan una previsualización embebida de 163 px (SolidWorks y PDF se guardan a 256). Ahora todas las tarjetas escalan al mismo tamaño sea cual sea el formato. Nota: a zoom máximo los DWG se ven algo más blandos porque el archivo no contiene más resolución.
 - **Buscar conjuntos que lleven una pieza**: junto al botón Buscar hay un selector (▾) con "Buscar conjuntos que lleven esa pieza" — escribes una referencia (ej. AC30-Q6A014) y salen los ENSAMBLAJES que la contienen, respetando todos los filtros (años, cliente, Placa CE…). Sintaxis: `;` = que lleven todas · `,` = cualquiera de ellas.
 - **Refinar resultados (búsqueda en cascada)**: sobre los resultados puedes ir acotando por piezas que deben contener, encadenando niveles. Cada nivel deja un chip quitable y Esc deshace el último hasta volver a la búsqueda general.
 - **Botón "Subconjuntos" (profundidad)**: encuentra la pieza aunque esté dentro de un subconjunto, a cualquier nivel (ej. MOTOR REM 0.37: 241 conjuntos directos → 627 en total).
