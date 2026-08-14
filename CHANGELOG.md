@@ -1,5 +1,11 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.6] - 2026-08-14 (Abrir e insertar en SolidWorks desde "¿En qué ensamblajes se usa?")
+- **Abrir en SolidWorks desde el propio diálogo**: en "¿En qué ensamblajes se usa?" hay un botón nuevo que abre el ensamblaje seleccionado sin tener que volver a la rejilla y buscarlo. Con varios seleccionados avisa antes de abrirlos todos.
+- **Arrastrar a SolidWorks para insertar**: los ensamblajes de esa lista se pueden arrastrar directamente sobre SolidWorks, igual que desde la rejilla principal. Admite selección múltiple para soltar varios de una vez.
+- **Menú del botón derecho**: Abrir en SolidWorks · Abrir carpeta · Copiar ruta · Copiar nombre.
+- La primera fila queda preseleccionada al abrir el diálogo, para que los botones funcionen sin tener que clicar antes.
+
 ## [2.0.5] - 2026-08-14 (Filtros más cómodos y miniaturas DWG)
 - **Todas las listas de filtros muestran el mismo número de casillas (6)**: antes cada una tenía un alto distinto y, al no caber en la barra lateral, se encogían a su mínimo — unas enseñaban 4 casillas y otras 5. Las listas cortas (ORIGEN con 3, CIERRE con 5) se ajustan a su contenido para no dejar filas en blanco.
 - **Rueda del ratón más fina en los filtros**: Qt desplazaba 3 casillas por muesca y, con 5 a la vista, un solo giro se llevaba media lista. Ahora avanza de 2 en 2 y en píxeles, así que el movimiento es suave. Si la lista ya está al tope, la rueda sigue moviendo la barra lateral entera como siempre.

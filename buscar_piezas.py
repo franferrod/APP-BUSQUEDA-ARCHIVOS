@@ -174,7 +174,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.0.5"
+APP_VERSION = "2.0.6"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -807,6 +807,46 @@ class GaleriaArrastrable(QListWidget):
             ruta = item.data(Qt.UserRole)
             if ruta:
                 urls.append(QUrl.fromLocalFile(ruta_accesible(ruta)))  # V2.0.1
+        if urls:
+            mime.setUrls(urls)
+        return mime
+
+
+# -----------------------------------------------------------------------------
+# LISTA DE ARCHIVOS DE DIÁLOGO (V2.0.5 - arrastrable a SolidWorks)
+# -----------------------------------------------------------------------------
+class ListaArrastrable(QListWidget):
+    """Lista de archivos de los diálogos (¿dónde se usa?, despiece, similares…)
+    con las mismas posibilidades que la tabla principal: arrastrar a SolidWorks
+    para insertar el componente, y selección múltiple para arrastrar varios.
+
+    La ruta completa de cada archivo viaja en Qt.UserRole, igual que en la
+    galería. Se reescribe al host accesible (IP/NASCENTRAL) al soltar."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragOnly)
+        self.setDefaultDropAction(Qt.CopyAction)
+
+    def rutas_seleccionadas(self):
+        """Rutas (canónicas) de lo seleccionado, sin huecos ni duplicados."""
+        vistas, rutas = set(), []
+        for it in self.selectedItems():
+            r = it.data(Qt.UserRole)
+            if r and r not in vistas:
+                vistas.add(r)
+                rutas.append(r)
+        return rutas
+
+    def mimeData(self, items):
+        mime = QMimeData()
+        urls = []
+        for item in items:
+            ruta = item.data(Qt.UserRole)
+            if ruta:
+                urls.append(QUrl.fromLocalFile(ruta_accesible(ruta)))
         if urls:
             mime.setUrls(urls)
         return mime
@@ -4826,6 +4866,89 @@ class BuscadorPiezas(QMainWindow):
 
             menu.exec_(widget_menu.mapToGlobal(pos))
 
+    def _abrir_en_solidworks(self, rutas):
+        """Abre en SolidWorks los archivos indicados (V2.0.5).
+
+        Se usa desde los diálogos de listas para no tener que volver a la
+        rejilla principal. Con varios seleccionados pide confirmación, que
+        abrir diez ensamblajes de golpe deja el equipo inservible un rato."""
+        rutas = [r for r in (rutas or []) if r]
+        if not rutas:
+            return
+        accesibles, faltan = [], []
+        for r in rutas:
+            ra = ruta_accesible(r)
+            if ra and os.path.exists(ra):
+                accesibles.append(ra)
+            else:
+                faltan.append(os.path.basename(r))
+        if not accesibles:
+            QMessageBox.warning(
+                self, "No se encuentra el archivo",
+                "No se ha podido acceder a:\n\n" + "\n".join(faltan[:8]))
+            return
+        if len(accesibles) > 3:
+            if QMessageBox.question(
+                    self, "Abrir varios en SolidWorks",
+                    f"Se van a abrir {len(accesibles)} archivos en SolidWorks.\n"
+                    "Puede tardar y consumir bastante memoria. ¿Continuar?",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+        abiertos = 0
+        for ra in accesibles:
+            try:
+                os.startfile(ra)   # SolidWorks es el programa asociado a .sldasm/.sldprt
+                abiertos += 1
+            except Exception as e:
+                logger.error(f"No se pudo abrir en SolidWorks {ra}: {e}")
+                faltan.append(os.path.basename(ra))
+        if abiertos:
+            self.toast.show_message(
+                f"✅ Abriendo en SolidWorks{'' if abiertos == 1 else f' ({abiertos})'}")
+        if faltan:
+            QMessageBox.warning(
+                self, "Algunos archivos no se han abierto",
+                "No se ha podido abrir:\n\n" + "\n".join(faltan[:8]))
+
+    def _menu_lista_archivos(self, lista, pos):
+        """Menú contextual de las listas de los diálogos (V2.0.5): las mismas
+        acciones que en la rejilla principal, sin salir del diálogo."""
+        it = lista.itemAt(pos)
+        if it is not None and not it.isSelected():
+            lista.setCurrentItem(it)   # clic derecho fuera de la selección: manda ese
+        rutas = lista.rutas_seleccionadas()
+        if not rutas:
+            return
+        varias = len(rutas) > 1
+        menu = QMenu(lista)
+        act_sw = menu.addAction(
+            svg_icon("arrastrar-solidworks"),
+            "Abrir en SolidWorks" + (f" ({len(rutas)})" if varias else ""))
+        act_sw.triggered.connect(lambda _=False: self._abrir_en_solidworks(rutas))
+        menu.addSeparator()
+        act_carp = menu.addAction(svg_icon("carpeta"), "Abrir carpeta")
+        act_carp.triggered.connect(
+            lambda _=False, r=rutas[0]: self._abrir_carpeta_de(r))
+        act_ruta = menu.addAction(svg_icon("copiar-ruta"), "Copiar ruta")
+        act_ruta.triggered.connect(
+            lambda _=False, r=rutas[0]: self._copiar_al_portapapeles(
+                ruta_accesible(r), "Ruta copiada"))
+        act_nom = menu.addAction(svg_icon("copiar-nombre-lapiz"), "Copiar nombre")
+        act_nom.triggered.connect(
+            lambda _=False, r=rutas[0]: self._copiar_al_portapapeles(
+                Path(r).stem, "Nombre copiado"))
+        menu.exec_(lista.viewport().mapToGlobal(pos))
+
+    def _abrir_carpeta_de(self, ruta):
+        rr = ruta_accesible(ruta)
+        if rr and os.path.exists(rr):
+            subprocess.Popen(f'explorer /select,"{rr}"')
+
+    def _copiar_al_portapapeles(self, texto, aviso):
+        if texto:
+            QApplication.clipboard().setText(texto)
+            self.toast.show_message(f"✅ {aviso}:\n{texto if len(texto) < 60 else os.path.basename(texto)}")
+
     def mostrar_donde_se_usa(self, ruta_pieza):
         """Diálogo: ensamblajes que contienen la pieza/subensamblaje (V2.0.2).
         Consulta indexada e instantánea contra la tabla 'componentes'."""
@@ -4852,7 +4975,10 @@ class BuscadorPiezas(QMainWindow):
             lbl_n.setObjectName("StatusDim")
             lay.addWidget(lbl_n)
 
-            lista = QListWidget()
+            # V2.0.5: lista arrastrable — se pueden soltar los ensamblajes
+            # directamente sobre SolidWorks para insertarlos, igual que desde
+            # la rejilla principal
+            lista = ListaArrastrable()
             lista.setAlternatingRowColors(False)
             # V2.0.3: miniaturas a la izquierda (caché de BD, una consulta)
             lista.setIconSize(QSize(48, 48))
@@ -4895,13 +5021,32 @@ class BuscadorPiezas(QMainWindow):
             def abrir_sel():
                 it = lista.currentItem()
                 if it:
-                    rr = ruta_accesible(it.data(Qt.UserRole))
-                    if rr and os.path.exists(rr):
-                        subprocess.Popen(f'explorer /select,"{rr}"')
+                    self._abrir_carpeta_de(it.data(Qt.UserRole))
             lista.itemDoubleClicked.connect(lambda _: abrir_sel())
+
+            # V2.0.5: abrir en SolidWorks desde aquí (botón, menú del botón
+            # derecho y arrastre) sin volver a la rejilla principal
+            def abrir_sw():
+                rutas = lista.rutas_seleccionadas()
+                if not rutas and lista.currentItem():
+                    rutas = [lista.currentItem().data(Qt.UserRole)]
+                self._abrir_en_solidworks(rutas)
+            lista.setContextMenuPolicy(Qt.CustomContextMenu)
+            lista.customContextMenuRequested.connect(
+                lambda p: self._menu_lista_archivos(lista, p))
+
+            ayuda = QLabel("Arrastra un ensamblaje sobre SolidWorks para insertarlo · "
+                           "botón derecho para más opciones")
+            ayuda.setObjectName("StatusDim")
+            ayuda.setWordWrap(True)
+            lay.addWidget(ayuda)
 
             footer = QHBoxLayout()
             footer.addStretch()
+            btn_sw = QPushButton("Abrir en SolidWorks")
+            btn_sw.setIcon(svg_icon("arrastrar-solidworks", size=15))
+            btn_sw.setCursor(Qt.PointingHandCursor)
+            btn_sw.clicked.connect(abrir_sw)
             btn_abrir = QPushButton("Abrir carpeta")
             btn_abrir.setIcon(svg_icon("carpeta", size=15))
             btn_abrir.setCursor(Qt.PointingHandCursor)
@@ -4909,9 +5054,15 @@ class BuscadorPiezas(QMainWindow):
             btn_cerrar = QPushButton("Cerrar")
             btn_cerrar.setCursor(Qt.PointingHandCursor)
             btn_cerrar.clicked.connect(dlg.accept)
+            footer.addWidget(btn_sw)
             footer.addWidget(btn_abrir)
             footer.addWidget(btn_cerrar)
             lay.addLayout(footer)
+
+            # Sin nada seleccionado los botones no hacen nada útil: se marca
+            # la primera fila para que "Abrir en SolidWorks" funcione al vuelo
+            if lista.count():
+                lista.setCurrentRow(0)
 
             dlg.exec_()
         except Exception as e:
