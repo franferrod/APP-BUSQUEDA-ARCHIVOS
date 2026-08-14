@@ -852,6 +852,155 @@ class ListaArrastrable(QListWidget):
         return mime
 
 
+class VistaPreviaFlotante(QWidget):
+    """Ventanita flotante con la vista previa grande al pasar el ratón por
+    encima de una miniatura (V2.0.6), al estilo del Pack&Go de SolidWorks.
+
+    Es una ventana sin marco (tipo tooltip): no roba el foco ni interrumpe lo
+    que estés haciendo. Se coloca al lado del cursor y se aparta sola si no
+    cabe en la pantalla."""
+
+    LADO = 320          # lado máximo de la imagen
+    MARGEN = 8
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(1, 1, 1, 1)
+        lay.setSpacing(0)
+        self.lbl_img = QLabel()
+        self.lbl_img.setAlignment(Qt.AlignCenter)
+        self.lbl_img.setStyleSheet("background: #FFFFFF; padding: 6px;")
+        self.lbl_txt = QLabel()
+        self.lbl_txt.setAlignment(Qt.AlignCenter)
+        self.lbl_txt.setWordWrap(True)
+        self.lbl_txt.setStyleSheet(
+            "background: #2E2E2E; color: #DFDFDF; font-size: 11px; padding: 5px 8px;")
+        lay.addWidget(self.lbl_img)
+        lay.addWidget(self.lbl_txt)
+        self.setStyleSheet("VistaPreviaFlotante { background: #E66C32; }")  # borde naranja
+
+    def mostrar(self, pixmap, texto, pos_global):
+        if pixmap is None or pixmap.isNull():
+            return
+        pm = pixmap.scaled(self.LADO, self.LADO, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.lbl_img.setPixmap(pm)
+        self.lbl_img.setFixedSize(pm.width() + 12, pm.height() + 12)
+        self.lbl_txt.setText(texto or "")
+        self.lbl_txt.setVisible(bool(texto))
+        self.adjustSize()
+        self.move(self._sitio(pos_global))
+        self.show()
+        self.raise_()
+
+    def _sitio(self, pos):
+        """Debajo-derecha del cursor, pero sin salirse de la pantalla."""
+        pantalla = QApplication.desktop().availableGeometry(pos)
+        x = pos.x() + 18
+        y = pos.y() + 18
+        if x + self.width() > pantalla.right():
+            x = pos.x() - self.width() - 18
+        if y + self.height() > pantalla.bottom():
+            y = pos.y() - self.height() - 18
+        x = max(pantalla.left(), x)
+        y = max(pantalla.top(), y)
+        return QPoint(x, y)
+
+
+class HoverPreview(QObject):
+    """Engancha la vista previa flotante a una tabla o lista (V2.0.6).
+
+    Funciona con cualquier vista (rejilla principal, galería y los diálogos):
+    solo hay que decirle cómo sacar la ruta de un índice. Las imágenes salen
+    de la caché de la BD, nunca del NAS, y se guardan en memoria para que
+    pasar el ratón arriba y abajo no repita consultas."""
+
+    RETARDO_MS = 450    # tiempo parado sobre la fila antes de asomar
+
+    def __init__(self, vista, ruta_de_indice, db, texto_de_indice=None, parent=None):
+        super().__init__(parent or vista)
+        self.vista = vista
+        self.ruta_de_indice = ruta_de_indice
+        self.texto_de_indice = texto_de_indice
+        self.db = db
+        self.popup = VistaPreviaFlotante(vista)
+        self._cache = {}
+        self._ruta_actual = None
+        self._pos = QPoint()
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(self.RETARDO_MS)
+        self.timer.timeout.connect(self._asomar)
+        vista.setMouseTracking(True)
+        vista.viewport().setMouseTracking(True)
+        vista.viewport().installEventFilter(self)
+        vista.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):
+        t = ev.type()
+        if t == QEvent.MouseMove:
+            if ev.buttons() != Qt.NoButton:      # arrastrando: fuera
+                self.ocultar()
+            else:
+                self._sobre(ev.globalPos(), ev.pos())
+        elif t in (QEvent.Leave, QEvent.Wheel, QEvent.MouseButtonPress,
+                   QEvent.FocusOut, QEvent.Hide, QEvent.WindowDeactivate):
+            self.ocultar()
+        return False
+
+    def _sobre(self, pos_global, pos_vista):
+        try:
+            idx = self.vista.indexAt(pos_vista)
+        except Exception:
+            return
+        ruta = self.ruta_de_indice(idx) if idx.isValid() else None
+        if not ruta:
+            self.ocultar()
+            return
+        self._pos = pos_global
+        if ruta != self._ruta_actual:
+            self._ruta_actual = ruta
+            self.popup.hide()
+            self.timer.start()
+        elif not self.popup.isVisible():
+            self.timer.start()
+
+    def _asomar(self):
+        ruta = self._ruta_actual
+        if not ruta:
+            return
+        # Si la miniatura ya se ve tan grande como la ventanita, no molestar
+        # (galería en XL o con el deslizador alto)
+        try:
+            if self.vista.iconSize().width() >= self.popup.LADO * 0.9:
+                return
+        except Exception:
+            pass
+        pm = self._cache.get(ruta)
+        if pm is None:
+            pm = QPixmap()
+            try:
+                datos = self.db.obtener_miniatura(ruta)
+                if datos:
+                    img = QImage.fromData(datos)
+                    if not img.isNull():
+                        pm = QPixmap.fromImage(img)
+            except Exception as e:
+                logger.debug(f"Vista previa flotante falló para {ruta}: {e}")
+            if len(self._cache) > 300:
+                self._cache.clear()
+            self._cache[ruta] = pm
+        if not pm.isNull():
+            self.popup.mostrar(pm, os.path.basename(ruta), self._pos)
+
+    def ocultar(self):
+        self.timer.stop()
+        self._ruta_actual = None
+        self.popup.hide()
+
+
 class TablaDialogoArrastrable(QTableWidget):
     """Tabla de resultados de los diálogos (despiece, similares, comparar…)
     arrastrable a SolidWorks (V2.0.6).
@@ -1953,6 +2102,9 @@ class BuscadorPiezas(QMainWindow):
         # Ajuste de tamaño de filas e iconos para las miniaturas (V2.0.0: Cómoda 64px/56px)
         self.tabla.setIconSize(QSize(56, 56))
         self.tabla.verticalHeader().setDefaultSectionSize(64)
+        # V2.0.6: vista previa grande al pasar el ratón por encima de la fila
+        # (la ruta es el texto de la columna 0, oculta)
+        self._hover_tabla_principal = self._hover_tabla(self.tabla, 0, por_texto=True)
         
         header = self.tabla.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive) # Todas interactivas 
@@ -2131,6 +2283,9 @@ class BuscadorPiezas(QMainWindow):
         self.galeria.setPalette(pal_gal)
         self.galeria.setIconSize(QSize(128, 128))
         self.galeria.setGridSize(QSize(180, 210))
+        # V2.0.6: vista previa flotante en S/M/L (en XL la tarjeta ya es mayor
+        # que la ventanita y HoverPreview se calla solo)
+        self._hover_galeria = self._hover_lista(self.galeria)
         self.galeria.currentItemChanged.connect(self._on_galeria_seleccion)
         self.galeria.doubleClicked.connect(self.abrir_carpeta_seleccionada)
         self.galeria.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -4900,6 +5055,23 @@ class BuscadorPiezas(QMainWindow):
 
             menu.exec_(widget_menu.mapToGlobal(pos))
 
+    def _hover_tabla(self, tabla, col_ruta=0, por_texto=False):
+        """Vista previa flotante al pasar el ratón (V2.0.6). En la rejilla
+        principal la ruta es el TEXTO de la columna 0; en los diálogos viaja
+        en Qt.UserRole de la columna de la miniatura."""
+        def ruta_de(idx):
+            it = tabla.item(idx.row(), col_ruta)
+            if not it:
+                return None
+            return it.text() if por_texto else it.data(Qt.UserRole)
+        return HoverPreview(tabla, ruta_de, self.db)
+
+    def _hover_lista(self, lista):
+        def ruta_de(idx):
+            it = lista.item(idx.row())
+            return it.data(Qt.UserRole) if it else None
+        return HoverPreview(lista, ruta_de, self.db)
+
     def _abrir_en_solidworks(self, rutas):
         """Abre en SolidWorks los archivos indicados (V2.0.5).
 
@@ -5122,6 +5294,7 @@ class BuscadorPiezas(QMainWindow):
             lista.setContextMenuPolicy(Qt.CustomContextMenu)
             lista.customContextMenuRequested.connect(
                 lambda p: self._menu_lista_archivos(lista, p))
+            self._hover_lista(lista)   # V2.0.6: vista previa grande al pasar el ratón
 
             ayuda = QLabel("Arrastra un ensamblaje sobre SolidWorks para insertarlo · "
                            "botón derecho para más opciones")
@@ -5227,6 +5400,7 @@ class BuscadorPiezas(QMainWindow):
             tabla.setContextMenuPolicy(Qt.CustomContextMenu)
             tabla.customContextMenuRequested.connect(
                 lambda p: self._menu_tabla_archivos(tabla, p))
+            self._hover_tabla(tabla)   # V2.0.6: vista previa grande al pasar el ratón
             tabla.verticalHeader().setVisible(False)
             tabla.setIconSize(QSize(48, 48))
             tabla.verticalHeader().setDefaultSectionSize(54)
@@ -5363,6 +5537,7 @@ class BuscadorPiezas(QMainWindow):
             tabla.setContextMenuPolicy(Qt.CustomContextMenu)
             tabla.customContextMenuRequested.connect(
                 lambda p: self._menu_tabla_archivos(tabla, p))
+            self._hover_tabla(tabla)   # V2.0.6: vista previa grande al pasar el ratón
             tabla.verticalHeader().setVisible(False)
             tabla.setIconSize(QSize(48, 48))
             tabla.verticalHeader().setDefaultSectionSize(54)
@@ -5486,6 +5661,7 @@ class BuscadorPiezas(QMainWindow):
         tabla.setContextMenuPolicy(Qt.CustomContextMenu)
         tabla.customContextMenuRequested.connect(
             lambda p: self._menu_tabla_archivos(tabla, p))
+        self._hover_tabla(tabla)   # V2.0.6: vista previa grande al pasar el ratón
         tabla.verticalHeader().setVisible(False)
         tabla.setIconSize(QSize(48, 48))
         tabla.verticalHeader().setDefaultSectionSize(54)

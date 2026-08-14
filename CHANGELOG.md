@@ -9,6 +9,11 @@ Una búsqueda dentro de la búsqueda debe permitir lo mismo que la búsqueda pri
 - La primera fila queda preseleccionada, para que los botones funcionen sin tener que clicar antes.
 - Los diálogos no aceptan soltar archivos (solo arrastrar), para que nadie mueva nada del NAS sin querer.
 
+**Vista previa grande al pasar el ratón** (estilo Pack&Go de SolidWorks), en la rejilla, la galería y los cinco diálogos:
+- Al dejar el ratón medio segundo sobre una fila aparece la imagen a 320 px junto al cursor, con el nombre del archivo. No roba el foco ni interrumpe nada, y se aparta sola si no cabe en la pantalla.
+- Sale de la caché de miniaturas de la base de datos, **nunca del NAS**, y se guarda en memoria: pasar el ratón arriba y abajo por la lista no repite consultas.
+- No aparece mientras arrastras, ni en la galería en XL (ahí la tarjeta ya es más grande que la ventanita).
+
 ## [2.0.5] - 2026-08-14 (Filtros más cómodos y miniaturas DWG)
 - **Todas las listas de filtros muestran el mismo número de casillas (6)**: antes cada una tenía un alto distinto y, al no caber en la barra lateral, se encogían a su mínimo — unas enseñaban 4 casillas y otras 5. Las listas cortas (ORIGEN con 3, CIERRE con 5) se ajustan a su contenido para no dejar filas en blanco.
 - **Rueda del ratón más fina en los filtros**: Qt desplazaba 3 casillas por muesca y, con 5 a la vista, un solo giro se llevaba media lista. Ahora avanza de 2 en 2 y en píxeles, así que el movimiento es suave. Si la lista ya está al tope, la rueda sigue moviendo la barra lateral entera como siempre.
