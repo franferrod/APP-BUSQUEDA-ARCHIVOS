@@ -174,7 +174,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.0.4"
+APP_VERSION = "2.0.5"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -810,6 +810,108 @@ class GaleriaArrastrable(QListWidget):
         if urls:
             mime.setUrls(urls)
         return mime
+
+
+# -----------------------------------------------------------------------------
+# LISTA DE CASILLAS DE FILTRO (V2.0.5)
+# -----------------------------------------------------------------------------
+class ListaFiltro(QListWidget):
+    """Lista de casillas de la barra lateral de filtros.
+
+    Arregla dos quejas de la oficina técnica:
+
+    1) ALTO DESIGUAL Y CORTO. Cada lista tenía su propio mínimo/máximo
+       (100-140, 140-220, 160-300, 120-240, 120-260...) y, al no caber todo
+       en la barra lateral, el layout las encogía a su MÍNIMO: unas mostraban
+       4 casillas y otras 5. Ahora el alto se fija (mínimo == máximo) a un
+       número exacto de casillas, medido en tiempo de ejecución sobre la
+       fuente y el estilo reales, así que todas enseñan las mismas.
+
+    2) RUEDA DEL RATÓN DEMASIADO BRUSCA. Qt desplaza 3 filas por muesca; con
+       5 casillas a la vista, un golpe de rueda se llevaba media lista. Aquí
+       se desplaza de FILAS_POR_MUESCA en FILAS_POR_MUESCA y en píxeles, así
+       que el movimiento es fino y predecible. Cuando la lista ya está al
+       tope, el evento se cede al panel para que siga bajando la barra
+       lateral entera (comportamiento natural de siempre).
+
+    Además se quita la barra horizontal: los nombres largos se recortan con
+    puntos suspensivos y el texto completo queda en el tooltip. Así el alto
+    no baila según haya o no barra inferior.
+    """
+
+    FILAS_VISIBLES = 6      # tope de casillas a la vista (igual en todas)
+    FILAS_POR_MUESCA = 2    # avance por muesca de rueda (Qt trae 3)
+
+    def __init__(self, parent=None, ajustar_a_contenido=False):
+        """ajustar_a_contenido: para listas CORTAS y de contenido fijo (ORIGEN
+        tiene 3 casillas, CIERRE 5). Se quedan en su número real en vez de
+        dejar filas en blanco hasta 6. No usarlo en listas que se rellenan
+        desde la base de datos (clientes, proyectos, material): al filtrar en
+        cascada cambian de tamaño y el panel daría saltos."""
+        super().__init__(parent)
+        self.setUniformItemSizes(True)
+        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setTextElideMode(Qt.ElideRight)
+        self._ajustar_a_contenido = ajustar_a_contenido
+        self._alto_aplicado = 0
+        self._resto_rueda = 0
+        self._fijar_alto()
+
+    # --- alto uniforme -------------------------------------------------
+    def _filas_a_mostrar(self):
+        if self._ajustar_a_contenido and self.count():
+            return min(self.count(), self.FILAS_VISIBLES)
+        return self.FILAS_VISIBLES
+
+    def _alto_fila(self):
+        """Alto real de una casilla. Si la lista aún está vacía (clientes y
+        proyectos se rellenan después) se mide con una casilla de sonda."""
+        alto = self.sizeHintForRow(0)
+        if alto <= 0:
+            sonda = QListWidgetItem("Ag")
+            sonda.setFlags(sonda.flags() | Qt.ItemIsUserCheckable)
+            sonda.setCheckState(Qt.Unchecked)
+            QListWidget.addItem(self, sonda)
+            alto = self.sizeHintForRow(0)
+            self.takeItem(self.row(sonda))
+        return alto if alto > 0 else self.fontMetrics().height() + 8
+
+    def _fijar_alto(self):
+        alto = self._alto_fila() * self._filas_a_mostrar() + 2 * self.frameWidth() + 2
+        if alto != self._alto_aplicado:
+            self._alto_aplicado = alto
+            self.setMinimumHeight(alto)
+            self.setMaximumHeight(alto)
+
+    def showEvent(self, event):
+        """Se remide al mostrarse: aquí la hoja de estilo ya está aplicada y
+        el alto de fila es el definitivo."""
+        super().showEvent(event)
+        self._fijar_alto()
+
+    def addItem(self, item):
+        """Tooltip automático con el texto completo (la barra horizontal está
+        desactivada y los nombres largos salen recortados)."""
+        if isinstance(item, QListWidgetItem) and not item.toolTip():
+            item.setToolTip(item.text())
+        super().addItem(item)
+        if self._ajustar_a_contenido and self.count() <= self.FILAS_VISIBLES:
+            self._fijar_alto()   # crece con el contenido hasta el tope
+
+    # --- rueda del ratón -----------------------------------------------
+    def wheelEvent(self, event):
+        barra = self.verticalScrollBar()
+        if barra.maximum() <= 0:
+            event.ignore()      # nada que desplazar: que lo mueva la barra lateral
+            return
+        self._resto_rueda += event.angleDelta().y()
+        muescas = int(self._resto_rueda / 120)   # ratones de precisión mandan <120
+        if muescas:
+            self._resto_rueda -= muescas * 120
+            paso = self._alto_fila() * self.FILAS_POR_MUESCA
+            barra.setValue(barra.value() - muescas * paso)
+        event.accept()
 
 
 # -----------------------------------------------------------------------------
@@ -1636,9 +1738,7 @@ class BuscadorPiezas(QMainWindow):
 
         # 1. ORIGEN
         sec_origen = _acordeon('origen', 'ORIGEN', 'carpeta')
-        self.list_companeros = QListWidget()
-        self.list_companeros.setMinimumHeight(100)
-        self.list_companeros.setMaximumHeight(140)
+        self.list_companeros = ListaFiltro(ajustar_a_contenido=True)  # solo 3 orígenes
         for key, label in ETIQUETAS_ORIGEN.items():
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, key)  # Internamente usamos la key
@@ -1688,9 +1788,7 @@ class BuscadorPiezas(QMainWindow):
 
         # 3. CARPETAS (MECANICA, LAYOUT...)
         sec_carpetas = _acordeon('carpetas', 'CARPETAS', 'capas-tipos')
-        self.list_carpetas = QListWidget()
-        self.list_carpetas.setMinimumHeight(140)
-        self.list_carpetas.setMaximumHeight(220)
+        self.list_carpetas = ListaFiltro()
         for folder in FILTRO_CARPETAS:
             if folder == 'TODOS': continue
             item = QListWidgetItem(folder)
@@ -1703,17 +1801,13 @@ class BuscadorPiezas(QMainWindow):
 
         # 5. CLIENTES
         sec_clientes = _acordeon('clientes', 'CLIENTES', 'clientes')
-        self.list_clientes = QListWidget()
-        self.list_clientes.setMinimumHeight(160)
-        self.list_clientes.setMaximumHeight(300)
+        self.list_clientes = ListaFiltro()
         sec_clientes.lay.addWidget(self.list_clientes)
         self.add_toggle_buttons(sec_clientes.lay, self.list_clientes)
 
         # 6. PROYECTOS
         sec_proyectos = _acordeon('proyectos', 'PROYECTOS', 'proyectos-maletin')
-        self.list_proyectos = QListWidget()
-        self.list_proyectos.setMinimumHeight(160)
-        self.list_proyectos.setMaximumHeight(300)
+        self.list_proyectos = ListaFiltro()
         sec_proyectos.lay.addWidget(self.list_proyectos)
         self.add_toggle_buttons(sec_proyectos.lay, self.list_proyectos)
 
@@ -2190,18 +2284,14 @@ class BuscadorPiezas(QMainWindow):
 
         # --- Material ---
         sec_material = _acordeon('material', 'MATERIAL', 'propiedades-sliders', expandido=False)
-        self.list_materiales = QListWidget()
-        self.list_materiales.setMinimumHeight(120)
-        self.list_materiales.setMaximumHeight(240)
+        self.list_materiales = ListaFiltro()
         sec_material.lay.addWidget(self.list_materiales)
         self.add_toggle_buttons(sec_material.lay, self.list_materiales)
         self.list_materiales.itemChanged.connect(lambda: self.ejecutar_busqueda(auto=True))
 
         # --- Tratamiento (valores oficiales de template_PZ.prtprp) ---
         sec_tratamiento = _acordeon('tratamiento', 'TRATAMIENTO', 'propiedades-sliders', expandido=False)
-        self.list_tratamientos = QListWidget()
-        self.list_tratamientos.setMinimumHeight(120)
-        self.list_tratamientos.setMaximumHeight(260)
+        self.list_tratamientos = ListaFiltro()
         TRATAMIENTOS_OFICIALES = [
             "ZINCADO", "CROMADO", "GRANALLADO", "VULCANIZADO", "VULCANIZADO ALIMENTARIO",
             "RAL 2010", "RAL 7000", "RAL 9003", "RAL 9006", "RAL 3020",
@@ -2219,9 +2309,7 @@ class BuscadorPiezas(QMainWindow):
 
         # --- Cierre ---
         sec_cierre = _acordeon('cierre', 'CIERRE', 'propiedades-sliders', expandido=False)
-        self.list_cierres = QListWidget()
-        self.list_cierres.setMinimumHeight(100)
-        self.list_cierres.setMaximumHeight(180)
+        self.list_cierres = ListaFiltro(ajustar_a_contenido=True)  # solo 5 cierres
         for cierre in ["SIN FIN", "CON GRAPA", "CON GRAPA OCULTA", "ABIERTA", "CON GRAPA EN UN LADO"]:
             item = QListWidgetItem(cierre)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
@@ -2243,9 +2331,7 @@ class BuscadorPiezas(QMainWindow):
 
         # --- Espesor (independiente, 1-20mm) ---
         sec_espesor = _acordeon('espesor', 'ESPESOR', 'propiedades-sliders', expandido=False)
-        self.list_espesores = QListWidget()
-        self.list_espesores.setMinimumHeight(120)
-        self.list_espesores.setMaximumHeight(240)
+        self.list_espesores = ListaFiltro()
         for mm in range(1, 21):
             item = QListWidgetItem(f"{mm}mm")
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
