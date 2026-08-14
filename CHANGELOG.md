@@ -1,10 +1,13 @@
 # Changelog - Buscador de Piezas ALSI
 
-## [2.0.6] - 2026-08-14 (Abrir e insertar en SolidWorks desde "¿En qué ensamblajes se usa?")
-- **Abrir en SolidWorks desde el propio diálogo**: en "¿En qué ensamblajes se usa?" hay un botón nuevo que abre el ensamblaje seleccionado sin tener que volver a la rejilla y buscarlo. Con varios seleccionados avisa antes de abrirlos todos.
-- **Arrastrar a SolidWorks para insertar**: los ensamblajes de esa lista se pueden arrastrar directamente sobre SolidWorks, igual que desde la rejilla principal. Admite selección múltiple para soltar varios de una vez.
-- **Menú del botón derecho**: Abrir en SolidWorks · Abrir carpeta · Copiar ruta · Copiar nombre.
-- La primera fila queda preseleccionada al abrir el diálogo, para que los botones funcionen sin tener que clicar antes.
+## [2.0.6] - 2026-08-14 (Los diálogos de resultados funcionan como la búsqueda general)
+Una búsqueda dentro de la búsqueda debe permitir lo mismo que la búsqueda principal. Ahora **los cinco diálogos de resultados** — "¿En qué ensamblajes se usa?", "Ver componentes (despiece)", "Piezas idénticas", "Ensamblajes similares" y "Comparar 2 ensamblajes" — se comportan igual que la rejilla:
+- **Arrastrar a SolidWorks para insertar**, con selección múltiple para soltar varios de una vez.
+- **Botón "Abrir en SolidWorks"** en el pie de cada diálogo. Con más de 3 seleccionados avisa antes de abrirlos todos.
+- **Menú del botón derecho completo**, con las mismas opciones que en la rejilla y habilitadas según el tipo de archivo: Abrir/Insertar en SolidWorks · Abrir Carpeta · Copiar Ruta · Copiar Nombre · ¿En qué ensamblajes se usa? · Ver componentes (despiece) · Ensamblajes similares · Buscar piezas idénticas · Comparar los 2 ensamblajes seleccionados.
+- Se puede encadenar: desde el despiece abrir el "dónde se usa" de un componente, y desde ahí su despiece.
+- La primera fila queda preseleccionada, para que los botones funcionen sin tener que clicar antes.
+- Los diálogos no aceptan soltar archivos (solo arrastrar), para que nadie mueva nada del NAS sin querer.
 
 ## [2.0.5] - 2026-08-14 (Filtros más cómodos y miniaturas DWG)
 - **Todas las listas de filtros muestran el mismo número de casillas (6)**: antes cada una tenía un alto distinto y, al no caber en la barra lateral, se encogían a su mínimo — unas enseñaban 4 casillas y otras 5. Las listas cortas (ORIGEN con 3, CIERRE con 5) se ajustan a su contenido para no dejar filas en blanco.

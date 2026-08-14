@@ -852,6 +852,40 @@ class ListaArrastrable(QListWidget):
         return mime
 
 
+class TablaDialogoArrastrable(QTableWidget):
+    """Tabla de resultados de los diálogos (despiece, similares, comparar…)
+    arrastrable a SolidWorks (V2.0.6).
+
+    A diferencia de TablaArrastrable (rejilla principal, ruta en la columna 0
+    como texto), aquí la ruta viaja en Qt.UserRole de la columna 0, que es la
+    de la miniatura."""
+
+    COL_RUTA = 0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragOnly)
+        self.setDefaultDropAction(Qt.CopyAction)
+
+    def rutas_seleccionadas(self):
+        vistas, rutas = set(), []
+        for f in sorted({i.row() for i in self.selectedItems()}):
+            it = self.item(f, self.COL_RUTA)
+            r = it.data(Qt.UserRole) if it else None
+            if r and r not in vistas:
+                vistas.add(r)
+                rutas.append(r)
+        return rutas
+
+    def mimeData(self, items):
+        mime = QMimeData()
+        urls = [QUrl.fromLocalFile(ruta_accesible(r)) for r in self.rutas_seleccionadas()]
+        if urls:
+            mime.setUrls(urls)
+        return mime
+
+
 # -----------------------------------------------------------------------------
 # LISTA DE CASILLAS DE FILTRO (V2.0.5)
 # -----------------------------------------------------------------------------
@@ -4910,34 +4944,88 @@ class BuscadorPiezas(QMainWindow):
                 self, "Algunos archivos no se han abierto",
                 "No se ha podido abrir:\n\n" + "\n".join(faltan[:8]))
 
+    def _menu_archivos(self, widget, rutas, pos_global):
+        """Menú contextual de los diálogos de resultados (V2.0.6).
+
+        Ofrece LAS MISMAS acciones que la rejilla principal: los diálogos son
+        búsquedas dentro de la búsqueda, así que no tiene sentido que sean de
+        segunda clase. Las opciones se habilitan según la extensión, igual que
+        en la rejilla."""
+        rutas = [r for r in (rutas or []) if r]
+        if not rutas:
+            return
+        principal = rutas[0]
+        ext = Path(principal).suffix.lower()
+        varias = len(rutas) > 1
+        menu = QMenu(widget)
+
+        act_sw = menu.addAction(
+            svg_icon("arrastrar-solidworks"),
+            "Abrir/Insertar en SolidWorks" + (f" ({len(rutas)})" if varias else ""))
+        act_sw.triggered.connect(lambda _=False, rr=list(rutas): self._abrir_en_solidworks(rr))
+
+        menu.addSeparator()
+        menu.addAction(svg_icon("carpeta"), "Abrir Carpeta").triggered.connect(
+            lambda _=False, r=principal: self._abrir_carpeta_de(r))
+        menu.addAction(svg_icon("copiar-ruta"), "Copiar Ruta").triggered.connect(
+            lambda _=False, r=principal: self._copiar_al_portapapeles(
+                ruta_accesible(r), "Ruta copiada"))
+        menu.addAction(svg_icon("copiar-nombre-lapiz"), "Copiar Nombre").triggered.connect(
+            lambda _=False, r=principal: self._copiar_al_portapapeles(
+                Path(r).stem, "Nombre copiado"))
+
+        # Análisis: idénticas condiciones que en mostrar_menu_contextual
+        if ext in ('.sldprt', '.sldasm'):
+            menu.addSeparator()
+            menu.addAction(svg_icon("proyectos-maletin"),
+                           "¿En qué ensamblajes se usa?").triggered.connect(
+                lambda _=False, r=principal: self.mostrar_donde_se_usa(r))
+        if ext == '.sldasm':
+            menu.addAction(svg_icon("ensamblaje-cubo"),
+                           "Ver componentes (despiece)").triggered.connect(
+                lambda _=False, r=principal: self.mostrar_despiece(r))
+            menu.addAction(svg_icon("comparar-balanza"),
+                           "Ensamblajes similares (piezas compartidas)").triggered.connect(
+                lambda _=False, r=principal: self.mostrar_ensamblajes_similares(r))
+        if ext in ('.sldprt', '.sldasm'):
+            menu.addAction(svg_icon("copiar-nombre-lapiz"),
+                           "Buscar piezas idénticas (duplicados)").triggered.connect(
+                lambda _=False, r=principal: self.mostrar_piezas_identicas(r))
+        if len(rutas) == 2 and all(Path(r).suffix.lower() == '.sldasm' for r in rutas):
+            menu.addAction(svg_icon("comparar-balanza"),
+                           "Comparar componentes de los 2 ensamblajes").triggered.connect(
+                lambda _=False, a=rutas[0], b=rutas[1]: self.comparar_ensamblajes(a, b))
+
+        menu.exec_(pos_global)
+
     def _menu_lista_archivos(self, lista, pos):
-        """Menú contextual de las listas de los diálogos (V2.0.5): las mismas
-        acciones que en la rejilla principal, sin salir del diálogo."""
+        """Menú del botón derecho sobre una ListaArrastrable de un diálogo."""
         it = lista.itemAt(pos)
         if it is not None and not it.isSelected():
             lista.setCurrentItem(it)   # clic derecho fuera de la selección: manda ese
-        rutas = lista.rutas_seleccionadas()
-        if not rutas:
-            return
-        varias = len(rutas) > 1
-        menu = QMenu(lista)
-        act_sw = menu.addAction(
-            svg_icon("arrastrar-solidworks"),
-            "Abrir en SolidWorks" + (f" ({len(rutas)})" if varias else ""))
-        act_sw.triggered.connect(lambda _=False: self._abrir_en_solidworks(rutas))
-        menu.addSeparator()
-        act_carp = menu.addAction(svg_icon("carpeta"), "Abrir carpeta")
-        act_carp.triggered.connect(
-            lambda _=False, r=rutas[0]: self._abrir_carpeta_de(r))
-        act_ruta = menu.addAction(svg_icon("copiar-ruta"), "Copiar ruta")
-        act_ruta.triggered.connect(
-            lambda _=False, r=rutas[0]: self._copiar_al_portapapeles(
-                ruta_accesible(r), "Ruta copiada"))
-        act_nom = menu.addAction(svg_icon("copiar-nombre-lapiz"), "Copiar nombre")
-        act_nom.triggered.connect(
-            lambda _=False, r=rutas[0]: self._copiar_al_portapapeles(
-                Path(r).stem, "Nombre copiado"))
-        menu.exec_(lista.viewport().mapToGlobal(pos))
+        self._menu_archivos(lista, lista.rutas_seleccionadas(),
+                            lista.viewport().mapToGlobal(pos))
+
+    def _menu_tabla_archivos(self, tabla, pos, col_ruta=0):
+        """Menú del botón derecho sobre las tablas de los diálogos. La ruta
+        viaja en Qt.UserRole de la columna indicada."""
+        it = tabla.itemAt(pos)
+        if it is not None and not it.isSelected():
+            tabla.setCurrentCell(it.row(), 0)
+        self._menu_archivos(tabla, self._rutas_sel_tabla(tabla, col_ruta),
+                            tabla.viewport().mapToGlobal(pos))
+
+    @staticmethod
+    def _rutas_sel_tabla(tabla, col_ruta=0):
+        """Rutas de las filas seleccionadas de una tabla de diálogo."""
+        vistas, rutas = set(), []
+        for f in sorted({i.row() for i in tabla.selectedItems()}):
+            it = tabla.item(f, col_ruta)
+            r = it.data(Qt.UserRole) if it else None
+            if r and r not in vistas:
+                vistas.add(r)
+                rutas.append(r)
+        return rutas
 
     def _abrir_carpeta_de(self, ruta):
         rr = ruta_accesible(ruta)
@@ -5128,12 +5216,17 @@ class BuscadorPiezas(QMainWindow):
             lbl_n.setObjectName("StatusDim")
             lay.addWidget(lbl_n)
 
-            tabla = QTableWidget()
+            # V2.0.6: arrastrable a SolidWorks + menú completo del botón derecho
+            tabla = TablaDialogoArrastrable()
             tabla.setColumnCount(6)
             tabla.setHorizontalHeaderLabels(["Vista", "Componente", "Cliente", "Proyecto", "Año", "Origen"])
             tabla.setRowCount(len(filas))
             tabla.setEditTriggers(QTableWidget.NoEditTriggers)
             tabla.setSelectionBehavior(QTableWidget.SelectRows)
+            tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            tabla.setContextMenuPolicy(Qt.CustomContextMenu)
+            tabla.customContextMenuRequested.connect(
+                lambda p: self._menu_tabla_archivos(tabla, p))
             tabla.verticalHeader().setVisible(False)
             tabla.setIconSize(QSize(48, 48))
             tabla.verticalHeader().setDefaultSectionSize(54)
@@ -5197,6 +5290,11 @@ class BuscadorPiezas(QMainWindow):
                 f"Despiece_{os.path.splitext(nombre)[0]}.csv"))
             footer.addWidget(btn_export)
             footer.addStretch()
+            btn_sw = QPushButton("Abrir en SolidWorks")
+            btn_sw.setIcon(svg_icon("arrastrar-solidworks", size=15))
+            btn_sw.setCursor(Qt.PointingHandCursor)
+            btn_sw.clicked.connect(
+                lambda: self._abrir_en_solidworks(tabla.rutas_seleccionadas()))
             btn_abrir = QPushButton("Abrir carpeta")
             btn_abrir.setIcon(svg_icon("carpeta", size=15))
             btn_abrir.setCursor(Qt.PointingHandCursor)
@@ -5204,9 +5302,12 @@ class BuscadorPiezas(QMainWindow):
             btn_cerrar = QPushButton("Cerrar")
             btn_cerrar.setCursor(Qt.PointingHandCursor)
             btn_cerrar.clicked.connect(dlg.accept)
+            footer.addWidget(btn_sw)
             footer.addWidget(btn_abrir)
             footer.addWidget(btn_cerrar)
             lay.addLayout(footer)
+            if tabla.rowCount():
+                tabla.selectRow(0)
 
             dlg.exec_()
         except Exception as e:
@@ -5252,11 +5353,16 @@ class BuscadorPiezas(QMainWindow):
 
             # V2.0.3: columna "Vista" con miniaturas (caché de BD, una consulta),
             # igual que en el despiece
-            tabla = QTableWidget()
+            # V2.0.6: arrastrable a SolidWorks + menú completo del botón derecho
+            tabla = TablaDialogoArrastrable()
             tabla.setColumnCount(3)
             tabla.setHorizontalHeaderLabels(["Vista", "Componente", "Estado"])
             tabla.setEditTriggers(QTableWidget.NoEditTriggers)
             tabla.setSelectionBehavior(QTableWidget.SelectRows)
+            tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            tabla.setContextMenuPolicy(Qt.CustomContextMenu)
+            tabla.customContextMenuRequested.connect(
+                lambda p: self._menu_tabla_archivos(tabla, p))
             tabla.verticalHeader().setVisible(False)
             tabla.setIconSize(QSize(48, 48))
             tabla.verticalHeader().setDefaultSectionSize(54)
@@ -5320,6 +5426,11 @@ class BuscadorPiezas(QMainWindow):
                 f"Comparacion_{os.path.splitext(nom_a)[0]}_vs_{os.path.splitext(nom_b)[0]}.csv"))
             footer.addWidget(btn_export)
             footer.addStretch()
+            btn_sw = QPushButton("Abrir en SolidWorks")
+            btn_sw.setIcon(svg_icon("arrastrar-solidworks", size=15))
+            btn_sw.setCursor(Qt.PointingHandCursor)
+            btn_sw.clicked.connect(
+                lambda: self._abrir_en_solidworks(tabla.rutas_seleccionadas()))
             btn_abrir = QPushButton("Abrir carpeta")
             btn_abrir.setIcon(svg_icon("carpeta", size=15))
             btn_abrir.setCursor(Qt.PointingHandCursor)
@@ -5327,6 +5438,7 @@ class BuscadorPiezas(QMainWindow):
             btn_cerrar = QPushButton("Cerrar")
             btn_cerrar.setCursor(Qt.PointingHandCursor)
             btn_cerrar.clicked.connect(dlg.accept)
+            footer.addWidget(btn_sw)
             footer.addWidget(btn_abrir)
             footer.addWidget(btn_cerrar)
             lay.addLayout(footer)
@@ -5362,12 +5474,18 @@ class BuscadorPiezas(QMainWindow):
 
         # V2.0.3: columna "Vista" con la miniatura de cada fila (caché de BD,
         # una sola consulta) — igual que en el despiece, en TODOS los diálogos.
-        tabla = QTableWidget()
+        # V2.0.6: arrastrable a SolidWorks y con el menú completo del botón
+        # derecho, como la rejilla principal.
+        tabla = TablaDialogoArrastrable()
         tabla.setColumnCount(len(columnas) + 1)
         tabla.setHorizontalHeaderLabels(["Vista"] + columnas)
         tabla.setRowCount(len(filas_datos))
         tabla.setEditTriggers(QTableWidget.NoEditTriggers)
         tabla.setSelectionBehavior(QTableWidget.SelectRows)
+        tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        tabla.setContextMenuPolicy(Qt.CustomContextMenu)
+        tabla.customContextMenuRequested.connect(
+            lambda p: self._menu_tabla_archivos(tabla, p))
         tabla.verticalHeader().setVisible(False)
         tabla.setIconSize(QSize(48, 48))
         tabla.verticalHeader().setDefaultSectionSize(54)
@@ -5411,6 +5529,12 @@ class BuscadorPiezas(QMainWindow):
                 self._abrir_en_explorer(it.data(Qt.UserRole))
         tabla.itemDoubleClicked.connect(lambda _: abrir_sel())
 
+        ayuda = QLabel("Arrastra una fila sobre SolidWorks para insertarla · "
+                       "botón derecho para más opciones")
+        ayuda.setObjectName("StatusDim")
+        ayuda.setWordWrap(True)
+        lay.addWidget(ayuda)
+
         footer = QHBoxLayout()
         btn_export = QPushButton("Exportar CSV")
         btn_export.setIcon(svg_icon("exportar-descargar", size=15))
@@ -5419,6 +5543,11 @@ class BuscadorPiezas(QMainWindow):
             columnas + ["Ruta"], [tuple(f[:-1]) + (f[-1] or "",) for f in filas_datos], nombre_csv))
         footer.addWidget(btn_export)
         footer.addStretch()
+        btn_sw = QPushButton("Abrir en SolidWorks")
+        btn_sw.setIcon(svg_icon("arrastrar-solidworks", size=15))
+        btn_sw.setCursor(Qt.PointingHandCursor)
+        btn_sw.clicked.connect(
+            lambda: self._abrir_en_solidworks(tabla.rutas_seleccionadas()))
         btn_abrir = QPushButton("Abrir carpeta")
         btn_abrir.setIcon(svg_icon("carpeta", size=15))
         btn_abrir.setCursor(Qt.PointingHandCursor)
@@ -5426,9 +5555,12 @@ class BuscadorPiezas(QMainWindow):
         btn_cerrar = QPushButton("Cerrar")
         btn_cerrar.setCursor(Qt.PointingHandCursor)
         btn_cerrar.clicked.connect(dlg.accept)
+        footer.addWidget(btn_sw)
         footer.addWidget(btn_abrir)
         footer.addWidget(btn_cerrar)
         lay.addLayout(footer)
+        if tabla.rowCount():
+            tabla.selectRow(0)
         dlg.exec_()
 
     def mostrar_similares(self):
