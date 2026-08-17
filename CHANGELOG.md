@@ -1,5 +1,9 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.7] - 2026-08-17 (La búsqueda, de 3 a 46 veces más rápida)
+- **Todas las búsquedas son mucho más rápidas, con resultados idénticos.** La consulta normalizaba el nombre del archivo con una función que PostgreSQL no puede indexar, así que cada búsqueda recorría las 589.459 filas de la tabla entera: ese era el ~medio segundo fijo que tenía cualquier búsqueda, y la razón de fondo de los atascos al combinar filtros. Ahora la misma consulta usa un índice: TUERCA M16 pasa de 548 ms a 12 ms (46x), CHASIS PATA de 539 a 34 ms (16x), PLETINA MONTAJE de 561 a 59 ms (9,5x). Verificado archivo por archivo: los resultados son exactamente los mismos.
+- **Resultados estables.** Cuando una búsqueda daba el máximo de 5.000 resultados, cuáles de ellos se mostraban dependía de cómo la base de datos hubiera recorrido la tabla: repetir la misma búsqueda podía enseñar 5.000 archivos distintos. Ahora el orden es determinista y repetir una búsqueda da siempre lo mismo.
+
 ## [2.0.6] - 2026-08-14 (Los diálogos de resultados funcionan como la búsqueda general)
 Una búsqueda dentro de la búsqueda debe permitir lo mismo que la búsqueda principal. Ahora **los cinco diálogos de resultados** — "¿En qué ensamblajes se usa?", "Ver componentes (despiece)", "Piezas idénticas", "Ensamblajes similares" y "Comparar 2 ensamblajes" — se comportan igual que la rejilla:
 - **Arrastrar a SolidWorks para insertar**, con selección múltiple para soltar varios de una vez.
