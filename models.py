@@ -43,6 +43,34 @@ def load_pg_config():
 # V1.0.8 - PostgreSQL compartido (credenciales en config.ini)
 PG_CONFIG = load_pg_config()
 
+# V2.0.8 - Filtro de cordura para las propiedades físicas.
+# Medido sobre 114 piezas reales: TODAS caen entre 1.000 y 8.000 kg/m3 (acero
+# e inox ~7.800-8.000, plásticos ~1.000-1.300). Fuera de este rango el dato es
+# basura — en la muestra apareció una "pieza" de 373 toneladas que era un
+# modelo descargado de internet. Un solo dato absurdo en la rejilla destruye
+# la confianza en los 590.000 buenos, así que se descarta al guardar.
+DENSIDAD_MIN, DENSIDAD_MAX = 300.0, 22000.0    # kg/m3 (corcho ... wolframio)
+
+
+def fisicas_creibles(masa_kg, volumen_m3, area_m2):
+    """Devuelve (masa, volumen, area) o (None, None, None) si no son creíbles.
+    Se exige densidad plausible: es lo que delata los archivos mal escalados
+    o sin material real."""
+    try:
+        m = float(masa_kg) if masa_kg else None
+        v = float(volumen_m3) if volumen_m3 else None
+        a = float(area_m2) if area_m2 else None
+    except (TypeError, ValueError):
+        return (None, None, None)
+    if not m or not v or m <= 0 or v <= 0:
+        return (None, None, None)
+    if not (DENSIDAD_MIN < (m / v) < DENSIDAD_MAX):
+        return (None, None, None)
+    if a is not None and a <= 0:
+        a = None
+    return (m, v, a)
+
+
 # V2.0.7 - Expresión normalizada del nombre de archivo usada en la búsqueda.
 # Tiene que coincidir LETRA POR LETRA con la del índice idx_ba_nombre_norm_trgm
 # o PostgreSQL no lo usará y volveremos al escaneo completo de la tabla.
@@ -158,9 +186,22 @@ class IndexManager:
                     sw_onda         TEXT,
                     sw_cangilon     TEXT,
                     sw_runer        TEXT,
+                    -- V2.0.8: propiedades físicas leídas de SolidWorks
+                    sw_masa_kg      DOUBLE PRECISION,
+                    sw_volumen_m3   DOUBLE PRECISION,
+                    sw_area_m2      DOUBLE PRECISION,
                     indexado_en     TIMESTAMP DEFAULT NOW()
                 )
             ''')
+
+            # V2.0.8: la tabla se crea con CREATE TABLE IF NOT EXISTS, así que
+            # en las bases ya existentes las columnas nuevas hay que añadirlas
+            # aparte (si no, todo lo de masa/superficie falla en silencio).
+            for col, tipo in (('sw_masa_kg', 'DOUBLE PRECISION'),
+                              ('sw_volumen_m3', 'DOUBLE PRECISION'),
+                              ('sw_area_m2', 'DOUBLE PRECISION')):
+                cursor.execute(
+                    f'ALTER TABLE buscador.archivos ADD COLUMN IF NOT EXISTS {col} {tipo}')
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS buscador.estado_indexacion (
@@ -444,8 +485,10 @@ class IndexManager:
         mejor casa: primero los de la propia carpeta del ensamblaje (pieza del
         proyecto), después el más reciente (piezas de biblioteca compartidas).
         Filas: (componente_nombre, nombre_archivo, origen, anio, cliente,
-                proyecto, ruta_completa). nombre_archivo es NULL si el
-        componente no está en el índice (referencia rota o carpeta excluida)."""
+                proyecto, ruta_completa, sw_masa_kg, sw_area_m2). nombre_archivo
+        es NULL si el componente no está en el índice (referencia rota o carpeta
+        excluida). V2.0.8: masa y superficie para poder sumar el peso total del
+        conjunto y los m2 a pintar."""
         import ntpath
         carpeta = ntpath.dirname(ensamblaje_ruta)
         wrapper = self.get_connection()
@@ -454,10 +497,12 @@ class IndexManager:
             # strpos en vez de LIKE: las rutas UNC llevan '\' que en LIKE es escape
             cursor.execute('''
                 SELECT c.componente_nombre, a.nombre_archivo, a.origen, a.anio,
-                       a.cliente, a.proyecto, a.ruta_completa
+                       a.cliente, a.proyecto, a.ruta_completa,
+                       a.sw_masa_kg, a.sw_area_m2
                 FROM buscador.componentes c
                 LEFT JOIN LATERAL (
-                    SELECT nombre_archivo, origen, anio, cliente, proyecto, ruta_completa
+                    SELECT nombre_archivo, origen, anio, cliente, proyecto, ruta_completa,
+                           sw_masa_kg, sw_area_m2
                     FROM buscador.archivos
                     WHERE UPPER(nombre_archivo) = c.componente_nombre
                     ORDER BY (strpos(ruta_completa, %s) = 1) DESC,

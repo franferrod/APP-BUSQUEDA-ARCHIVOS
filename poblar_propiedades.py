@@ -67,13 +67,28 @@ def valores_sw(p):
         p.get('ONDA') or None,
         p.get('CANGILÓN') or p.get('CANGILON') or None,
         p.get('RUNER') or None,
+        # V2.0.8: masa/volumen/superficie con filtro de densidad creíble
+        *fisicas(p),
     )
+
+
+def fisicas(p):
+    try:
+        from models import fisicas_creibles
+        return fisicas_creibles(p.get('__MASA_KG__'), p.get('__VOLUMEN_M3__'),
+                                p.get('__AREA_M2__'))
+    except Exception:
+        return (None, None, None)
 
 
 UPDATE_SQL = """UPDATE buscador.archivos SET
     sw_material=%s, sw_tratamiento=%s, sw_espesor=%s, sw_laser=%s, sw_torno=%s,
     sw_fresa=%s, sw_soldadura=%s, sw_pintura=%s, sw_montaje=%s, sw_tipo_cierre=%s,
-    sw_filo_guiado=%s, sw_onda=%s, sw_cangilon=%s, sw_runer=%s
+    sw_filo_guiado=%s, sw_onda=%s, sw_cangilon=%s, sw_runer=%s,
+    -- V2.0.8: COALESCE para no borrar un valor bueno si una pasada no lo trae
+    sw_masa_kg=COALESCE(%s, sw_masa_kg),
+    sw_volumen_m3=COALESCE(%s, sw_volumen_m3),
+    sw_area_m2=COALESCE(%s, sw_area_m2)
     WHERE id=%s"""
 
 

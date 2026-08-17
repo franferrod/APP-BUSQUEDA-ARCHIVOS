@@ -175,6 +175,50 @@ namespace SwPropExtractor
                     catch { }
                 }
 
+                // V2.0.7: masa / volumen / área (opt-in con --masa). Sale de la
+                // configuración activa. GetMassProperties devuelve 12 dobles:
+                // 0-2 centro de gravedad (m), 3 volumen (m^3), 4 área (m^2),
+                // 5 masa (kg), 6-11 momentos de inercia.
+                bool wantMasa = false;
+                for (int i = 2; i < args.Length; i++)
+                    if (args[i] == "--masa") wantMasa = true;
+                if (wantMasa && docType != SwDmDocumentType.swDmDocumentDrawing)
+                {
+                    try
+                    {
+                        SwDMConfigurationMgr cfgMgrM = doc.ConfigurationManager;
+                        if (cfgMgrM != null)
+                        {
+                            string activa = cfgMgrM.GetActiveConfigurationName();
+                            SwDMConfiguration cfgM = null;
+                            if (!string.IsNullOrEmpty(activa))
+                                cfgM = cfgMgrM.GetConfigurationByName(activa);
+                            if (cfgM == null)
+                            {
+                                string[] nombres = (string[])cfgMgrM.GetConfigurationNames();
+                                if (nombres != null && nombres.Length > 0)
+                                    cfgM = cfgMgrM.GetConfigurationByName(nombres[0]);
+                            }
+                            if (cfgM != null)
+                            {
+                                // Firma real (comprobada por reflexion sobre el interop):
+                                // object GetMassProperties(out SwDmMassPropError)
+                                SwDmMassPropError mperr;
+                                object mpObj = cfgM.GetMassProperties(out mperr);
+                                double[] mp = mpObj as double[];
+                                if (mp != null && mp.Length >= 6)
+                                {
+                                    // Solo se guarda si son valores creíbles (>0)
+                                    if (mp[5] > 0) props["__MASA_KG__"] = mp[5];
+                                    if (mp[3] > 0) props["__VOLUMEN_M3__"] = mp[3];
+                                    if (mp[4] > 0) props["__AREA_M2__"] = mp[4];
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
                 // V2.0.3: preview PNG embebido (opt-in con --preview). Funciona en
                 // equipos SIN SolidWorks; se usa para la caché de miniaturas en BD.
                 bool wantPreview = false;

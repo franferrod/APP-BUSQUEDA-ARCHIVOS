@@ -174,7 +174,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.0.7"
+APP_VERSION = "2.0.8"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -2334,6 +2334,22 @@ class BuscadorPiezas(QMainWindow):
         self.input_refinar.returnPressed.connect(self._agregar_refinado)
         ref_lay.addWidget(self.input_refinar, stretch=1)
 
+        # V2.0.8: refinado NEGATIVO — "que NO contengan esa pieza"
+        self.btn_ref_no = QPushButton("⊘ NO contengan")
+        self.btn_ref_no.setCursor(Qt.PointingHandCursor)
+        self.btn_ref_no.setToolTip(
+            "Quitar de los resultados los conjuntos que SÍ llevan esa pieza.\n"
+            "Ejemplo: cintas A450 → NO contengan MOTOR REM = las que llevan otro motor.\n"
+            "Atajo: escribe un '-' delante del término y pulsa Enter.")
+        self.btn_ref_no.clicked.connect(
+            lambda _=False: self._agregar_refinado_negativo())
+        self.btn_ref_no.setStyleSheet(
+            "QPushButton { background: #12202A; color: #5B9BD5; "
+            "border: 1px solid #5B9BD5; border-radius: 10px; padding: 4px 10px; "
+            "font-weight: 600; }"
+            "QPushButton:hover { background: #5B9BD5; color: #141414; }")
+        ref_lay.addWidget(self.btn_ref_no)
+
         # V2.0.3: profundidad — buscar también dentro de los subconjuntos
         self.btn_profundo = QPushButton("Subconjuntos")
         self.btn_profundo.setCheckable(True)
@@ -4104,16 +4120,24 @@ class BuscadorPiezas(QMainWindow):
         elif getattr(self, 'modo_busqueda', 'nombre') == 'contiene' and self.input_buscar.text().strip():
             self.ejecutar_busqueda(auto=True)  # relanzar la búsqueda de conjuntos
 
-    def _agregar_refinado(self):
-        """Enter en la barra de refinado: apila un nivel (chip) y aplica."""
+    def _agregar_refinado(self, negativo=False):
+        """Enter en la barra de refinado: apila un nivel (chip) y aplica.
+        V2.0.8: negativo=True apila 'que NO contengan' (botón NO). También se
+        acepta escribir el término con un '-' delante."""
         term = self.input_refinar.text().strip()
+        if term.startswith('-') and len(term) > 1:
+            negativo = True
+            term = term[1:].strip()
         if not term or not getattr(self, '_res_base', None):
             return
         if not hasattr(self, '_refinados'):
             self._refinados = []
-        self._refinados.append(('contiene', term))
+        self._refinados.append(('no_contiene' if negativo else 'contiene', term))
         self.input_refinar.clear()
         self._aplicar_refinados()
+
+    def _agregar_refinado_negativo(self):
+        self._agregar_refinado(negativo=True)
 
     def _limpiar_refinados(self):
         """Quita todos los niveles: vuelve a la búsqueda base."""
@@ -4148,10 +4172,17 @@ class BuscadorPiezas(QMainWindow):
                 if modo == 'nombre':
                     res = [d for d in res if self._casa_termino_local(d[0], term)]
                 else:
+                    # V2.0.8: el negativo es el COMPLEMENTO del mismo conjunto.
+                    # Un PDF o una pieza no llevan componentes indexados, así
+                    # que "no lo contienen" y se quedan: es lo que literalmente
+                    # se ha pedido, y el chip lo dice para que no sorprenda.
                     keep = self.db.filtrar_por_componente(
                         [d[10] for d in res], term,
                         profundo=self.btn_profundo.isChecked())
-                    res = [d for d in res if d[10] in keep]
+                    if modo == 'no_contiene':
+                        res = [d for d in res if d[10] not in keep]
+                    else:
+                        res = [d for d in res if d[10] in keep]
         except Exception as e:
             logger.error(f"Error aplicando refinados: {e}")
         finally:
@@ -4177,19 +4208,26 @@ class BuscadorPiezas(QMainWindow):
                 if w:
                     w.deleteLater()
             for i, (modo, term) in enumerate(refs):
-                icono = "≡" if modo == 'nombre' else "⚙"
+                negativo = (modo == 'no_contiene')
+                icono = "≡" if modo == 'nombre' else ("⊘" if negativo else "⚙")
                 etiqueta = term if len(term) <= 22 else term[:20] + "…"
-                chip = QPushButton(f"{i+1}· {icono} {etiqueta}  ✕")
+                prefijo = "NO " if negativo else ""
+                chip = QPushButton(f"{i+1}· {icono} {prefijo}{etiqueta}  ✕")
                 chip.setCursor(Qt.PointingHandCursor)
                 chip.setToolTip(
                     ("Nivel %d — En el nombre: " if modo == 'nombre'
-                     else "Nivel %d — Contiene la pieza: ") % (i + 1)
+                     else ("Nivel %d — NO contiene la pieza: " if negativo
+                           else "Nivel %d — Contiene la pieza: ")) % (i + 1)
                     + term + "\nClic para quitar este nivel")
+                # V2.0.8: el nivel negativo en azul apagado, para no confundirlo
+                # de un vistazo con los que SÍ exigen la pieza
+                col = "#5B9BD5" if negativo else "#E66C32"
+                fondo = "#12202A" if negativo else "#2A1B12"
                 chip.setStyleSheet(
-                    "QPushButton { background: #2A1B12; color: #E66C32; border: 1px solid "
-                    "#E66C32; border-radius: 10px; padding: 2px 10px; font-size: 11px; "
-                    "font-weight: 600; }"
-                    "QPushButton:hover { background: #E66C32; color: #141414; }")
+                    f"QPushButton {{ background: {fondo}; color: {col}; "
+                    f"border: 1px solid {col}; border-radius: 10px; "
+                    f"padding: 2px 10px; font-size: 11px; font-weight: 600; }}"
+                    f"QPushButton:hover {{ background: {col}; color: #141414; }}")
                 chip.clicked.connect(lambda _, k=i: self._quitar_refinado(k))
                 self.chips_refinar.addWidget(chip)
             self.btn_ref_limpiar.setVisible(activo)
@@ -5389,10 +5427,51 @@ class BuscadorPiezas(QMainWindow):
             lbl_n.setObjectName("StatusDim")
             lay.addWidget(lbl_n)
 
+            # V2.0.8: PESO TOTAL y SUPERFICIE A PINTAR del conjunto. Se suma lo
+            # que hay; si falta el dato de algún componente se dice cuántos,
+            # porque un total incompleto presentado como definitivo es peor que
+            # no dar ninguno (con esto se manda a pintura un nº de m²).
+            masas = [float(f[7]) for f in filas if f[7]]
+            areas = [float(f[8]) for f in filas if f[8]]
+            n_comp_reales = len(filas)
+            faltan_masa = n_comp_reales - len(masas)
+            if masas or areas:
+                partes = []
+                if masas:
+                    total_kg = sum(masas)
+                    partes.append(f'<b>Peso total: {total_kg:,.1f} kg</b>'
+                                  .replace(",", "."))
+                if areas:
+                    total_m2 = sum(areas)
+                    partes.append(f'<b>Superficie a pintar: {total_m2:,.2f} m²</b>'
+                                  .replace(",", "."))
+                aviso_falta = ""
+                if faltan_masa:
+                    aviso_falta = (f'<span style="color:#E0A030;"> · ojo: '
+                                   f'{faltan_masa} de {n_comp_reales} componentes '
+                                   f'sin datos, el total es parcial</span>')
+                lbl_tot = QLabel("   ·   ".join(partes) + aviso_falta)
+                lbl_tot.setTextFormat(Qt.RichText)
+                lbl_tot.setWordWrap(True)
+                lbl_tot.setStyleSheet(
+                    "background: #33291F; border: 1px solid #E66C32; "
+                    "border-radius: 8px; padding: 8px 12px; color: #F5F5F5; "
+                    "font-size: 13px;")
+                lay.addWidget(lbl_tot)
+            else:
+                lbl_tot = QLabel(
+                    "Sin datos de peso todavía: se calculan en el pase nocturno. "
+                    "Si el conjunto es reciente, mañana estarán.")
+                lbl_tot.setObjectName("StatusDim")
+                lbl_tot.setWordWrap(True)
+                lay.addWidget(lbl_tot)
+
             # V2.0.6: arrastrable a SolidWorks + menú completo del botón derecho
             tabla = TablaDialogoArrastrable()
-            tabla.setColumnCount(6)
-            tabla.setHorizontalHeaderLabels(["Vista", "Componente", "Cliente", "Proyecto", "Año", "Origen"])
+            tabla.setColumnCount(8)
+            tabla.setHorizontalHeaderLabels(
+                ["Vista", "Componente", "Peso (kg)", "Sup. (m²)",
+                 "Cliente", "Proyecto", "Año", "Origen"])
             tabla.setRowCount(len(filas))
             tabla.setEditTriggers(QTableWidget.NoEditTriggers)
             tabla.setSelectionBehavior(QTableWidget.SelectRows)
@@ -5406,7 +5485,7 @@ class BuscadorPiezas(QMainWindow):
             tabla.verticalHeader().setDefaultSectionSize(54)
             # V2.0.3: miniaturas desde la caché de BD (un solo query para todos)
             minis = self.db.obtener_miniaturas_lote([f[6] for f in filas if f[6]])
-            for i, (comp, nom_a, origen, anio, cliente, proyecto, ruta_c) in enumerate(filas):
+            for i, (comp, nom_a, origen, anio, cliente, proyecto, ruta_c, masa_c, area_c) in enumerate(filas):
                 it_vista = QTableWidgetItem()
                 it_vista.setData(Qt.UserRole, ruta_c or "")
                 data_img = minis.get(ruta_c)
@@ -5419,8 +5498,21 @@ class BuscadorPiezas(QMainWindow):
                     it_vista.setIcon(QIcon(pixmap_badge_extension(ext, size=44)))
                 it1 = QTableWidgetItem(comp)
                 it1.setData(Qt.UserRole, ruta_c or "")
+                # V2.0.8: peso y superficie, ordenables como numeros (no texto)
+                it_masa = QTableWidgetItem()
+                if masa_c:
+                    it_masa.setData(Qt.DisplayRole, round(float(masa_c), 3))
+                else:
+                    it_masa.setText("—")
+                it_masa.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                it_area = QTableWidgetItem()
+                if area_c:
+                    it_area.setData(Qt.DisplayRole, round(float(area_c), 4))
+                else:
+                    it_area.setText("—")
+                it_area.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 celdas = [
-                    it_vista, it1,
+                    it_vista, it1, it_masa, it_area,
                     QTableWidgetItem(cliente or ("—" if nom_a else "no indexado")),
                     QTableWidgetItem(etiqueta_origen(proyecto or "") if proyecto else "—"),
                     QTableWidgetItem(str(anio) if anio else "—"),
@@ -5432,7 +5524,7 @@ class BuscadorPiezas(QMainWindow):
                     tabla.setItem(i, j, it)
             tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
             tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-            for j in (2, 3, 4, 5):
+            for j in (2, 3, 4, 5, 6, 7):
                 tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
             tabla.setSortingEnabled(True)
             lay.addWidget(tabla, stretch=1)
@@ -5457,8 +5549,11 @@ class BuscadorPiezas(QMainWindow):
             btn_export.setIcon(svg_icon("exportar-descargar", size=15))
             btn_export.setCursor(Qt.PointingHandCursor)
             btn_export.clicked.connect(lambda: self._export_csv_generico(
-                ["Componente", "Cliente", "Proyecto", "Año", "Origen", "Ruta"],
-                [(f[0], f[4] or "", etiqueta_origen(f[5] or "") if f[5] else "",
+                ["Componente", "Peso (kg)", "Superficie (m2)", "Cliente",
+                 "Proyecto", "Año", "Origen", "Ruta"],
+                [(f[0], round(float(f[7]), 3) if f[7] else "",
+                  round(float(f[8]), 4) if f[8] else "",
+                  f[4] or "", etiqueta_origen(f[5] or "") if f[5] else "",
                   f[3] or "", etiqueta_origen(f[2] or "") if f[2] else "", f[6] or "")
                  for f in filas],
                 f"Despiece_{os.path.splitext(nombre)[0]}.csv"))

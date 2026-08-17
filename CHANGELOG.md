@@ -1,5 +1,14 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.8] - 2026-08-17 (Peso y superficie · refinado "que NO contengan")
+- **Peso y superficie de cada pieza y conjunto**, leídos de SolidWorks (los mismos valores que ves en Herramientas → Propiedades físicas). Medido sobre 65 archivos reales: hay dato en el 96% de las piezas y el 80% de los conjuntos, a 0,2 s por archivo.
+- **Peso total y superficie a pintar en el despiece.** Al abrir "Ver componentes" sale el peso sumado del conjunto y **los m² de superficie**, para poder decirle a pintura cuántos metros cuadrados hay que pintar. Si a algún componente le falta el dato, lo dice: *"3 de 6 componentes sin datos, el total es parcial"* — un total incompleto presentado como definitivo sería peor que no darlo.
+- **Columnas Peso (kg) y Sup. (m²) en el despiece**, ordenables como números, y ambas incluidas al exportar a CSV para mandarlo a pintura o a compras.
+- **Filtro de cordura**: se descarta cualquier valor cuya densidad sea imposible. En la muestra apareció una "pieza" de 373 toneladas que era un modelo descargado de internet; con el filtro no entra. De 114 piezas reales no se descartó ni una legítima.
+- **Refinado "que NO contengan"** (botón ⊘ azul en la barra de refinar): quita de los resultados los conjuntos que llevan esa pieza. Ejemplo: cintas A450 → NO contengan MOTOR REM = las que llevan otro motor. Atajo: escribe un `-` delante del término y pulsa Enter. Los niveles negativos salen en azul para no confundirlos con los que sí exigen la pieza.
+
+*Nota: los datos de peso se van rellenando en el pase nocturno. Los conjuntos consultados antes de que pase mostrarán el aviso de que aún no hay datos.*
+
 ## [2.0.7] - 2026-08-17 (La búsqueda, de 3 a 46 veces más rápida)
 - **Todas las búsquedas son mucho más rápidas, con resultados idénticos.** La consulta normalizaba el nombre del archivo con una función que PostgreSQL no puede indexar, así que cada búsqueda recorría las 589.459 filas de la tabla entera: ese era el ~medio segundo fijo que tenía cualquier búsqueda, y la razón de fondo de los atascos al combinar filtros. Ahora la misma consulta usa un índice: TUERCA M16 pasa de 548 ms a 12 ms (46x), CHASIS PATA de 539 a 34 ms (16x), PLETINA MONTAJE de 561 a 59 ms (9,5x). Verificado archivo por archivo: los resultados son exactamente los mismos.
 - **Resultados estables.** Cuando una búsqueda daba el máximo de 5.000 resultados, cuáles de ellos se mostraban dependía de cómo la base de datos hubiera recorrido la tabla: repetir la misma búsqueda podía enseñar 5.000 archivos distintos. Ahora el orden es determinista y repetir una búsqueda da siempre lo mismo.
