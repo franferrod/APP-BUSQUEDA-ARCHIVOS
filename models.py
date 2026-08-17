@@ -43,6 +43,12 @@ def load_pg_config():
 # V1.0.8 - PostgreSQL compartido (credenciales en config.ini)
 PG_CONFIG = load_pg_config()
 
+# V2.0.7 - Expresión normalizada del nombre de archivo usada en la búsqueda.
+# Tiene que coincidir LETRA POR LETRA con la del índice idx_ba_nombre_norm_trgm
+# o PostgreSQL no lo usará y volveremos al escaneo completo de la tabla.
+# (buscador.sin_tildes = unaccent declarado IMMUTABLE; ver crear_tablas)
+NOMBRE_NORM = "UPPER(buscador.sin_tildes(nombre_archivo))"
+
 # Configuración de Logging
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -253,6 +259,32 @@ class IndexManager:
                 cursor.execute('CREATE EXTENSION IF NOT EXISTS unaccent')
             except Exception:
                 logger.warning("Extensión unaccent no disponible, se usará normalización Python")
+
+            # V2.0.7 - BÚSQUEDA INDEXADA (antes: escaneo completo de 589k filas)
+            #
+            # La búsqueda usaba UPPER(unaccent(nombre_archivo)) LIKE '%...%'. Es
+            # correcta, pero unaccent(text) es STABLE y PostgreSQL NO permite
+            # indexar expresiones no inmutables: cada búsqueda recorría la tabla
+            # entera (~520 ms fijos, y mucho peor combinada con otros filtros).
+            #
+            # buscador.sin_tildes() es la MISMA operación declarada IMMUTABLE
+            # (llama a unaccent con el diccionario explícito). Verificado sobre
+            # las 589.459 filas: 0 diferencias respecto a unaccent(). Con el
+            # índice GIN de trigramas encima, la misma búsqueda pasa a 3-145 ms
+            # (de 4x a 172x más rápida) SIN cambiar ni un resultado.
+            try:
+                cursor.execute('CREATE EXTENSION IF NOT EXISTS pg_trgm')
+                cursor.execute("""
+                    CREATE OR REPLACE FUNCTION buscador.sin_tildes(text)
+                    RETURNS text AS $$ SELECT public.unaccent('public.unaccent', $1) $$
+                    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE""")
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ba_nombre_norm_trgm
+                    ON buscador.archivos USING gin
+                    (UPPER(buscador.sin_tildes(nombre_archivo)) gin_trgm_ops)""")
+            except Exception as e:
+                logger.warning(f"Índice de trigramas no disponible ({e}); "
+                               "la búsqueda seguirá funcionando, más lenta")
 
             # Limpieza de temporales huérfanos
             cursor.execute("DELETE FROM buscador.archivos WHERE nombre_archivo LIKE '~$%%'")
@@ -922,7 +954,7 @@ class IndexManager:
                 peso_posicion = len(keywords) - i
                 kw_norm = self.normalizar_texto(kw)
                 score_cases.append(
-                    f"CASE WHEN UPPER(unaccent(nombre_archivo)) LIKE %s THEN {peso_posicion * 100} ELSE 0 END"
+                    f"CASE WHEN {NOMBRE_NORM} LIKE %s THEN {peso_posicion * 100} ELSE 0 END"
                 )
                 params.append(f"%{kw_norm}%")
 
@@ -934,7 +966,7 @@ class IndexManager:
             score_sql = " + ".join(score_cases)
             logic_op = " AND " if is_and_search else " OR "
             where_clause = logic_op.join(
-                ["UPPER(unaccent(nombre_archivo)) LIKE %s" for _ in keywords]
+                [f"{NOMBRE_NORM} LIKE %s" for _ in keywords]
             )
             params.extend([f"%{self.normalizar_texto(k)}%" for k in keywords])
 
@@ -1087,7 +1119,12 @@ class IndexManager:
             query += f" AND ({context_sql})"
             params.extend(context_params)
 
-        query += " ORDER BY score DESC, ultima_modificacion DESC NULLS LAST LIMIT 5000"
+        # V2.0.7: ruta_completa como último criterio de desempate. Sin él, al
+        # cortar en 5000 el conjunto devuelto dependía del plan de acceso, así
+        # que dos búsquedas idénticas podían enseñar 5000 filas DISTINTAS (se
+        # notó al indexar la búsqueda: mismo conjunto, distinto recorte).
+        query += (" ORDER BY score DESC, ultima_modificacion DESC NULLS LAST,"
+                  " ruta_completa LIMIT 5000")
 
         wrapper = self.get_connection()
         try:
