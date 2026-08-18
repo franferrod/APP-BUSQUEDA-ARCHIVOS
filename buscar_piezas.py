@@ -2072,7 +2072,7 @@ class BuscadorPiezas(QMainWindow):
             "Peso (kg)", "Sup. (m²)"
         ])
         for _c, _t in ((21, "Peso de la pieza o conjunto, leído de SolidWorks"),
-                       (22, "Superficie exterior — los m² a pintar")):
+                       (22, "Superficie exterior de la pieza o conjunto (m²)")):
             _h = self.tabla.horizontalHeaderItem(_c)
             if _h:
                 _h.setToolTip(_t)
@@ -2247,9 +2247,15 @@ class BuscadorPiezas(QMainWindow):
             "QPushButton { padding: 6px 16px; }")
         self.menu_columnas = CheckableMenu(self)
         self.columnas_actions = {}
-        for col_idx in range(5, 21):
+        # V2.0.8: hasta columnCount() para que Peso y Sup. se puedan
+        # ocultar/mostrar desde el menú igual que el resto
+        for col_idx in range(5, self.tabla.columnCount()):
             h_item = self.tabla.horizontalHeaderItem(col_idx)
-            nombre_col = h_item.toolTip() or h_item.text()
+            # El tooltip solo sirve de nombre cuando la cabecera es una inicial
+            # (L, T, F, S, P, M). Si ya es descriptiva se usa tal cual, o el
+            # menú mostraría la explicación larga en vez del nombre corto.
+            nombre_col = (h_item.text() if len(h_item.text()) > 2
+                          else (h_item.toolTip() or h_item.text()))
             accion = self.menu_columnas.addAction(nombre_col)
             accion.setCheckable(True)
             accion.setChecked(True)
@@ -2482,7 +2488,10 @@ class BuscadorPiezas(QMainWindow):
             # V2.0.3: documentación de la pieza y salud del ensamblaje
             ('plano', 'Plano'), ('comps', 'Componentes'),
             # V2.0.8: propiedades físicas leídas de SolidWorks
-            ('peso', 'Peso'), ('superficie', 'Superficie')]):
+            # V2.0.8: solo Peso. La superficie se queda en la columna de la
+            # lista: en el panel ocupaba sitio y, sobre todo, decía "a pintar"
+            # sin saber si la pieza se pinta — afirmarlo era incorrecto.
+            ('peso', 'Peso')]):
             lbl_k = QLabel(etiqueta)
             lbl_k.setObjectName("MetaKey")
             lbl_v = QLabel("—")
@@ -3047,6 +3056,16 @@ class BuscadorPiezas(QMainWindow):
                 self.rail_widget.setVisible(True)
                 self._panel_izquierdo.setMinimumWidth(56)
                 self._panel_izquierdo.setMaximumWidth(56)
+                # V2.0.8: hay que repartir el espacio liberado A MANO. Fijar el
+                # ancho del panel no mueve el divisor: este se quedaba con el
+                # reparto anterior y dejaba un hueco muerto entre el raíl y la
+                # tabla, en vez de que la búsqueda ocupara todo el ancho.
+                sizes = self.main_splitter.sizes()
+                if len(sizes) >= 2:
+                    ganado = sizes[0] - 56
+                    sizes[0] = 56
+                    sizes[1] = sizes[1] + max(ganado, 0)
+                    self.main_splitter.setSizes(sizes)
                 self.btn_colapsar_sidebar.setIcon(svg_icon("expandir-panel", size=14))
                 self.btn_colapsar_sidebar.setToolTip("Expandir panel de filtros")
             else:
@@ -3056,8 +3075,10 @@ class BuscadorPiezas(QMainWindow):
                 self._panel_izquierdo.setMinimumWidth(80)
                 self._panel_izquierdo.setMaximumWidth(500)
                 sizes = self.main_splitter.sizes()
-                if sizes and sizes[0] < 200:
+                if len(sizes) >= 2 and sizes[0] < 200:
+                    devuelto = 256 - sizes[0]
                     sizes[0] = 256
+                    sizes[1] = max(sizes[1] - devuelto, 300)
                     self.main_splitter.setSizes(sizes)
                 self.btn_colapsar_sidebar.setIcon(svg_icon("contraer-panel", size=14))
                 self.btn_colapsar_sidebar.setToolTip("Contraer panel de filtros")
@@ -4960,27 +4981,18 @@ class BuscadorPiezas(QMainWindow):
             logger.debug(f"Error en info documental de {ruta_canonica}: {e}")
         # V2.0.8: peso y superficie del archivo seleccionado. Se ocultan las
         # filas si no hay dato, en vez de enseñar un "—" que no dice nada.
-        hay_peso = hay_sup = False
+        hay_peso = False
         try:
             fis = self.db.propiedades_fisicas(ruta_canonica)
-            if fis:
-                masa, _vol, area = fis
-                if masa:
-                    self._meta_vals['peso'].setText(
-                        f"<b>{masa:,.2f} kg</b>".replace(",", "."))
-                    hay_peso = True
-                if area:
-                    self._meta_vals['superficie'].setText(
-                        f"<b>{area:,.3f} m²</b>".replace(",", ".") +
-                        ' <span style="color:#999999;">a pintar</span>')
-                    hay_sup = True
+            if fis and fis[0]:
+                self._meta_vals['peso'].setText(
+                    f"<b>{fis[0]:,.2f} kg</b>".replace(",", "."))
+                self._meta_vals['peso'].setTextFormat(Qt.RichText)
+                hay_peso = True
         except Exception as e:
             logger.debug(f"Propiedades físicas de {ruta_canonica}: {e}")
-        for clave, visible in (('peso', hay_peso), ('superficie', hay_sup)):
-            self._meta_keys[clave].setVisible(visible)
-            self._meta_vals[clave].setVisible(visible)
-            if visible:
-                self._meta_vals[clave].setTextFormat(Qt.RichText)
+        self._meta_keys['peso'].setVisible(hay_peso)
+        self._meta_vals['peso'].setVisible(hay_peso)
 
         self._meta_keys['plano'].setVisible(fila_plano)
         self._meta_vals['plano'].setVisible(fila_plano)
@@ -5594,7 +5606,9 @@ class BuscadorPiezas(QMainWindow):
                                   .replace(",", "."))
                 if areas:
                     total_m2 = sum(areas)
-                    partes.append(f'<b>Superficie a pintar: {total_m2:,.2f} m²</b>'
+                    # Se dice "superficie total", no "a pintar": la app no sabe
+                    # si la pieza va pintada, y afirmarlo sería inventárselo
+                    partes.append(f'<b>Superficie total: {total_m2:,.2f} m²</b>'
                                   .replace(",", "."))
                 aviso_falta = ""
                 if faltan_masa:

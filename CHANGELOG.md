@@ -5,6 +5,9 @@
 - **Peso total y superficie a pintar en el despiece.** Al abrir "Ver componentes" sale el peso sumado del conjunto y **los m² de superficie**, para poder decirle a pintura cuántos metros cuadrados hay que pintar. Si a algún componente le falta el dato, lo dice: *"3 de 6 componentes sin datos, el total es parcial"* — un total incompleto presentado como definitivo sería peor que no darlo.
 - **Columnas Peso (kg) y Sup. (m²) en el despiece**, ordenables como números, y ambas incluidas al exportar a CSV para mandarlo a pintura o a compras.
 - **Filtro de cordura**: se descarta cualquier valor cuya densidad sea imposible. En la muestra apareció una "pieza" de 373 toneladas que era un modelo descargado de internet; con el filtro no entra. De 114 piezas reales no se descartó ni una legítima.
+- **Peso y Sup. se pueden ocultar** desde el menú Columnas, igual que el resto.
+- **Al contraer el panel de filtros**, la zona de resultados ocupa ya todo el ancho: antes quedaba un hueco muerto porque el divisor mantenía el reparto anterior.
+- En el panel derecho se muestra **solo el Peso**. La superficie se queda en la columna de la lista: decía "a pintar" sin que la app sepa si la pieza se pinta, y afirmarlo no era correcto. Por lo mismo, el total del despiece pasa a llamarse "Superficie total".
 - **Refinado "que NO contengan"** (botón ⊘ azul en la barra de refinar): quita de los resultados los conjuntos que llevan esa pieza. Ejemplo: cintas A450 → NO contengan MOTOR REM = las que llevan otro motor. Atajo: escribe un `-` delante del término y pulsa Enter. Los niveles negativos salen en azul para no confundirlos con los que sí exigen la pieza.
 
 *Nota: los datos de peso se van rellenando en el pase nocturno. Los conjuntos consultados antes de que pase mostrarán el aviso de que aún no hay datos.*
