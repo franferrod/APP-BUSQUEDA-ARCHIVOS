@@ -2323,19 +2323,46 @@ class BuscadorPiezas(QMainWindow):
         ico_ref.setPixmap(svg_pixmap("ensamblaje-cubo", color="#E66C32", size=15))
         ico_ref.setStyleSheet("background: transparent;")
         ref_lay.addWidget(ico_ref)
-        # CTA claro: qué hace esta barra, sin tener que adivinarlo
-        lbl_ref = QLabel("Refinar: que contengan la pieza o ensamblaje…")
+
+        # V2.0.8: la barra se lee como UNA FRASE — "De estos resultados, deja
+        # los que [SI|NO] contengan [pieza]". Antes la etiqueta afirmaba "que
+        # contengan" y al lado habia un boton que hacia lo contrario: el modo
+        # estaba declarado en dos sitios que se contradecian, y no se entendia
+        # que hacia cada cosa.
+        lbl_ref = QLabel("De estos resultados, deja los que")
         lbl_ref.setToolTip(
-            "Sub-búsqueda sobre los resultados actuales (Ctrl+R).\n"
-            "Deja solo los ensamblajes que LLEVAN DENTRO esa pieza o\n"
-            "subensamblaje (componentes directos de su despiece).\n"
-            "Enter aplica y deja un chip; puedes encadenar varios niveles.\n"
-            "Sintaxis: espacio = frase exacta · ; = Y · , = O.\n"
-            "Esc deshace el último nivel hasta la búsqueda general.")
+            "Sub-busqueda sobre los resultados actuales (Ctrl+R).\n"
+            "Filtra por lo que los ensamblajes LLEVAN DENTRO (su despiece),\n"
+            "no por el nombre: para el nombre esta el buscador de arriba.\n"
+            "Enter aplica y deja un chip; se pueden encadenar varios niveles.\n"
+            "Sintaxis: espacio = frase exacta, ; = Y, , = O.\n"
+            "Esc deshace el ultimo nivel hasta la busqueda general.")
         lbl_ref.setStyleSheet(
             f'font-family: "{FUENTES["h2"]}"; font-weight: 800; color: #E66C32; '
             f'background: transparent;')
         ref_lay.addWidget(lbl_ref)
+
+        # Selector de modo SI/NO: excluyentes y siempre visibles, para que se
+        # vea de un vistazo que existen las dos opciones y cual esta activa.
+        self.grupo_modo_ref = QButtonGroup(self)
+        self.grupo_modo_ref.setExclusive(True)
+        self.btn_ref_si = QPushButton("SI contengan")
+        self.btn_ref_no = QPushButton("NO contengan")
+        for _b, _tip in (
+            (self.btn_ref_si,
+             "Dejar SOLO los ensamblajes que llevan esa pieza dentro.\n"
+             "Ejemplo: cintas A450 -> SI contengan MOTOR REM 0.37KW."),
+            (self.btn_ref_no,
+             "Quitar los ensamblajes que llevan esa pieza; deja el resto.\n"
+             "Ejemplo: cintas A450 -> NO contengan MOTOR REM = las que\n"
+             "montan otro motor.\nAtajo: un '-' delante del termino y Enter.")):
+            _b.setCheckable(True)
+            _b.setCursor(Qt.PointingHandCursor)
+            _b.setToolTip(_tip)
+            self.grupo_modo_ref.addButton(_b)
+            ref_lay.addWidget(_b)
+        self.btn_ref_si.setChecked(True)
+        self.grupo_modo_ref.buttonToggled.connect(lambda *_: self._pintar_modo_refinar())
 
         self.input_refinar = QLineEdit()
         self.input_refinar.setObjectName("InputRefinar")
@@ -2343,21 +2370,12 @@ class BuscadorPiezas(QMainWindow):
         self.input_refinar.returnPressed.connect(self._agregar_refinado)
         ref_lay.addWidget(self.input_refinar, stretch=1)
 
-        # V2.0.8: refinado NEGATIVO — "que NO contengan esa pieza"
-        self.btn_ref_no = QPushButton("⊘ NO contengan")
-        self.btn_ref_no.setCursor(Qt.PointingHandCursor)
-        self.btn_ref_no.setToolTip(
-            "Quitar de los resultados los conjuntos que SÍ llevan esa pieza.\n"
-            "Ejemplo: cintas A450 → NO contengan MOTOR REM = las que llevan otro motor.\n"
-            "Atajo: escribe un '-' delante del término y pulsa Enter.")
-        self.btn_ref_no.clicked.connect(
-            lambda _=False: self._agregar_refinado_negativo())
-        self.btn_ref_no.setStyleSheet(
-            "QPushButton { background: #12202A; color: #5B9BD5; "
-            "border: 1px solid #5B9BD5; border-radius: 10px; padding: 4px 10px; "
-            "font-weight: 600; }"
-            "QPushButton:hover { background: #5B9BD5; color: #141414; }")
-        ref_lay.addWidget(self.btn_ref_no)
+        # Boton de accion explicito: quien no sepa que Enter aplica, lo ve
+        self.btn_ref_aplicar = QPushButton("Aplicar")
+        self.btn_ref_aplicar.setCursor(Qt.PointingHandCursor)
+        self.btn_ref_aplicar.setToolTip("Anadir este nivel de refinado (o pulsa Enter)")
+        self.btn_ref_aplicar.clicked.connect(lambda _=False: self._agregar_refinado())
+        ref_lay.addWidget(self.btn_ref_aplicar)
 
         # V2.0.3: profundidad — buscar también dentro de los subconjuntos
         self.btn_profundo = QPushButton("Subconjuntos")
@@ -2381,6 +2399,8 @@ class BuscadorPiezas(QMainWindow):
         self.btn_ref_limpiar.clicked.connect(self._limpiar_refinados)
         self.btn_ref_limpiar.setVisible(False)
         ref_lay.addWidget(self.btn_ref_limpiar)
+
+        self._pintar_modo_refinar()   # estado inicial del selector SI/NO
 
         self.lbl_refinar_count = QLabel("")
         self.lbl_refinar_count.setStyleSheet(
@@ -4166,8 +4186,9 @@ class BuscadorPiezas(QMainWindow):
                 "QPushButton { background: transparent; color: #999999; border: 1px solid "
                 "#3A3A3A; border-radius: 6px; padding: 3px 10px; }"
                 "QPushButton:hover { color: #E66C32; border-color: #E66C32; }")
-        self.input_refinar.setPlaceholderText(
-            "ej: MOTOR REM 0.37KW   (Enter aplica · ;=Y · ,=O · Esc deshace)")
+        # V2.0.8: el texto de ayuda depende del modo (SI/NO), asi que lo pone
+        # _pintar_modo_refinar en vez de fijarlo aqui y pisarlo
+        self._pintar_modo_refinar()
 
     def _on_profundo_toggled(self, activo):
         """Cambia entre componentes directos y cualquier nivel (V2.0.3).
@@ -4182,11 +4203,41 @@ class BuscadorPiezas(QMainWindow):
         elif getattr(self, 'modo_busqueda', 'nombre') == 'contiene' and self.input_buscar.text().strip():
             self.ejecutar_busqueda(auto=True)  # relanzar la búsqueda de conjuntos
 
+    def _pintar_modo_refinar(self):
+        """Marca visualmente el modo activo (V2.0.8). El QSS de la app no
+        distingue lo bastante un QPushButton checkable, y el usuario no sabia
+        cual estaba activo: aqui el activo va relleno y el otro apagado."""
+        try:
+            negativo = self.btn_ref_no.isChecked()
+            for btn, activo, color in (
+                    (self.btn_ref_si, not negativo, "#E66C32"),
+                    (self.btn_ref_no, negativo, "#5B9BD5")):
+                if activo:
+                    btn.setStyleSheet(
+                        f"QPushButton {{ background: {color}; color: #141414; "
+                        f"border: 1px solid {color}; border-radius: 10px; "
+                        f"padding: 4px 12px; font-weight: 800; }}")
+                else:
+                    btn.setStyleSheet(
+                        "QPushButton { background: transparent; color: #777777; "
+                        "border: 1px solid #4A4A4A; border-radius: 10px; "
+                        "padding: 4px 12px; font-weight: 600; }"
+                        f"QPushButton:hover {{ color: {color}; border-color: {color}; }}")
+            self.input_refinar.setPlaceholderText(
+                "ej. MOTOR REM 0.37KW   (Enter aplica)" if not negativo
+                else "ej. MOTOR REM 0.37KW   (se quitaran los que lo lleven)")
+        except Exception as e:
+            logger.debug(f"Pintando modo de refinado: {e}")
+
     def _agregar_refinado(self, negativo=False):
         """Enter en la barra de refinado: apila un nivel (chip) y aplica.
         V2.0.8: negativo=True apila 'que NO contengan' (botón NO). También se
         acepta escribir el término con un '-' delante."""
         term = self.input_refinar.text().strip()
+        # El modo lo manda el selector SI/NO de la barra; el '-' delante sigue
+        # valiendo como atajo para quien escribe rapido
+        if not negativo and getattr(self, 'btn_ref_no', None) is not None:
+            negativo = self.btn_ref_no.isChecked()
         if term.startswith('-') and len(term) > 1:
             negativo = True
             term = term[1:].strip()
@@ -4743,6 +4794,20 @@ class BuscadorPiezas(QMainWindow):
                             pm_cache = QPixmap.fromImage(img_bd)
                 except Exception as e:
                     logger.debug(f"Miniatura BD (preview instantáneo) falló: {e}")
+            # V2.0.8: si no hay nada en caché, aprovechar el icono que la TABLA
+            # ya tiene cargado para esa fila. La tabla puede obtener la miniatura
+            # por vías que el panel no usa (el generador del shell sobre el NAS),
+            # y de ahí venía que se viera en la lista pero no en el panel.
+            if pm_cache is None:
+                try:
+                    it_vista = self.tabla.item(row, 4)
+                    if it_vista and not it_vista.icon().isNull():
+                        pm_tabla = it_vista.icon().pixmap(QSize(512, 512))
+                        if not pm_tabla.isNull() and pm_tabla.width() > 32:
+                            pm_cache = pm_tabla
+                except Exception as e:
+                    logger.debug(f"Icono de tabla como preview: {e}")
+
             if pm_cache:
                 self._set_preview_imagen(pm_cache)
                 self.lbl_preview_icon.setText("")
