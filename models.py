@@ -12,33 +12,117 @@ LOG_PATH = CONFIG_DIR / "app.log"
 import sys
 import configparser
 
-def load_pg_config():
-    config = configparser.ConfigParser()
-    config_path = "config.ini"
-    
-    # Soporte para ejecutable PyInstaller
-    if getattr(sys, 'frozen', False):
-        config_path = os.path.join(os.path.dirname(sys.executable), "config.ini")
-        if not os.path.exists(config_path):
-            config_path = "config.ini" # Fallback
-            
-    if not os.path.exists(config_path):
-        msg = f"Falta archivo de configuración: config.ini\nBuscado en: {config_path}\nPor favor, reinstala usando INSTALAR_LOCAL.bat"
+# V2.0.9 - Localización robusta de config.ini.
+#
+# Antes se miraba en UN solo sitio (junto al .exe) con un plan B inútil (la
+# carpeta actual del proceso, que casi nunca es la de la app), y si no aparecía
+# se abría un MessageBox modal SIEMPRE. Eso tenía dos consecuencias malas:
+#   - Abrir el ejecutable desde cualquier otra carpeta (un backup, dist/) daba
+#     "Error fatal" aunque la configuración estuviera a un palmo.
+#   - models.py lo importan también los procesos nocturnos (reindexar_diario,
+#     poblar_propiedades, poblar_masa). Un MessageBox BLOQUEA el proceso hasta
+#     que alguien pulse Aceptar: de noche, sin nadie delante, el reindexado se
+#     quedaba colgado para siempre y sin rastro en el log del motivo.
+CONFIG_ENV = "ALSI_CONFIG_INI"          # permite forzar la ruta desde fuera
+RUTA_RED_APP = (r"\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT"
+                r"\APP BÚSQUEDA ARCHIVOS")
+
+
+def _candidatos_config():
+    """Sitios donde buscar config.ini, en orden de preferencia."""
+    vistos, salida = set(), []
+
+    def add(ruta):
+        if ruta and ruta not in vistos:
+            vistos.add(ruta)
+            salida.append(ruta)
+
+    add(os.environ.get(CONFIG_ENV))                       # ruta forzada
+    if getattr(sys, 'frozen', False):                     # junto al .exe
+        add(os.path.join(os.path.dirname(sys.executable), "config.ini"))
+    add(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini"))
+    local = os.environ.get("LOCALAPPDATA")
+    if local:                                             # instalación estándar
+        add(os.path.join(local, "ALSI_Buscador", "config.ini"))
+    add(str(CONFIG_DIR / "config.ini"))                   # ajustes del usuario
+    add(os.path.join(RUTA_RED_APP, "config.ini"))         # carpeta de red
+    add(os.path.abspath("config.ini"))                    # último recurso
+    return salida
+
+
+def _leer_config(ruta):
+    """Devuelve el dict de conexión si el archivo es válido, o None.
+    Un config.ini que existe pero está incompleto es tan inservible como no
+    tenerlo: antes reventaba con KeyError y el usuario veía un cierre seco."""
+    try:
+        cfg = configparser.ConfigParser()
+        cfg.read(ruta, encoding="utf-8")
+        if 'database' not in cfg:
+            return None
+        d = cfg['database']
+        if not all(k in d and d[k].strip() for k in
+                   ('host', 'port', 'dbname', 'user', 'password')):
+            return None
+        return {'host': d['host'].strip(), 'port': int(d['port']),
+                'dbname': d['dbname'].strip(), 'user': d['user'].strip(),
+                'password': d['password']}
+    except Exception:
+        return None
+
+
+def _hay_interfaz():
+    """True solo para la app con ventana. Los scripts (pases nocturnos) NUNCA
+    deben abrir diálogos: se quedarían bloqueados esperando un clic."""
+    if not getattr(sys, 'frozen', False):
+        return False
+    try:
+        import ctypes
+        return ctypes.windll.kernel32.GetConsoleWindow() == 0
+    except Exception:
+        return True
+
+
+def _avisar_fatal(msg):
+    """Deja constancia SIEMPRE en el log, y además en pantalla si hay app."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"\n[CONFIG] {time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+    try:
+        sys.stderr.write(f"[CONFIG] {msg}\n")
+    except Exception:
+        pass
+    if _hay_interfaz():
         try:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(0, msg, "Error fatal", 0x10)
-        except:
+            ctypes.windll.user32.MessageBoxW(0, msg, "Error de configuración", 0x10)
+        except Exception:
             pass
-        sys.exit(1)
-        
-    config.read(config_path)
-    return {
-        'host': config['database']['host'],
-        'port': int(config['database']['port']),
-        'dbname': config['database']['dbname'],
-        'user': config['database']['user'],
-        'password': config['database']['password'],
-    }
+
+
+def load_pg_config():
+    intentadas = []
+    for ruta in _candidatos_config():
+        intentadas.append(ruta)
+        if os.path.exists(ruta):
+            datos = _leer_config(ruta)
+            if datos:
+                return datos
+            # existe pero no sirve: se dice y se sigue buscando
+            try:
+                sys.stderr.write(f"[CONFIG] ignorado (incompleto): {ruta}\n")
+            except Exception:
+                pass
+    _avisar_fatal(
+        "No se ha encontrado un config.ini válido.\n\nBuscado en:\n  " +
+        "\n  ".join(intentadas) +
+        "\n\nSolución: ejecuta INSTALAR_LOCAL.bat desde la carpeta de red, "
+        "o define la variable de entorno " + CONFIG_ENV +
+        " con la ruta del archivo.")
+    sys.exit(2)
+
 
 # V1.0.8 - PostgreSQL compartido (credenciales en config.ini)
 PG_CONFIG = load_pg_config()
