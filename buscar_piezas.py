@@ -3252,6 +3252,43 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.debug(f"Error comprobando actualización: {e}")
 
+    @staticmethod
+    def _entorno_sin_pyinstaller():
+        """Entorno para procesos hijo, sin rastro de PyInstaller (V2.0.9).
+
+        Quitar las variables _MEI*/_PYI* no basta: el bootloader deja además
+        la carpeta temporal (sys._MEIPASS) DENTRO del PATH, y ahí viven
+        VCRUNTIME140.dll y compañía. Cualquier ejecutable del sistema lanzado
+        con ese PATH puede cargar ESAS DLL en vez de las suyas y morir con
+        0xc0000142 (DLL_INIT_FAILED) — que es justo lo que le pasó a un
+        compañero con taskkill.exe al actualizar.
+        """
+        entorno = {k: v for k, v in os.environ.items()
+                   if not k.startswith(('_MEI', '_PYI'))}
+        mei = getattr(sys, '_MEIPASS', None)
+        mei_norm = os.path.normcase(os.path.normpath(mei)) if mei else None
+
+        def es_de_pyinstaller(parte):
+            if not parte.strip():
+                return True
+            try:
+                pn = os.path.normcase(os.path.normpath(parte))
+            except Exception:
+                return False
+            if mei_norm and (pn == mei_norm or pn.startswith(mei_norm + os.sep)):
+                return True
+            # Carpetas _MEIxxxxx de ejecuciones anteriores que quedaron sueltas.
+            # Se miran TODOS los tramos, no solo el ultimo: rutas como
+            # ...\_MEI999\lib tambien apuntan a un empaquetado.
+            return any(t.lower().startswith('_mei') for t in pn.split(os.sep) if t)
+
+        ruta = entorno.get('PATH', '')
+        limpio = [p for p in ruta.split(os.pathsep) if not es_de_pyinstaller(p)]
+        if limpio:
+            entorno['PATH'] = os.pathsep.join(limpio)
+        entorno['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+        return entorno
+
     def _lanzar_actualizacion(self):
         """Cierra la app y lanza un actualizador que copia la versión nueva desde
         la carpeta de red al equipo local y la reabre (V2.0.0)."""
@@ -3294,11 +3331,14 @@ class BuscadorPiezas(QMainWindow):
                 'echo NET=[%NET%] >> "%LOG%"',
                 'echo LOC=[%LOC%] >> "%LOG%"',
                 "rem Margen para que la app se cierre por si misma",
-                "timeout /t 2 /nobreak >nul 2>&1",
+                'set "SYS=%SystemRoot%\\System32"',
+                'rem Rutas absolutas: si el PATH viene contaminado por el',
+                'rem empaquetado, taskkill.exe fallaba con 0xc0000142',
+                '"%SYS%\\timeout.exe" /t 2 /nobreak >nul 2>&1',
                 "rem Forzar cierre de cualquier instancia restante",
-                'taskkill /F /IM BuscadorPiezas.exe >nul 2>&1',
-                'taskkill /F /IM SwPropExtractor.exe >nul 2>&1',
-                "timeout /t 1 /nobreak >nul 2>&1",
+                '"%SYS%\\taskkill.exe" /F /IM BuscadorPiezas.exe >nul 2>&1',
+                '"%SYS%\\taskkill.exe" /F /IM SwPropExtractor.exe >nul 2>&1',
+                '"%SYS%\\timeout.exe" /t 1 /nobreak >nul 2>&1',
                 'copy /Y "%NET%\\BuscadorPiezas.exe" "%LOC%\\BuscadorPiezas.exe.nuevo" >> "%LOG%" 2>&1',
                 'if not exist "%LOC%\\BuscadorPiezas.exe.nuevo" goto :fallo',
                 'move /Y "%LOC%\\BuscadorPiezas.exe.nuevo" "%LOC%\\BuscadorPiezas.exe" >> "%LOG%" 2>&1',
@@ -3332,9 +3372,7 @@ class BuscadorPiezas(QMainWindow):
             # PyInstaller — si el exe nuevo las hereda, intenta cargar las DLL
             # desde la carpeta temporal del app VIEJO (ya borrada) y revienta
             # con "Failed to load Python DLL ..._MEIxxxx\python311.dll".
-            entorno = {k: v for k, v in os.environ.items()
-                       if not k.startswith(('_MEI', '_PYI'))}
-            entorno['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+            entorno = self._entorno_sin_pyinstaller()
             DETACHED = 0x00000008
             linea = f'cmd /s /c ""{bat}" "{RUTA_DESPLIEGUE_APP}" "{local_dir}""'
             subprocess.Popen(linea, creationflags=DETACHED, close_fds=True,
