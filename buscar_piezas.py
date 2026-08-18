@@ -2060,13 +2060,22 @@ class BuscadorPiezas(QMainWindow):
         shadow_effect2.setColor(QColor(0, 0, 0, 20))
         shadow_effect2.setOffset(0, 2)
         self.tabla.setGraphicsEffect(shadow_effect2)
-        self.tabla.setColumnCount(21)
+        # V2.0.8: Peso y Superficie se añaden AL FINAL a propósito — así no se
+        # mueve ningún índice de columna ya existente (delegados, exportación,
+        # menú Columnas y preferencias guardadas siguen valiendo).
+        self.tabla.setColumnCount(23)
         self.tabla.setHorizontalHeaderLabels([
             "Ruta_Hidden", "Orden_Orig", "Cód. Proy_Hidden", "Nom. Proy_Hidden", "Vista",
             "Nombre", "Origen", "Año", "Cliente", "Proyecto",
             "Orden", "Material", "Tratamiento", "Espesor", "L",
-            "T", "F", "S", "P", "M", "Tipo"
+            "T", "F", "S", "P", "M", "Tipo",
+            "Peso (kg)", "Sup. (m²)"
         ])
+        for _c, _t in ((21, "Peso de la pieza o conjunto, leído de SolidWorks"),
+                       (22, "Superficie exterior — los m² a pintar")):
+            _h = self.tabla.horizontalHeaderItem(_c)
+            if _h:
+                _h.setToolTip(_t)
         # Tooltips con el nombre completo de las columnas de fabricación abreviadas
         NOMBRES_FABRICACION = {14: "Láser", 15: "Torno", 16: "Fresa", 17: "Soldadura", 18: "Pintura", 19: "Montaje"}
         for col_idx, nombre_completo in NOMBRES_FABRICACION.items():
@@ -2451,7 +2460,9 @@ class BuscadorPiezas(QMainWindow):
             ('origen', 'Origen'), ('anio', 'Año'), ('cliente', 'Cliente'),
             ('proyecto', 'Proyecto'), ('orden', 'Orden'), ('tamano', 'Tamaño'),
             # V2.0.3: documentación de la pieza y salud del ensamblaje
-            ('plano', 'Plano'), ('comps', 'Componentes')]):
+            ('plano', 'Plano'), ('comps', 'Componentes'),
+            # V2.0.8: propiedades físicas leídas de SolidWorks
+            ('peso', 'Peso'), ('superficie', 'Superficie')]):
             lbl_k = QLabel(etiqueta)
             lbl_k.setObjectName("MetaKey")
             lbl_v = QLabel("—")
@@ -3550,11 +3561,20 @@ class BuscadorPiezas(QMainWindow):
                 action.setChecked(tipo in t_list)
             self.actualizar_texto_tipos()
         
-        geom = self.controller.load_preference("geometria")
+        # V2.0.8: la geometría se guarda POR EQUIPO (QSettings). Antes salía de
+        # 'preferencias', que es una tabla COMPARTIDA: si un compañero con dos
+        # monitores guardaba x=2500, a todos los demás la app les abría fuera de
+        # la pantalla y había que rescatarla con Windows+flecha.
+        geom = self.qsettings.value("geometria", "")
+        if not geom:
+            geom = self.controller.load_preference("geometria") or ""
         if geom:
-            parts = geom.split(',')
-            if len(parts) == 4:
-                self.setGeometry(int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+            try:
+                parts = [int(x) for x in str(geom).split(',')]
+                if len(parts) == 4:
+                    self.setGeometry(*self._geometria_visible(*parts))
+            except (ValueError, TypeError):
+                pass
 
         # Restaurar tamaño splitter
         splitter_state = self.controller.load_preference("splitter_sizes", "")
@@ -3566,10 +3586,41 @@ class BuscadorPiezas(QMainWindow):
             except ValueError:
                 pass
 
+    def _geometria_visible(self, x, y, w, h):
+        """Encaja la ventana en una pantalla que exista de verdad (V2.0.8).
+
+        Devuelve (x, y, w, h) garantizando que la barra de título queda
+        accesible: si la posición guardada no cae en ninguna pantalla actual
+        (monitor desconectado, o equipo distinto al que la guardó), se centra
+        en la principal en vez de abrirse donde nadie la ve."""
+        escritorio = QApplication.desktop()
+        rect_guardado = QRect(x, y, max(w, 900), max(h, 600))
+        # ¿se ve al menos una parte razonable en alguna pantalla?
+        for i in range(escritorio.screenCount()):
+            disponible = escritorio.availableGeometry(i)
+            corte = disponible.intersected(rect_guardado)
+            if corte.width() >= 200 and corte.height() >= 100:
+                # cabe: solo se recorta al área utilizable de esa pantalla
+                w = min(rect_guardado.width(), disponible.width())
+                h = min(rect_guardado.height(), disponible.height())
+                x = min(max(rect_guardado.x(), disponible.x()),
+                        disponible.right() - w + 1)
+                y = min(max(rect_guardado.y(), disponible.y()),
+                        disponible.bottom() - h + 1)
+                return (x, y, w, h)
+        # No cae en ninguna pantalla: centrar en la principal
+        disponible = escritorio.availableGeometry(escritorio.primaryScreen())
+        w = min(rect_guardado.width(), disponible.width())
+        h = min(rect_guardado.height(), disponible.height())
+        logger.info("Geometría guardada fuera de pantalla: se centra la ventana")
+        return (disponible.x() + (disponible.width() - w) // 2,
+                disponible.y() + (disponible.height() - h) // 2, w, h)
+
     def save_window_state(self):
         rect = self.geometry()
         val = f"{rect.x()},{rect.y()},{rect.width()},{rect.height()}"
-        self.controller.save_preference("geometria", val)
+        # V2.0.8: por equipo, no compartida (ver load_window_state)
+        self.qsettings.setValue("geometria", val)
         # V2.0.3: guardar el último término SOLO en local (privacidad por equipo)
         self.qsettings.setValue("ultimo_termino", self.input_buscar.text())
         
@@ -3993,6 +4044,17 @@ class BuscadorPiezas(QMainWindow):
                 cod_ord = str(data[8]) if data[8] else ""
                 nom_ord = str(data[9]) if data[9] else ""
                 self.tabla.setItem(row, 10, QTableWidgetItem(f"{cod_ord} {nom_ord}".strip()))
+
+                # V2.0.8: peso y superficie, como NUMERO para que ordene bien
+                for i_data, i_col, dec in ((20, 21, 3), (21, 22, 4)):
+                    it_n = QTableWidgetItem()
+                    val = data[i_data] if len(data) > i_data else None
+                    if val:
+                        it_n.setData(Qt.DisplayRole, round(float(val), dec))
+                    else:
+                        it_n.setText("")
+                    it_n.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    self.tabla.setItem(row, i_col, it_n)
         finally:
             self.tabla.setUpdatesEnabled(True)
 
@@ -4831,6 +4893,30 @@ class BuscadorPiezas(QMainWindow):
                     fila_comps = True
         except Exception as e:
             logger.debug(f"Error en info documental de {ruta_canonica}: {e}")
+        # V2.0.8: peso y superficie del archivo seleccionado. Se ocultan las
+        # filas si no hay dato, en vez de enseñar un "—" que no dice nada.
+        hay_peso = hay_sup = False
+        try:
+            fis = self.db.propiedades_fisicas(ruta_canonica)
+            if fis:
+                masa, _vol, area = fis
+                if masa:
+                    self._meta_vals['peso'].setText(
+                        f"<b>{masa:,.2f} kg</b>".replace(",", "."))
+                    hay_peso = True
+                if area:
+                    self._meta_vals['superficie'].setText(
+                        f"<b>{area:,.3f} m²</b>".replace(",", ".") +
+                        ' <span style="color:#999999;">a pintar</span>')
+                    hay_sup = True
+        except Exception as e:
+            logger.debug(f"Propiedades físicas de {ruta_canonica}: {e}")
+        for clave, visible in (('peso', hay_peso), ('superficie', hay_sup)):
+            self._meta_keys[clave].setVisible(visible)
+            self._meta_vals[clave].setVisible(visible)
+            if visible:
+                self._meta_vals[clave].setTextFormat(Qt.RichText)
+
         self._meta_keys['plano'].setVisible(fila_plano)
         self._meta_vals['plano'].setVisible(fila_plano)
         self._meta_keys['comps'].setVisible(fila_comps)

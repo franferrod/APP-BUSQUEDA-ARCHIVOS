@@ -51,6 +51,19 @@ PG_CONFIG = load_pg_config()
 # la confianza en los 590.000 buenos, así que se descarta al guardar.
 DENSIDAD_MIN, DENSIDAD_MAX = 300.0, 22000.0    # kg/m3 (corcho ... wolframio)
 
+# V2.0.8b: el rango de densidad NO basta. Si un modelo está mal escalado, masa
+# y volumen crecen a la vez y la densidad sigue pareciendo correcta. Medido
+# sobre los 73.377 archivos ya poblados:
+#   - densidad 995-1100 = la del AGUA = "Material <sin especificar>", que es lo
+#     que SolidWorks usa cuando la pieza no tiene material. Ahí la masa no
+#     significa nada. Son 2.330 archivos (3,2%), y entre ellos TODOS los
+#     disparates: naves, altillos y layouts (.L000/.L001, "IMPLANTACIÓN"),
+#     que llegaban a 12.899 toneladas.
+#   - los materiales de verdad quedan fuera de esa banda: acero e inox 7.800-8.000,
+#     PE y PP 900-960, F15 1.300, PVC 1.400.
+DENSIDAD_SIN_MATERIAL = (995.0, 1100.0)
+MASA_MAX_KG = 50000.0    # nada de lo que se fabrica aquí pesa 50 toneladas
+
 
 def fisicas_creibles(masa_kg, volumen_m3, area_m2):
     """Devuelve (masa, volumen, area) o (None, None, None) si no son creíbles.
@@ -64,7 +77,13 @@ def fisicas_creibles(masa_kg, volumen_m3, area_m2):
         return (None, None, None)
     if not m or not v or m <= 0 or v <= 0:
         return (None, None, None)
-    if not (DENSIDAD_MIN < (m / v) < DENSIDAD_MAX):
+    dens = m / v
+    if not (DENSIDAD_MIN < dens < DENSIDAD_MAX):
+        return (None, None, None)
+    # Sin material asignado la masa es la del agua: no es un dato, es un relleno
+    if DENSIDAD_SIN_MATERIAL[0] <= dens <= DENSIDAD_SIN_MATERIAL[1]:
+        return (None, None, None)
+    if m > MASA_MAX_KG:
         return (None, None, None)
     if a is not None and a <= 0:
         a = None
@@ -461,6 +480,24 @@ class IndexManager:
         except Exception as e:
             logger.debug(f"Error leyendo miniaturas en lote: {e}")
             return {}
+        finally:
+            wrapper.close()
+
+
+    def propiedades_fisicas(self, ruta_completa):
+        """(masa_kg, volumen_m3, area_m2) de un archivo, o None (V2.0.8).
+        Para el panel de vista previa: una fila por ruta, consulta indexada."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute("""SELECT sw_masa_kg, sw_volumen_m3, sw_area_m2
+                              FROM buscador.archivos WHERE ruta_completa = %s""",
+                           (ruta_completa,))
+            fila = cursor.fetchone()
+            return fila if fila and fila[0] else None
+        except Exception as e:
+            logger.debug(f"Error leyendo propiedades físicas: {e}")
+            return None
         finally:
             wrapper.close()
 
@@ -981,7 +1018,8 @@ class IndexManager:
         base_cols = """nombre_archivo, origen, anio, cliente, proyecto, tipo_carpeta,
                        codigo_proyecto, nombre_proyecto, codigo_orden, nombre_orden,
                        ruta_completa, sw_material, sw_tratamiento, sw_espesor,
-                       sw_laser, sw_torno, sw_fresa, sw_soldadura, sw_pintura, sw_montaje"""
+                       sw_laser, sw_torno, sw_fresa, sw_soldadura, sw_pintura, sw_montaje,
+                       sw_masa_kg, sw_area_m2"""
 
         # V2.1.0: expansión por nº de placa CE — si algún keyword es una placa
         # registrada (ej. "26-0006"), buscamos también por su código de plano
