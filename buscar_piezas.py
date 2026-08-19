@@ -147,6 +147,83 @@ def ruta_accesible(ruta):
     return ruta
 
 
+def _con_host(ruta, host):
+    """Devuelve 'ruta' con el host UNC sustituido por 'host'."""
+    B = chr(92)
+    if not ruta or not ruta.startswith(B + B):
+        return ruta
+    resto = ruta[2:]
+    i = resto.find(B)
+    if i < 0:
+        return ruta
+    return B + B + host + resto[i:]
+
+
+def resolver_para_abrir(ruta):
+    """Devuelve (ruta_utilizable, motivo) para abrir un archivo (V2.0.9).
+
+    NAS_HOST_ACTIVO se detecta UNA sola vez al arrancar. Si el NAS no respondia
+    en ese instante -- abrir la app nada mas iniciar sesion, antes de que la red
+    o las credenciales esten listas, es lo tipico -- TODOS los "Abrir carpeta"
+    fallaban el resto de la sesion aunque la red se recuperase enseguida, y el
+    aviso culpaba al servidor sin comprobarlo.
+
+    Aqui se prueban todas las variantes de host en el momento de usarlo, se
+    redetecta el host bueno si cambia, y se distingue la causa real.
+
+    motivo: 'ok' | 'archivo_no_esta' | 'sin_permiso' | 'sin_servidor'
+    """
+    global NAS_HOST_ACTIVO
+    if not ruta:
+        return (None, 'sin_servidor')
+
+    candidatas, vistas = [], set()
+    for cand in [ruta_accesible(ruta), ruta] + [_con_host(ruta, h) for h in NAS_HOSTS]:
+        if cand and cand not in vistas:
+            vistas.add(cand)
+            candidatas.append(cand)
+
+    carpeta_vista = False
+    for cand in candidatas:
+        try:
+            if os.path.exists(cand):
+                host = cand[2:].split(chr(92))[0] if cand.startswith(chr(92) * 2) else ''
+                if host and host.upper() != (NAS_HOST_ACTIVO or '').upper():
+                    NAS_HOST_ACTIVO = host
+                    logger.info("NAS re-detectado: accesible por %s" % host)
+                return (cand, 'ok')
+            if os.path.isdir(os.path.dirname(cand)):
+                carpeta_vista = True
+        except PermissionError:
+            return (cand, 'sin_permiso')
+        except OSError as e:
+            if getattr(e, 'winerror', None) in (5, 1314):
+                return (cand, 'sin_permiso')
+        except Exception:
+            continue
+
+    if carpeta_vista:
+        return (candidatas[0], 'archivo_no_esta')
+    return (candidatas[0], 'sin_servidor')
+
+
+MENSAJES_RUTA = {
+    'archivo_no_esta': (
+        "El archivo ya no esta en esa carpeta.\n\n"
+        "Lo mas probable es que se haya movido o renombrado despues de la "
+        "ultima indexacion. La carpeta si es accesible: se abrira para que "
+        "puedas buscarlo."),
+    'sin_permiso': (
+        "No tienes permiso para acceder a esa carpeta del NAS.\n\n"
+        "Habla con quien gestione los permisos del servidor: no es un "
+        "problema de la aplicacion."),
+    'sin_servidor': (
+        "No se llega al servidor en este momento.\n\n"
+        "Comprueba la conexion de red. Si acabas de encender el equipo, "
+        "espera unos segundos y vuelve a intentarlo."),
+}
+
+
 def rutas_nas_activas():
     """RUTAS_NAS con el host activo (para diagnóstico y diálogo de reindexado)."""
     return {k: ruta_accesible(v) for k, v in RUTAS_NAS.items()}
@@ -174,7 +251,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.0.8"
+APP_VERSION = "2.0.9"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -5106,11 +5183,33 @@ class BuscadorPiezas(QMainWindow):
     def abrir_carpeta_seleccionada(self):
         row = self.tabla.currentRow()
         if row >= 0:
-            ruta = ruta_accesible(self.tabla.item(row, 0).text())  # V2.0.1
-            if ruta and os.path.exists(ruta):
-                subprocess.Popen(f'explorer /select,"{ruta}"')
-            else:
-                QMessageBox.critical(self, "Error", "No se puede acceder a la ruta. Puede que el servidor no esté disponible.")
+            item = self.tabla.item(row, 0)
+            self._abrir_en_explorador(item.text() if item else "")
+
+    def _abrir_en_explorador(self, ruta_canonica):
+        """Abre el Explorador con el archivo seleccionado (V2.0.9).
+        Reintenta con todos los hosts del NAS y, si falla, dice POR QUÉ en vez
+        de culpar siempre al servidor."""
+        ruta, motivo = resolver_para_abrir(ruta_canonica)
+        if motivo == 'ok':
+            subprocess.Popen(f'explorer /select,"{ruta}"')
+            return True
+        logger.warning(f"No se pudo abrir ({motivo}): {ruta_canonica}")
+        if motivo == 'archivo_no_esta':
+            # la carpeta sí existe: se abre igualmente, es más útil que un error
+            carpeta = os.path.dirname(ruta)
+            QMessageBox.information(self, "El archivo ha cambiado de sitio",
+                                    MENSAJES_RUTA[motivo])
+            try:
+                os.startfile(carpeta)
+            except Exception:
+                pass
+            return False
+        QMessageBox.warning(
+            self, "No se puede abrir",
+            MENSAJES_RUTA.get(motivo, "Ruta no accesible.")
+            + chr(10) + chr(10) + "Ruta:" + chr(10) + ruta_canonica)
+        return False
 
     def copiar_ruta_seleccionada(self):
         row = self.tabla.currentRow()
@@ -5439,9 +5538,8 @@ class BuscadorPiezas(QMainWindow):
         return rutas
 
     def _abrir_carpeta_de(self, ruta):
-        rr = ruta_accesible(ruta)
-        if rr and os.path.exists(rr):
-            subprocess.Popen(f'explorer /select,"{rr}"')
+        """V2.0.9: mismo camino robusto que la rejilla (antes fallaba mudo)."""
+        self._abrir_en_explorador(ruta)
 
     def _copiar_al_portapapeles(self, texto, aviso):
         if texto:

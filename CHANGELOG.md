@@ -1,5 +1,10 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.9] - 2026-08-19 (Abrir carpeta fiable)
+- **"Abrir carpeta" ya no falla porque la app arrancara antes que la red.** El host del NAS se detectaba UNA sola vez al abrir la aplicación: si en ese instante el servidor no respondía —lo típico al encender el equipo e iniciar la app enseguida— *todos* los "Abrir carpeta" fallaban el resto de la sesión, aunque la red se recuperase a los cinco segundos. Ahora se comprueba en el momento de abrir, probando las dos formas de llegar al NAS, y se recuerda la que funcione.
+- **El aviso dice qué pasa de verdad.** Antes siempre culpaba al servidor. Ahora distingue tres casos: el archivo se ha movido o renombrado (y abre la carpeta igualmente, que es más útil), no tienes permisos sobre esa carpeta del NAS, o no se llega al servidor. Además queda registrado en el log con la ruta, para poder diagnosticarlo.
+- Los diálogos de resultados usan el mismo camino: antes, si fallaban, no decían nada.
+
 ## [2.0.8] - 2026-08-17 (Peso y superficie · refinado "que NO contengan")
 - **Peso y superficie de cada pieza y conjunto**, leídos de SolidWorks (los mismos valores que ves en Herramientas → Propiedades físicas). Medido sobre 65 archivos reales: hay dato en el 96% de las piezas y el 80% de los conjuntos, a 0,2 s por archivo.
 - **Peso total y superficie a pintar en el despiece.** Al abrir "Ver componentes" sale el peso sumado del conjunto y **los m² de superficie**, para poder decirle a pintura cuántos metros cuadrados hay que pintar. Si a algún componente le falta el dato, lo dice: *"3 de 6 componentes sin datos, el total es parcial"* — un total incompleto presentado como definitivo sería peor que no darlo.
