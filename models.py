@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import unicodedata
+import threading
 import psycopg2
 import psycopg2.pool
 from pathlib import Path
@@ -50,6 +51,14 @@ def _candidatos_config():
     return salida
 
 
+def _entero(valor, por_defecto):
+    try:
+        n = int(str(valor).strip())
+        return n if n > 0 else por_defecto
+    except Exception:
+        return por_defecto
+
+
 def _leer_config(ruta):
     """Devuelve el dict de conexión si el archivo es válido, o None.
     Un config.ini que existe pero está incompleto es tan inservible como no
@@ -65,7 +74,19 @@ def _leer_config(ruta):
             return None
         return {'host': d['host'].strip(), 'port': int(d['port']),
                 'dbname': d['dbname'].strip(), 'user': d['user'].strip(),
-                'password': d['password']}
+                'password': d['password'],
+                # V2.1.0 - INCIDENCIA "la app no abre" (Pablo y Marcos):
+                # sin connect_timeout, un equipo que no llega al servidor se
+                # queda ~21 s bloqueado en el connect de Windows, y eso ocurría
+                # ANTES de dibujar la ventana: el usuario veía un proceso en el
+                # Administrador de tareas y nada más. Se puede ajustar desde
+                # config.ini con  connect_timeout = N.
+                'connect_timeout': _entero(d.get('connect_timeout'), 5),
+                # Y con keepalives, una conexión que se queda a medias (Wi-Fi
+                # o VPN que cae) se detecta en ~60 s en vez de dejar la consulta
+                # colgada para siempre.
+                'keepalives': 1, 'keepalives_idle': 30,
+                'keepalives_interval': 10, 'keepalives_count': 3}
     except Exception:
         return None
 
@@ -191,19 +212,63 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class SinConexionBD(psycopg2.OperationalError):
+    """No se ha podido hablar con PostgreSQL (V2.1.0).
+
+    Existe para que la interfaz pueda distinguir 'el servidor no responde' —que
+    se le cuenta al usuario y se reintenta— de un fallo de programación, que es
+    un error de verdad. Antes ambos casos acababan en el mismo except genérico."""
+
+
 class IndexManager:
     """
     Gestor de la base de datos PostgreSQL para el buscador de piezas.
     V1.0.7 - Migrado de SQLite a PostgreSQL compartido.
     """
-    def __init__(self):
+    def __init__(self, tolerante=False, diferido=False):
+        """tolerante=True (la app con ventana): si el servidor no responde NO
+        se revienta el arranque — se guarda el error, la ventana se abre igual
+        y se reintenta en segundo plano. tolerante=False (procesos nocturnos):
+        se propaga el error, que ahí sí debe cortar el pase."""
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         self._pool = None
+        self.tolerante = tolerante
+        self.ultimo_error = None
+        # V2.1.0: si el hilo de reconexion esta intentando conectar (5 s), el
+        # hilo de la interfaz NO debe encolar otro intento igual y quedarse
+        # congelado esperando su turno.
+        self._lock_pool = threading.RLock()
+        if diferido:
+            # V2.1.0: no se toca la red en el constructor. La app crea el
+            # IndexManager mientras monta la ventana; conectar aqui significaba
+            # que un servidor que no responde retrasaba la VENTANA, que es lo
+            # que el usuario interpreta como "no me abre". La conexion la hace
+            # despues, con la ventana ya en pantalla.
+            return
         self._init_pool()
-        self.init_db()
+        if self._pool is not None:
+            try:
+                self.init_db()
+            except Exception as e:
+                self.ultimo_error = e
+                logger.error(f"init_db falló: {e}")
+                if not tolerante:
+                    raise
 
     def _init_pool(self):
-        """Inicializa el pool de conexiones PostgreSQL."""
+        """Inicializa el pool de conexiones PostgreSQL.
+
+        V2.1.0: si otro hilo ya lo esta intentando, se vuelve enseguida en vez
+        de bloquear. Mejor decir 'sin conexion' al instante que congelar la
+        ventana cinco segundos por cada consulta."""
+        if not self._lock_pool.acquire(blocking=False):
+            return
+        try:
+            self.__init_pool_real()
+        finally:
+            self._lock_pool.release()
+
+    def __init_pool_real(self):
         try:
             # V2.0.3: ThreadedConnectionPool (mismo API que SimpleConnectionPool
             # pero con locks) — las miniaturas ahora consultan la BD desde los
@@ -216,10 +281,14 @@ class IndexManager:
                 maxconn=10,
                 **PG_CONFIG
             )
+            self.ultimo_error = None
             logger.info("Pool de conexiones PostgreSQL inicializado correctamente")
-        except psycopg2.Error as e:
+        except Exception as e:
+            self._pool = None
+            self.ultimo_error = e
             logger.error(f"Error inicializando pool PostgreSQL: {e}")
-            raise
+            if not getattr(self, 'tolerante', False):
+                raise
 
     def get_connection(self):
         """Obtiene una conexión del pool. Devuelve un PGConnectionWrapper.
@@ -228,6 +297,8 @@ class IndexManager:
         con 'connection pool exhausted' al primer pico."""
         if self._pool is None or self._pool.closed:
             self._init_pool()
+        if self._pool is None:
+            raise SinConexionBD(str(self.ultimo_error or "sin conexión con el servidor"))
         ultimo_error = None
         for _ in range(32):
             try:
@@ -238,6 +309,28 @@ class IndexManager:
                 time.sleep(0.25)
         logger.error(f"Pool agotado tras 8s de espera: {ultimo_error}")
         raise ultimo_error
+
+    def esta_disponible(self):
+        """True si hay pool utilizable (V2.1.0)."""
+        return self._pool is not None and not self._pool.closed
+
+    def reconectar(self):
+        """Reintenta la conexión. Devuelve (ok, mensaje_de_error)."""
+        try:
+            if self._pool is not None and not self._pool.closed:
+                self._pool.closeall()
+        except Exception:
+            pass
+        self._pool = None
+        self._init_pool()
+        if self._pool is None:
+            return False, str(self.ultimo_error or "sin conexión")
+        try:
+            self.init_db()
+        except Exception as e:
+            self.ultimo_error = e
+            return False, str(e)
+        return True, ""
 
     @staticmethod
     def normalizar_texto(texto):
@@ -442,7 +535,16 @@ class IndexManager:
             wrapper.close()
 
     def guardar_preferencia(self, clave, valor):
-        wrapper = self.get_connection()
+        """V2.1.0: sin servidor no se guarda, pero tampoco se rompe nada."""
+        if self._pool is None:
+            logger.warning("Preferencia '%s' no guardada: sin conexion", clave)
+            return
+        try:
+            wrapper = self.get_connection()
+        except Exception as e:
+            logger.warning("Preferencia '%s' no guardada: %s",
+                           clave, str(e).splitlines()[0])
+            return
         try:
             conn = wrapper._conn
             cursor = conn.cursor()
@@ -455,7 +557,21 @@ class IndexManager:
             wrapper.close()
 
     def obtener_preferencia(self, clave, default=None):
-        wrapper = self.get_connection()
+        """V2.1.0: si no hay servidor devuelve el valor por defecto. Una
+        preferencia es una comodidad, no una razon para no abrir la app.
+
+        Y si la conexion aun no se ha hecho (arranque diferido) NO se provoca
+        aqui: init_ui() lee una preferencia mientras monta la ventana, y con el
+        servidor caido eso costaba 5 s de ventana en blanco. Las preferencias
+        de verdad se aplican en cargar_preferencias(), ya conectados."""
+        if self._pool is None:
+            return default
+        try:
+            wrapper = self.get_connection()
+        except Exception as e:
+            logger.warning("Preferencia '%s' no leida (%s); se usa el valor por defecto",
+                           clave, str(e).splitlines()[0])
+            return default
         try:
             conn = wrapper._conn
             cursor = conn.cursor()

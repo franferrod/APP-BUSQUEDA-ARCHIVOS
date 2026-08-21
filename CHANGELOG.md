@@ -1,5 +1,23 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.1.0] - 2026-08-21 (La app abre siempre, y si algo falla lo dice)
+
+Raíz de la incidencia de Pablo y Marcos ("le doy y no se abre"): **la aplicación hablaba con la red antes de dibujar la ventana**. Comprobaba el NAS y abría la conexión con PostgreSQL en el arranque, sin límite de tiempo. En un equipo que no llegaba al servidor —firewall de Windows 11 recién configurado, perfil de red en «Pública», el portátil aún levantando la Wi-Fi— Windows tarda unos 21 segundos en rendirse en cada intento. Durante ese rato había un proceso en el Administrador de tareas y **ni una ventana en pantalla**. Si además la conexión fallaba del todo, la excepción cerraba el proceso sin dejar rastro visible. Nadie podía saber qué estaba pasando.
+
+**Regla nueva: antes de que la ventana esté en pantalla no se toca la red.** Medido: la ventana aparece en **0,6 s** tanto con el servidor bien como con el servidor completamente inaccesible (antes: 10,4 s en el mejor de los casos, o nunca).
+
+- **La ventana abre siempre.** El NAS y la base de datos se consultan después, con la ventana ya visible.
+- **Nada de esperas infinitas.** La conexión a PostgreSQL tiene ahora un tope de 5 s (ajustable en `config.ini` con `connect_timeout`), y la comprobación del NAS 3 s por host. Antes: ~21 s de bloqueo por intento.
+- **Si no hay servidor, se dice.** Aparece un aviso rojo con **a qué servidor no se llega y por qué**, un botón *Reintentar* y otro de *Diagnóstico*. La app reintenta sola cada 10, 20, 40 s… hasta 5 minutos.
+- **La ventana no se congela.** La conexión y los reintentos corren en segundo plano; el hilo de la interfaz se bloquea 0,04 s.
+- **Nunca más un cierre mudo.** Cualquier fallo de arranque muestra un cuadro de diálogo con la causa y la ruta del log — incluso si ocurre antes de que exista la interfaz, que era justo cuando el aviso se perdía. Los cuelgues duros (fallos de Qt o de una DLL) quedan registrados en `crash.log`.
+- **Botón de Diagnóstico**, también desde la línea de comandos con `BuscadorPiezas.exe --diagnostico` (funciona aunque la app no arranque). Comprueba servidor, puerto, NAS por sus dos nombres, versión desplegada, espacio en disco y permisos de la carpeta temporal, y lo deja listo para copiar y pegar en un mensaje.
+- **El log dice dónde se quedó.** Cada fase del arranque se registra con su duración; si algo tarda más de 5 s sale marcado como aviso. El log ahora rota (3 MB × 4) en vez de crecer sin fin.
+- **Una sola ventana.** Si la app ya está abierta, un segundo doble clic no crea otro proceso invisible: avisa de que ya está abierta y dónde buscarla. Los candados de procesos muertos se limpian solos.
+- **Sin base de datos, la app no se rompe.** Las preferencias caen a su valor por defecto en vez de impedir que se monte la ventana.
+
+*Sin cambios para los procesos nocturnos: siguen abortando si no hay base de datos, que es lo que deben hacer.*
+
 ## [2.0.9] - 2026-08-19 (Abrir carpeta fiable)
 - **"Abrir carpeta" ya no falla porque la app arrancara antes que la red.** El host del NAS se detectaba UNA sola vez al abrir la aplicación: si en ese instante el servidor no respondía —lo típico al encender el equipo e iniciar la app enseguida— *todos* los "Abrir carpeta" fallaban el resto de la sesión, aunque la red se recuperase a los cinco segundos. Ahora se comprueba en el momento de abrir, probando las dos formas de llegar al NAS, y se recuerda la que funcione.
 - **El aviso dice qué pasa de verdad.** Antes siempre culpaba al servidor. Ahora distingue tres casos: el archivo se ha movido o renombrado (y abre la carpeta igualmente, que es más útil), no tienes permisos sobre esa carpeta del NAS, o no se llega al servidor. Además queda registrado en el log con la ruta, para poder diagnosticarlo.

@@ -30,6 +30,8 @@ from PyQt5.QtGui import QIcon, QFont, QColor, QPixmap, QDrag, QImage, QPainter, 
 from PyQt5.QtWidgets import QFileIconProvider
 import pythoncom
 import logging
+import logging.handlers
+import threading
 import uuid
 import json
 from win32com.shell import shell, shellcon
@@ -50,25 +52,75 @@ LOG_DIR = os.path.expanduser("~/.alsi_busqueda")
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR, exist_ok=True)
 
+RUTA_LOG = os.path.join(LOG_DIR, "app.log")
+
+# V2.1.0 - El log se rota: antes crecia sin limite y acababa siendo inmanejable
+# justo cuando hacia falta leerlo. 3 MB x 4 archivos = historial de sobra.
+_manejadores = [logging.handlers.RotatingFileHandler(
+    RUTA_LOG, maxBytes=3_000_000, backupCount=3, encoding='utf-8')]
+# OJO: en el .exe empaquetado sin consola, sys.stderr es None. Un StreamHandler
+# sobre None revienta al primer log y puede tumbar la app antes de que se vea
+# nada. Solo se anade si hay consola de verdad.
+if getattr(sys, 'stderr', None) is not None:
+    _manejadores.append(logging.StreamHandler())
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(os.path.join(LOG_DIR, "app.log"), encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    handlers=_manejadores
 )
 logger = logging.getLogger("BuscadorALSI")
 
+# V2.1.0 - Los cuelgues duros (fallo de segmentacion en Qt, DLL que revienta) no
+# pasan por excepthook: no dejaban ni una linea y el usuario solo veia que "no
+# abre". faulthandler escribe la pila en un archivo aparte antes de morir.
+try:
+    import faulthandler
+    _f_crash = open(os.path.join(LOG_DIR, "crash.log"), "a", encoding="utf-8")
+    _f_crash.write("\n===== %s arranque =====\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+    _f_crash.flush()
+    faulthandler.enable(file=_f_crash)
+except Exception:
+    pass
+
+
+def avisar_usuario(titulo, mensaje):
+    """Ensena un aviso SIEMPRE, haya o no interfaz creada todavia (V2.1.0).
+
+    El error de arranque es justo el que ocurre antes de que exista QApplication,
+    y ahi un QMessageBox lanza excepcion: el aviso se perdia y la app moria en
+    silencio. Con ctypes se usa el cuadro de dialogo de Windows, que no depende
+    de Qt."""
+    logger.error("AVISO AL USUARIO | %s | %s", titulo, str(mensaje).replace(chr(10), " / "))
+    # V2.1.0: los arranques desatendidos (comprobaciones automaticas, pases
+    # nocturnos) NO deben quedarse esperando un clic que nadie va a dar. Misma
+    # leccion que en la V2.0.8 con los scripts de noche.
+    if os.environ.get("ALSI_SIN_DIALOGOS"):
+        return
+    try:
+        if QApplication.instance() is not None:
+            QMessageBox.critical(None, titulo, mensaje)
+            return
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, mensaje, titulo, 0x10)
+    except Exception:
+        pass
+
+
 def exception_hook(exctype, value, traceback):
-    """Captura cualquier excepción no gestionada para que la app no se cierre"""
-    logger.error("Excepción no capturada", exc_info=(exctype, value, traceback))
-    # V2.0.0: las carreras benignas de cierre (señal llega a un widget ya
+    """Captura cualquier excepcion no gestionada para que la app no se cierre"""
+    logger.error("Excepcion no capturada", exc_info=(exctype, value, traceback))
+    # V2.0.0: las carreras benignas de cierre (senal llega a un widget ya
     # destruido) se registran en el log pero no molestan al usuario con un popup
     if exctype is RuntimeError and "has been deleted" in str(value):
         return
-    msg = f"Se ha producido un error inesperado:\n\n{value}\n\nLa aplicación intentará seguir funcionando."
-    QMessageBox.critical(None, "Error Inesperado", msg)
+    avisar_usuario(
+        "Error Inesperado",
+        "Se ha producido un error inesperado:\n\n%s\n\n"
+        "La aplicacion intentara seguir funcionando.\n\n"
+        "Detalle tecnico en:\n%s" % (value, RUTA_LOG))
 
 sys.excepthook = exception_hook
 
@@ -90,7 +142,7 @@ def resource_path(relative_path):
     return full_path
 
 # Importaciones locales (MVC Architecture)
-from models import IndexManager
+from models import IndexManager, PG_CONFIG, SinConexionBD
 from controllers import SearchController, IndexadorThread
 
 # Configuración Global
@@ -116,20 +168,56 @@ NAS_HOST_CANONICO = "192.168.1.10"  # como se guardan las rutas en la BD
 NAS_HOST_ACTIVO = None              # detectado al arrancar
 
 
-def detectar_nas_host():
-    """Detecta por cuál host es accesible el NAS en este equipo (V2.0.1).
-    Prueba IP primero y, si no llega, el nombre NASCENTRAL."""
+def existe_con_limite(ruta, segundos=3.0):
+    """os.path.exists con tope de tiempo (V2.1.0).
+
+    En Windows, comprobar un recurso de red que no responde puede bloquear
+    decenas de segundos: resolucion del nombre (NASCENTRAL por NetBIOS/DNS) mas
+    la negociacion SMB. Esa llamada estaba en el arranque, ANTES de dibujar la
+    ventana, y es la causa de los "no me abre la app" de Pablo y Marcos: el
+    proceso existia pero no pintaba nada hasta que Windows se rendia.
+
+    La comprobacion corre en un hilo demonio: si tarda mas de la cuenta se da
+    por fallida y el arranque sigue.
+    """
+    resultado = {}
+
+    def _probar():
+        try:
+            resultado['ok'] = os.path.exists(ruta)
+        except Exception:
+            resultado['ok'] = False
+
+    h = threading.Thread(target=_probar, daemon=True)
+    h.start()
+    h.join(segundos)
+    if 'ok' not in resultado:
+        logger.warning("Comprobacion de %s abandonada tras %.1fs (no responde)",
+                       ruta, segundos)
+        return False
+    return resultado['ok']
+
+
+def detectar_nas_host(segundos_por_host=3.0):
+    """Detecta por cual host es accesible el NAS en este equipo (V2.0.1).
+
+    V2.1.0: con tope de tiempo por host. Si ninguno responde NO se bloquea el
+    arranque: se sigue con el host por defecto y "Abrir carpeta" vuelve a
+    detectarlo en el momento de usarlo (resolver_para_abrir, V2.0.9)."""
     global NAS_HOST_ACTIVO
+    t0 = time.time()
     for host in NAS_HOSTS:
         try:
-            if os.path.exists(r"\\%s\Oficina Tecnica" % host):
+            if existe_con_limite(r"\\%s\Oficina Tecnica" % host, segundos_por_host):
                 NAS_HOST_ACTIVO = host
-                logger.info(f"NAS accesible por: {host}")
+                logger.info("NAS accesible por: %s (%.1fs)", host, time.time() - t0)
                 return host
         except Exception:
             continue
     NAS_HOST_ACTIVO = NAS_HOSTS[0]
-    logger.warning(f"Ningún host del NAS respondió; se usará {NAS_HOST_ACTIVO}")
+    logger.warning("Ningun host del NAS respondio en %.1fs; se usara %s "
+                   "(se reintentara al abrir archivos)",
+                   time.time() - t0, NAS_HOST_ACTIVO)
     return NAS_HOST_ACTIVO
 
 
@@ -251,7 +339,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.0.9"
+APP_VERSION = "2.1.0"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -1574,6 +1662,163 @@ class FabricacionDelegate(QStyledItemDelegate):
 # -----------------------------------------------------------------------------
 # INTERFAZ PRINCIPAL
 # -----------------------------------------------------------------------------
+def generar_diagnostico():
+    """Informe de estado del equipo (V2.1.0).
+
+    Nace de la incidencia de Pablo y Marcos: "no me abre" no es un dato con el
+    que se pueda trabajar. Esto comprueba, con tope de tiempo, TODO lo que la
+    app necesita para arrancar y devuelve un texto que se pega en un mensaje.
+    Funciona tambien sin interfaz (BuscadorPiezas.exe --diagnostico)."""
+    import socket, getpass, platform, shutil
+    L = []
+    def add(k, v):
+        L.append("%-26s %s" % (k + ":", v))
+
+    add("Version de la app", APP_VERSION)
+    add("Equipo / usuario", "%s / %s" % (platform.node(), getpass.getuser()))
+    add("Windows", platform.platform())
+    add("Ejecutable", sys.executable if getattr(sys, 'frozen', False) else "(desde codigo)")
+    add("Carpeta de trabajo", os.getcwd())
+
+    L.append("")
+    L.append("--- Base de datos ---")
+    add("Servidor", "%s:%s" % (PG_CONFIG.get('host'), PG_CONFIG.get('port')))
+    add("Base / usuario", "%s / %s" % (PG_CONFIG.get('dbname'), PG_CONFIG.get('user')))
+    add("Tiempo de espera", "%ss" % PG_CONFIG.get('connect_timeout'))
+    t0 = time.time()
+    try:
+        with socket.create_connection((PG_CONFIG['host'], int(PG_CONFIG['port'])), 5):
+            add("Puerto TCP", "ABIERTO (%.1fs)" % (time.time() - t0))
+    except Exception as e:
+        add("Puerto TCP", "CERRADO/INACCESIBLE tras %.1fs -> %s" % (time.time() - t0, e))
+    t0 = time.time()
+    try:
+        import psycopg2
+        c = psycopg2.connect(**PG_CONFIG)
+        cur = c.cursor()
+        cur.execute("SELECT count(*) FROM buscador.archivos")
+        n = cur.fetchone()[0]
+        c.close()
+        add("Consulta de prueba", "OK, %s archivos indexados (%.1fs)" % (n, time.time() - t0))
+    except Exception as e:
+        add("Consulta de prueba", "FALLA tras %.1fs -> %s" % (time.time() - t0,
+                                                              str(e).splitlines()[0]))
+
+    L.append("")
+    L.append("--- NAS ---")
+    primero_ok = None
+    for host in NAS_HOSTS:
+        t0 = time.time()
+        ok = existe_con_limite(r"\\%s\Oficina Tecnica" % host, 5.0)
+        add("  " + host, ("accesible" if ok else "NO responde") + " (%.1fs)" % (time.time() - t0))
+        if ok and primero_ok is None:
+            primero_ok = host
+    add("Host en uso", NAS_HOST_ACTIVO or primero_ok or "NINGUNO RESPONDE")
+
+    L.append("")
+    L.append("--- Version desplegada ---")
+    try:
+        vf = os.path.join(RUTA_DESPLIEGUE_APP, "version.txt")
+        if existe_con_limite(vf, 5.0):
+            with open(vf, encoding="utf-8", errors="ignore") as f:
+                add("En la carpeta de red", f.read().strip())
+        else:
+            add("En la carpeta de red", "no se llega a la carpeta")
+    except Exception as e:
+        add("En la carpeta de red", "error: %s" % e)
+
+    L.append("")
+    L.append("--- Disco y temporales ---")
+    try:
+        tmp = os.environ.get("TEMP", "")
+        prueba = os.path.join(tmp, "alsi_prueba.tmp")
+        with open(prueba, "w") as f:
+            f.write("x")
+        os.remove(prueba)
+        add("TEMP escribible", "SI (%s)" % tmp)
+    except Exception as e:
+        add("TEMP escribible", "NO -> %s" % e)
+    try:
+        libre = shutil.disk_usage(os.path.expanduser("~")).free / (1024 ** 3)
+        add("Espacio libre", "%.1f GB" % libre)
+    except Exception:
+        pass
+    add("Log", "%s (%s KB)" % (RUTA_LOG,
+                               os.path.getsize(RUTA_LOG) // 1024
+                               if os.path.exists(RUTA_LOG) else 0))
+
+    L.append("")
+    L.append("--- Ultimos errores del log ---")
+    try:
+        with open(RUTA_LOG, encoding="utf-8", errors="ignore") as f:
+            # se descarta el ruido de Qt: no dice nada del problema real
+            malas = [l.rstrip() for l in f
+                     if (" - ERROR - " in l or " - WARNING - " in l)
+                     and " - Qt: " not in l]
+        L.extend(malas[-8:] or ["(ninguno)"])
+    except Exception:
+        L.append("(no se ha podido leer el log)")
+
+    return chr(10).join(L)
+
+
+class ConexionWorker(QThread):
+    """Intenta conectar con PostgreSQL sin congelar la ventana (V2.1.0).
+
+    El intento tarda hasta connect_timeout segundos. Hacerlo en el hilo de la
+    interfaz dejaba la ventana tiesa en cada reintento; ahora la ventana sigue
+    viva y solo cambia el mensaje."""
+    resultado = pyqtSignal(bool, str)
+
+    def __init__(self, db, parent=None):
+        super().__init__(parent)
+        self.db = db
+
+    def run(self):
+        try:
+            ok, motivo = self.db.reconectar()
+        except Exception as e:
+            ok, motivo = False, str(e)
+        self.resultado.emit(ok, motivo)
+
+
+class DiagnosticoWorker(QThread):
+    """Genera el informe en segundo plano: las comprobaciones de red tardan
+    hasta unos segundos y no deben congelar la ventana (V2.1.0)."""
+    listo = pyqtSignal(str)
+
+    def run(self):
+        try:
+            self.listo.emit(generar_diagnostico())
+        except Exception as e:
+            self.listo.emit("El diagnostico ha fallado: %s" % e)
+
+
+class Fase:
+    """Cronometro de las fases de arranque (V2.1.0).
+
+    Cada paso deja en el log cuanto ha tardado. Cuando un companero dice "no me
+    abre", la ultima linea del log dice exactamente en que se quedo y cuanto
+    llevaba esperando, en vez de tener que adivinarlo."""
+
+    def __init__(self, nombre):
+        self.nombre = nombre
+
+    def __enter__(self):
+        self.t0 = time.time()
+        logger.info("[arranque] %s ...", self.nombre)
+        return self
+
+    def __exit__(self, tipo, valor, tb):
+        seg = time.time() - self.t0
+        if tipo is None:
+            nivel = logger.warning if seg > 5 else logger.info
+            nivel("[arranque] %s: %.1fs", self.nombre, seg)
+        else:
+            logger.error("[arranque] %s FALLO tras %.1fs: %s", self.nombre, seg, valor)
+        return False
+
+
 class BuscadorPiezas(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1581,10 +1826,13 @@ class BuscadorPiezas(QMainWindow):
             pythoncom.CoInitialize() # Inicialización COM Hilo Principal (V1.0.3)
         except:
             pass
-        # V2.0.1: detectar por qué host llega al NAS (IP o NASCENTRAL) antes de
-        # tocar ningún archivo, para reescribir las rutas al que funcione aquí
-        detectar_nas_host()
-        self.db = IndexManager()
+        # V2.1.0 - REGLA DE ARRANQUE: aqui NO se toca la red. Ni el NAS ni la
+        # base de datos. Todo lo que dependa de un cable va despues de que la
+        # ventana este en pantalla (_carga_inicial_diferida). Esta es la causa
+        # raiz de los "no me abre" de Pablo y Marcos: el proceso existia, pero
+        # se quedaba esperando a la red antes de dibujar nada.
+        self.db = IndexManager(tolerante=True, diferido=True)
+        self.bd_disponible = False
         self.controller = SearchController(self.db)
         self.thread = None  # Referencia al thread de indexación activo
         self.bloqueo_filtros = False 
@@ -1602,7 +1850,8 @@ class BuscadorPiezas(QMainWindow):
         self.timer_preview.timeout.connect(self._actualizar_preview_recursos_pesados)
         self.current_preview_data = {} # Almacena datos para la carga diferida
         
-        self.init_ui()
+        with Fase("construir interfaz"):
+            self.init_ui()
         self.toast = ToastNotification(self) # Inicializar Toast
 
         # V2.0.0: la carga inicial (consultas a PostgreSQL para poblar filtros y
@@ -1622,8 +1871,27 @@ class BuscadorPiezas(QMainWindow):
 
     def _carga_inicial_diferida(self):
         """Carga inicial de filtros y preferencias, tras mostrar la ventana (V2.0.0).
-        Mantiene el arranque fluido aunque la BD esté lenta."""
+
+        V2.1.0: aqui es donde se toca la red POR PRIMERA VEZ. La ventana ya esta
+        en pantalla, asi que un servidor caido se traduce en un aviso, no en una
+        aplicacion que parece no arrancar."""
+        # Guardia de reentrada: processEvents() puede volver a disparar esta
+        # misma carga (el singleShot pendiente) y encadenar intentos; se
+        # midieron 15 s de ventana congelada por este motivo.
+        if getattr(self, '_cargando_inicial', False):
+            return
+        self._cargando_inicial = True
         try:
+            if NAS_HOST_ACTIVO is None:
+                self.lbl_status.setText("Buscando el servidor de archivos…")
+                QApplication.processEvents()
+                with Fase("detectar NAS"):
+                    detectar_nas_host()
+            if not self.db.esta_disponible():
+                # Conexion en segundo plano: la ventana NO se congela.
+                self.lbl_status.setText("Conectando con la base de datos…")
+                self._lanzar_conexion_bd()
+                return
             self.lbl_status.setText("Cargando filtros…")
             QApplication.processEvents()
             self.refrescar_filtros_jerarquicos()
@@ -1632,8 +1900,121 @@ class BuscadorPiezas(QMainWindow):
             self._actualizar_chips_contexto()
             self.lbl_status.setText("Listo")
         except Exception as e:
-            logger.error(f"Error en carga inicial diferida: {e}")
+            logger.error("Error en carga inicial diferida: %s", e, exc_info=True)
             self.lbl_status.setText("Listo")
+        finally:
+            self._cargando_inicial = False
+
+    def _lanzar_conexion_bd(self, manual=False):
+        """Intenta conectar en segundo plano (V2.1.0). Nunca bloquea la ventana."""
+        anterior = getattr(self, '_conex_worker', None)
+        if anterior is not None and anterior.isRunning():
+            return          # ya hay un intento en marcha
+        self._conex_manual = manual
+        if manual:
+            self.btn_bd_reintentar.setEnabled(False)
+            self.btn_bd_reintentar.setText("Conectando…")
+        self._conex_worker = ConexionWorker(self.db, self)
+        self._conex_worker.resultado.connect(self._conexion_terminada)
+        self._conex_worker.start()
+
+    def _conexion_terminada(self, ok, motivo):
+        """Resultado del intento de conexion (V2.1.0)."""
+        self.btn_bd_reintentar.setEnabled(True)
+        self.btn_bd_reintentar.setText("Reintentar")
+        self.bd_disponible = ok
+        intentos = getattr(self, '_reintentos_bd', 0)
+        if ok:
+            logger.info("Base de datos disponible tras %d intento(s)", intentos + 1)
+            self.bd_banner.setVisible(False)
+            self._reintentos_bd = 0
+            if intentos:
+                self.toast.show_message("✅ Conexión con la base de datos restablecida")
+            self._carga_inicial_diferida()      # ahora si, a poblar filtros
+            return
+        self._reintentos_bd = intentos + 1
+        logger.warning("Intento %d de conexion fallido: %s", self._reintentos_bd, motivo)
+        self._mostrar_banner_bd(motivo)
+        if getattr(self, '_conex_manual', False):
+            self.toast.show_message("Sigue sin haber conexión con el servidor")
+        # Reintento automatico espaciado: 10s, 20s, 40s... hasta 5 minutos
+        espera = min(10000 * (2 ** min(self._reintentos_bd, 5)), 300000)
+        QTimer.singleShot(espera, self._lanzar_conexion_bd)
+
+
+    def mostrar_diagnostico(self):
+        """Informe de estado para pegar en un mensaje cuando algo falla (V2.1.0)."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Diagnóstico del equipo")
+        dlg.resize(760, 560)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        cab = QLabel("Estado de este equipo")
+        cab.setStyleSheet(
+            'font-family: "%s"; font-size: 14px; font-weight: 800; '
+            'color: #F5F5F5; background: transparent;' % FUENTES["h2"])
+        lay.addWidget(cab)
+        sub = QLabel("Comprobando servidor, NAS y disco… (unos segundos)")
+        sub.setObjectName("StatusDim")
+        lay.addWidget(sub)
+
+        texto = QTextBrowser()
+        texto.setStyleSheet(
+            "font-family: Consolas, 'Courier New', monospace; font-size: 12px;")
+        texto.setPlainText("Comprobando…")
+        lay.addWidget(texto, stretch=1)
+
+        pie = QHBoxLayout()
+        btn_copiar = QPushButton("Copiar al portapapeles")
+        btn_copiar.setIcon(svg_icon("copiar-ruta", size=15))
+        btn_copiar.setCursor(Qt.PointingHandCursor)
+        btn_copiar.setEnabled(False)
+        btn_copiar.clicked.connect(lambda: (
+            QApplication.clipboard().setText(texto.toPlainText()),
+            self.toast.show_message("✅ Diagnóstico copiado — pégalo en el mensaje")))
+        pie.addWidget(btn_copiar)
+        btn_log = QPushButton("Abrir carpeta del log")
+        btn_log.setIcon(svg_icon("carpeta", size=15))
+        btn_log.setCursor(Qt.PointingHandCursor)
+        btn_log.clicked.connect(
+            lambda: subprocess.Popen('explorer /select,"%s"' % RUTA_LOG))
+        pie.addWidget(btn_log)
+        pie.addStretch()
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setCursor(Qt.PointingHandCursor)
+        btn_cerrar.clicked.connect(dlg.accept)
+        pie.addWidget(btn_cerrar)
+        lay.addLayout(pie)
+
+        def pintar(informe):
+            texto.setPlainText(informe)
+            sub.setText("Copia esto y mándalo si necesitas ayuda.")
+            btn_copiar.setEnabled(True)
+            logger.info("Diagnóstico generado por el usuario")
+
+        self._diag_worker = DiagnosticoWorker(self)
+        self._diag_worker.listo.connect(pintar)
+        self._diag_worker.start()
+        dlg.exec_()
+
+    def _mostrar_banner_bd(self, motivo):
+        """Ensena el aviso de 'sin base de datos' con la causa real (V2.1.0)."""
+        primera = (str(motivo or "").strip().splitlines() or [""])[0]
+        texto = primera[:160]
+        self.lbl_bd.setText(
+            "Sin conexión con la base de datos (%s:%s). "
+            "La búsqueda no funcionará hasta que se restablezca.%s"
+            % (PG_CONFIG.get('host', '?'), PG_CONFIG.get('port', '?'),
+               ("  ·  " + texto) if texto else ""))
+        self.bd_banner.setVisible(True)
+        self.lbl_status.setText("Sin conexión con la base de datos")
+
+    def _reintentar_bd(self, manual=False):
+        """Boton 'Reintentar' del aviso (V2.1.0). El trabajo lo hace un hilo."""
+        self._lanzar_conexion_bd(manual=manual)
+
 
     def verificar_rutas_red(self):
         """Comprueba si las rutas del NAS son accesibles (V1.0.7).
@@ -1979,6 +2360,40 @@ class BuscadorPiezas(QMainWindow):
         ub_lay.addWidget(btn_update_x)
         self.update_banner.setVisible(False)
         main_layout.addWidget(self.update_banner)
+
+        # V2.1.0 - Banner de estado de la base de datos. Antes, si el servidor
+        # no respondia, la app ni se abria; ahora se abre y DICE que pasa, con
+        # que reintentar y como diagnosticarlo. Nunca mas un "no funciona" mudo.
+        self.bd_banner = QFrame()
+        self.bd_banner.setObjectName("BdBanner")
+        self.bd_banner.setStyleSheet(
+            "#BdBanner { background: #8C2F2F; border-radius: 8px; }")
+        bd_lay = QHBoxLayout(self.bd_banner)
+        bd_lay.setContentsMargins(14, 8, 10, 8)
+        bd_lay.setSpacing(10)
+        self.lbl_bd = QLabel("Sin conexión con la base de datos")
+        self.lbl_bd.setStyleSheet(
+            "color: #FFFFFF; font-weight: 700; background: transparent;")
+        self.lbl_bd.setWordWrap(True)
+        bd_lay.addWidget(self.lbl_bd, stretch=1)
+        self.btn_bd_reintentar = QPushButton("Reintentar")
+        self.btn_bd_reintentar.setCursor(Qt.PointingHandCursor)
+        self.btn_bd_reintentar.setStyleSheet(
+            "QPushButton { background: #FFFFFF; color: #8C2F2F; border: none; "
+            "border-radius: 6px; padding: 5px 14px; font-weight: 800; } "
+            "QPushButton:hover { background: #FFE0E0; }")
+        self.btn_bd_reintentar.clicked.connect(lambda: self._reintentar_bd(manual=True))
+        bd_lay.addWidget(self.btn_bd_reintentar)
+        btn_bd_diag = QPushButton("Diagnóstico")
+        btn_bd_diag.setCursor(Qt.PointingHandCursor)
+        btn_bd_diag.setStyleSheet(
+            "QPushButton { background: transparent; color: #FFFFFF; border: "
+            "1px solid #FFFFFF; border-radius: 6px; padding: 4px 12px; "
+            "font-weight: 700; } QPushButton:hover { background: #A03A3A; }")
+        btn_bd_diag.clicked.connect(self.mostrar_diagnostico)
+        bd_lay.addWidget(btn_bd_diag)
+        self.bd_banner.setVisible(False)
+        main_layout.addWidget(self.bd_banner)
         self._version_red = None  # versión detectada en red (para el instalador)
 
         # ═══════════════════════════════════════════
@@ -6513,32 +6928,100 @@ class _TemaBarraTitulo(QObject):
         return False
 
 
-if __name__ == "__main__":
-    # V2.0.0: registrar avisos de Qt (p.ej. detalles de parseo QSS) en el log
-    from PyQt5.QtCore import qInstallMessageHandler
+def _arrancar():
+    """Arranque de la aplicacion (V2.1.0).
+
+    Todo el arranque va dentro de un try: si algo falla aqui -- fuentes, hoja de
+    estilo, base de datos, cualquier cosa -- el usuario VE un mensaje con la
+    causa y la ruta del log, en vez de un icono que parpadea y nada mas. Esa era
+    la peor parte de la incidencia: la app moria sin dejar rastro visible."""
+    from PyQt5.QtCore import qInstallMessageHandler, QLockFile
+
     def _qt_msg_handler(mode, ctx, msg):
-        logger.warning(f"Qt: {msg}")
+        logger.warning("Qt: %s", msg)
     qInstallMessageHandler(_qt_msg_handler)
+
+    t_inicio = time.time()
+    logger.info("===== Arranque v%s . PID %s =====", APP_VERSION, os.getpid())
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    # V2.0.3: barra de título oscura en todas las ventanas (fin de la franja blanca)
+    # --- Modo diagnostico: BuscadorPiezas.exe --diagnostico -----------------
+    if "--diagnostico" in sys.argv:
+        informe = generar_diagnostico()
+        try:
+            destino = os.path.join(LOG_DIR, "diagnostico.txt")
+            with open(destino, "w", encoding="utf-8") as f:
+                f.write(informe)
+        except Exception:
+            destino = "(no se ha podido guardar)"
+        avisar_usuario("Diagnostico ALSI",
+                       informe + "\n\nGuardado en:\n" + destino)
+        return 0
+
+    # --- Instancia unica ----------------------------------------------------
+    # Sin esto, cuando la app tardaba en abrir el usuario volvia a pulsar y se
+    # acumulaban procesos invisibles peleandose por el mismo pool de conexiones.
+    # QLockFile detecta y limpia el candado huerfano de un proceso ya muerto.
+    bloqueo = None
+    try:
+        bloqueo = QLockFile(os.path.join(LOG_DIR, "buscador.lock"))
+        bloqueo.setStaleLockTime(30000)
+        if not bloqueo.tryLock(200):
+            vivo, pid, host, nombre = bloqueo.getLockInfo()
+            logger.warning("Ya hay otra instancia (PID %s); no se abre otra", pid)
+            avisar_usuario(
+                "El Buscador ya esta abierto",
+                "Ya tienes el Buscador de Piezas abierto en este equipo "
+                "(proceso %s).\n\nBuscalo en la barra de tareas.\n\n"
+                "Si no aparece por ningun lado, cierralo desde el Administrador "
+                "de tareas (Ctrl+Mayus+Esc) y vuelve a abrirlo." % pid)
+            return 0
+    except Exception as e:
+        logger.warning("No se ha podido crear el candado de instancia: %s", e)
+
+    # V2.0.3: barra de titulo oscura en todas las ventanas
     _tema_barra = _TemaBarraTitulo()
     app.installEventFilter(_tema_barra)
 
     # V2.0.0 - Fuentes de marca + tema oscuro ALSI
-    cargar_fuentes_marca()
-    app.setFont(QFont(FUENTES['body'], 10))
-    qss_marca = cargar_qss_marca()
-    if qss_marca:
-        app.setStyleSheet(qss_marca)
-    else:
-        # Fallback al tema claro V1.0.5 si falta alsi_buscador.qss
-        app.setFont(QFont("Segoe UI", 9))
-        app.setStyleSheet(MODERN_QSS)
+    with Fase("cargar fuentes y estilo"):
+        cargar_fuentes_marca()
+        app.setFont(QFont(FUENTES['body'], 10))
+        qss_marca = cargar_qss_marca()
+        if qss_marca:
+            app.setStyleSheet(qss_marca)
+        else:
+            # Fallback al tema claro V1.0.5 si falta alsi_buscador.qss
+            app.setFont(QFont("Segoe UI", 9))
+            app.setStyleSheet(MODERN_QSS)
 
     window = BuscadorPiezas()
     aplicar_barra_titulo_oscura(window.winId())  # V2.0.3: sin parpadeo blanco inicial
     window.show()
-    sys.exit(app.exec_())
+    logger.info("[arranque] ventana visible en %.1fs", time.time() - t_inicio)
+    codigo = app.exec_()
+    logger.info("===== Cierre normal (codigo %s) =====", codigo)
+    if bloqueo is not None:
+        try:
+            bloqueo.unlock()
+        except Exception:
+            pass
+    return codigo
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(_arrancar())
+    except SystemExit:
+        raise
+    except BaseException as e:
+        logger.critical("Fallo fatal en el arranque", exc_info=True)
+        avisar_usuario(
+            "El Buscador no ha podido arrancar",
+            "El Buscador de Piezas no ha podido abrirse.\n\n"
+            "Motivo: %s: %s\n\n"
+            "El detalle completo esta en:@%s\n\n"
+            "Manda ese archivo y lo miramos." % (type(e).__name__, e, RUTA_LOG))
+        sys.exit(1)
