@@ -147,6 +147,83 @@ def ruta_accesible(ruta):
     return ruta
 
 
+def _con_host(ruta, host):
+    """Devuelve 'ruta' con el host UNC sustituido por 'host'."""
+    B = chr(92)
+    if not ruta or not ruta.startswith(B + B):
+        return ruta
+    resto = ruta[2:]
+    i = resto.find(B)
+    if i < 0:
+        return ruta
+    return B + B + host + resto[i:]
+
+
+def resolver_para_abrir(ruta):
+    """Devuelve (ruta_utilizable, motivo) para abrir un archivo (V2.0.9).
+
+    NAS_HOST_ACTIVO se detecta UNA sola vez al arrancar. Si el NAS no respondia
+    en ese instante -- abrir la app nada mas iniciar sesion, antes de que la red
+    o las credenciales esten listas, es lo tipico -- TODOS los "Abrir carpeta"
+    fallaban el resto de la sesion aunque la red se recuperase enseguida, y el
+    aviso culpaba al servidor sin comprobarlo.
+
+    Aqui se prueban todas las variantes de host en el momento de usarlo, se
+    redetecta el host bueno si cambia, y se distingue la causa real.
+
+    motivo: 'ok' | 'archivo_no_esta' | 'sin_permiso' | 'sin_servidor'
+    """
+    global NAS_HOST_ACTIVO
+    if not ruta:
+        return (None, 'sin_servidor')
+
+    candidatas, vistas = [], set()
+    for cand in [ruta_accesible(ruta), ruta] + [_con_host(ruta, h) for h in NAS_HOSTS]:
+        if cand and cand not in vistas:
+            vistas.add(cand)
+            candidatas.append(cand)
+
+    carpeta_vista = False
+    for cand in candidatas:
+        try:
+            if os.path.exists(cand):
+                host = cand[2:].split(chr(92))[0] if cand.startswith(chr(92) * 2) else ''
+                if host and host.upper() != (NAS_HOST_ACTIVO or '').upper():
+                    NAS_HOST_ACTIVO = host
+                    logger.info("NAS re-detectado: accesible por %s" % host)
+                return (cand, 'ok')
+            if os.path.isdir(os.path.dirname(cand)):
+                carpeta_vista = True
+        except PermissionError:
+            return (cand, 'sin_permiso')
+        except OSError as e:
+            if getattr(e, 'winerror', None) in (5, 1314):
+                return (cand, 'sin_permiso')
+        except Exception:
+            continue
+
+    if carpeta_vista:
+        return (candidatas[0], 'archivo_no_esta')
+    return (candidatas[0], 'sin_servidor')
+
+
+MENSAJES_RUTA = {
+    'archivo_no_esta': (
+        "El archivo ya no esta en esa carpeta.\n\n"
+        "Lo mas probable es que se haya movido o renombrado despues de la "
+        "ultima indexacion. La carpeta si es accesible: se abrira para que "
+        "puedas buscarlo."),
+    'sin_permiso': (
+        "No tienes permiso para acceder a esa carpeta del NAS.\n\n"
+        "Habla con quien gestione los permisos del servidor: no es un "
+        "problema de la aplicacion."),
+    'sin_servidor': (
+        "No se llega al servidor en este momento.\n\n"
+        "Comprueba la conexion de red. Si acabas de encender el equipo, "
+        "espera unos segundos y vuelve a intentarlo."),
+}
+
+
 def rutas_nas_activas():
     """RUTAS_NAS con el host activo (para diagnóstico y diálogo de reindexado)."""
     return {k: ruta_accesible(v) for k, v in RUTAS_NAS.items()}
@@ -174,7 +251,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.0.6"
+APP_VERSION = "2.0.9"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -2060,13 +2137,22 @@ class BuscadorPiezas(QMainWindow):
         shadow_effect2.setColor(QColor(0, 0, 0, 20))
         shadow_effect2.setOffset(0, 2)
         self.tabla.setGraphicsEffect(shadow_effect2)
-        self.tabla.setColumnCount(21)
+        # V2.0.8: Peso y Superficie se añaden AL FINAL a propósito — así no se
+        # mueve ningún índice de columna ya existente (delegados, exportación,
+        # menú Columnas y preferencias guardadas siguen valiendo).
+        self.tabla.setColumnCount(23)
         self.tabla.setHorizontalHeaderLabels([
             "Ruta_Hidden", "Orden_Orig", "Cód. Proy_Hidden", "Nom. Proy_Hidden", "Vista",
             "Nombre", "Origen", "Año", "Cliente", "Proyecto",
             "Orden", "Material", "Tratamiento", "Espesor", "L",
-            "T", "F", "S", "P", "M", "Tipo"
+            "T", "F", "S", "P", "M", "Tipo",
+            "Peso (kg)", "Sup. (m²)"
         ])
+        for _c, _t in ((21, "Peso de la pieza o conjunto, leído de SolidWorks"),
+                       (22, "Superficie exterior de la pieza o conjunto (m²)")):
+            _h = self.tabla.horizontalHeaderItem(_c)
+            if _h:
+                _h.setToolTip(_t)
         # Tooltips con el nombre completo de las columnas de fabricación abreviadas
         NOMBRES_FABRICACION = {14: "Láser", 15: "Torno", 16: "Fresa", 17: "Soldadura", 18: "Pintura", 19: "Montaje"}
         for col_idx, nombre_completo in NOMBRES_FABRICACION.items():
@@ -2238,9 +2324,15 @@ class BuscadorPiezas(QMainWindow):
             "QPushButton { padding: 6px 16px; }")
         self.menu_columnas = CheckableMenu(self)
         self.columnas_actions = {}
-        for col_idx in range(5, 21):
+        # V2.0.8: hasta columnCount() para que Peso y Sup. se puedan
+        # ocultar/mostrar desde el menú igual que el resto
+        for col_idx in range(5, self.tabla.columnCount()):
             h_item = self.tabla.horizontalHeaderItem(col_idx)
-            nombre_col = h_item.toolTip() or h_item.text()
+            # El tooltip solo sirve de nombre cuando la cabecera es una inicial
+            # (L, T, F, S, P, M). Si ya es descriptiva se usa tal cual, o el
+            # menú mostraría la explicación larga en vez del nombre corto.
+            nombre_col = (h_item.text() if len(h_item.text()) > 2
+                          else (h_item.toolTip() or h_item.text()))
             accion = self.menu_columnas.addAction(nombre_col)
             accion.setCheckable(True)
             accion.setChecked(True)
@@ -2314,25 +2406,59 @@ class BuscadorPiezas(QMainWindow):
         ico_ref.setPixmap(svg_pixmap("ensamblaje-cubo", color="#E66C32", size=15))
         ico_ref.setStyleSheet("background: transparent;")
         ref_lay.addWidget(ico_ref)
-        # CTA claro: qué hace esta barra, sin tener que adivinarlo
-        lbl_ref = QLabel("Refinar: que contengan la pieza o ensamblaje…")
+
+        # V2.0.8: la barra se lee como UNA FRASE — "De estos resultados, deja
+        # los que [SI|NO] contengan [pieza]". Antes la etiqueta afirmaba "que
+        # contengan" y al lado habia un boton que hacia lo contrario: el modo
+        # estaba declarado en dos sitios que se contradecian, y no se entendia
+        # que hacia cada cosa.
+        lbl_ref = QLabel("De estos resultados, deja los que")
         lbl_ref.setToolTip(
-            "Sub-búsqueda sobre los resultados actuales (Ctrl+R).\n"
-            "Deja solo los ensamblajes que LLEVAN DENTRO esa pieza o\n"
-            "subensamblaje (componentes directos de su despiece).\n"
-            "Enter aplica y deja un chip; puedes encadenar varios niveles.\n"
-            "Sintaxis: espacio = frase exacta · ; = Y · , = O.\n"
-            "Esc deshace el último nivel hasta la búsqueda general.")
+            "Sub-busqueda sobre los resultados actuales (Ctrl+R).\n"
+            "Filtra por lo que los ensamblajes LLEVAN DENTRO (su despiece),\n"
+            "no por el nombre: para el nombre esta el buscador de arriba.\n"
+            "Enter aplica y deja un chip; se pueden encadenar varios niveles.\n"
+            "Sintaxis: espacio = frase exacta, ; = Y, , = O.\n"
+            "Esc deshace el ultimo nivel hasta la busqueda general.")
         lbl_ref.setStyleSheet(
             f'font-family: "{FUENTES["h2"]}"; font-weight: 800; color: #E66C32; '
             f'background: transparent;')
         ref_lay.addWidget(lbl_ref)
+
+        # Selector de modo SI/NO: excluyentes y siempre visibles, para que se
+        # vea de un vistazo que existen las dos opciones y cual esta activa.
+        self.grupo_modo_ref = QButtonGroup(self)
+        self.grupo_modo_ref.setExclusive(True)
+        self.btn_ref_si = QPushButton("SI contengan")
+        self.btn_ref_no = QPushButton("NO contengan")
+        for _b, _tip in (
+            (self.btn_ref_si,
+             "Dejar SOLO los ensamblajes que llevan esa pieza dentro.\n"
+             "Ejemplo: cintas A450 -> SI contengan MOTOR REM 0.37KW."),
+            (self.btn_ref_no,
+             "Quitar los ensamblajes que llevan esa pieza; deja el resto.\n"
+             "Ejemplo: cintas A450 -> NO contengan MOTOR REM = las que\n"
+             "montan otro motor.\nAtajo: un '-' delante del termino y Enter.")):
+            _b.setCheckable(True)
+            _b.setCursor(Qt.PointingHandCursor)
+            _b.setToolTip(_tip)
+            self.grupo_modo_ref.addButton(_b)
+            ref_lay.addWidget(_b)
+        self.btn_ref_si.setChecked(True)
+        self.grupo_modo_ref.buttonToggled.connect(lambda *_: self._pintar_modo_refinar())
 
         self.input_refinar = QLineEdit()
         self.input_refinar.setObjectName("InputRefinar")
         self.input_refinar.setClearButtonEnabled(True)
         self.input_refinar.returnPressed.connect(self._agregar_refinado)
         ref_lay.addWidget(self.input_refinar, stretch=1)
+
+        # Boton de accion explicito: quien no sepa que Enter aplica, lo ve
+        self.btn_ref_aplicar = QPushButton("Aplicar")
+        self.btn_ref_aplicar.setCursor(Qt.PointingHandCursor)
+        self.btn_ref_aplicar.setToolTip("Anadir este nivel de refinado (o pulsa Enter)")
+        self.btn_ref_aplicar.clicked.connect(lambda _=False: self._agregar_refinado())
+        ref_lay.addWidget(self.btn_ref_aplicar)
 
         # V2.0.3: profundidad — buscar también dentro de los subconjuntos
         self.btn_profundo = QPushButton("Subconjuntos")
@@ -2356,6 +2482,8 @@ class BuscadorPiezas(QMainWindow):
         self.btn_ref_limpiar.clicked.connect(self._limpiar_refinados)
         self.btn_ref_limpiar.setVisible(False)
         ref_lay.addWidget(self.btn_ref_limpiar)
+
+        self._pintar_modo_refinar()   # estado inicial del selector SI/NO
 
         self.lbl_refinar_count = QLabel("")
         self.lbl_refinar_count.setStyleSheet(
@@ -2435,7 +2563,12 @@ class BuscadorPiezas(QMainWindow):
             ('origen', 'Origen'), ('anio', 'Año'), ('cliente', 'Cliente'),
             ('proyecto', 'Proyecto'), ('orden', 'Orden'), ('tamano', 'Tamaño'),
             # V2.0.3: documentación de la pieza y salud del ensamblaje
-            ('plano', 'Plano'), ('comps', 'Componentes')]):
+            ('plano', 'Plano'), ('comps', 'Componentes'),
+            # V2.0.8: propiedades físicas leídas de SolidWorks
+            # V2.0.8: solo Peso. La superficie se queda en la columna de la
+            # lista: en el panel ocupaba sitio y, sobre todo, decía "a pintar"
+            # sin saber si la pieza se pinta — afirmarlo era incorrecto.
+            ('peso', 'Peso')]):
             lbl_k = QLabel(etiqueta)
             lbl_k.setObjectName("MetaKey")
             lbl_v = QLabel("—")
@@ -3000,6 +3133,16 @@ class BuscadorPiezas(QMainWindow):
                 self.rail_widget.setVisible(True)
                 self._panel_izquierdo.setMinimumWidth(56)
                 self._panel_izquierdo.setMaximumWidth(56)
+                # V2.0.8: hay que repartir el espacio liberado A MANO. Fijar el
+                # ancho del panel no mueve el divisor: este se quedaba con el
+                # reparto anterior y dejaba un hueco muerto entre el raíl y la
+                # tabla, en vez de que la búsqueda ocupara todo el ancho.
+                sizes = self.main_splitter.sizes()
+                if len(sizes) >= 2:
+                    ganado = sizes[0] - 56
+                    sizes[0] = 56
+                    sizes[1] = sizes[1] + max(ganado, 0)
+                    self.main_splitter.setSizes(sizes)
                 self.btn_colapsar_sidebar.setIcon(svg_icon("expandir-panel", size=14))
                 self.btn_colapsar_sidebar.setToolTip("Expandir panel de filtros")
             else:
@@ -3009,8 +3152,10 @@ class BuscadorPiezas(QMainWindow):
                 self._panel_izquierdo.setMinimumWidth(80)
                 self._panel_izquierdo.setMaximumWidth(500)
                 sizes = self.main_splitter.sizes()
-                if sizes and sizes[0] < 200:
+                if len(sizes) >= 2 and sizes[0] < 200:
+                    devuelto = 256 - sizes[0]
                     sizes[0] = 256
+                    sizes[1] = max(sizes[1] - devuelto, 300)
                     self.main_splitter.setSizes(sizes)
                 self.btn_colapsar_sidebar.setIcon(svg_icon("contraer-panel", size=14))
                 self.btn_colapsar_sidebar.setToolTip("Contraer panel de filtros")
@@ -3184,6 +3329,43 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.debug(f"Error comprobando actualización: {e}")
 
+    @staticmethod
+    def _entorno_sin_pyinstaller():
+        """Entorno para procesos hijo, sin rastro de PyInstaller (V2.0.9).
+
+        Quitar las variables _MEI*/_PYI* no basta: el bootloader deja además
+        la carpeta temporal (sys._MEIPASS) DENTRO del PATH, y ahí viven
+        VCRUNTIME140.dll y compañía. Cualquier ejecutable del sistema lanzado
+        con ese PATH puede cargar ESAS DLL en vez de las suyas y morir con
+        0xc0000142 (DLL_INIT_FAILED) — que es justo lo que le pasó a un
+        compañero con taskkill.exe al actualizar.
+        """
+        entorno = {k: v for k, v in os.environ.items()
+                   if not k.startswith(('_MEI', '_PYI'))}
+        mei = getattr(sys, '_MEIPASS', None)
+        mei_norm = os.path.normcase(os.path.normpath(mei)) if mei else None
+
+        def es_de_pyinstaller(parte):
+            if not parte.strip():
+                return True
+            try:
+                pn = os.path.normcase(os.path.normpath(parte))
+            except Exception:
+                return False
+            if mei_norm and (pn == mei_norm or pn.startswith(mei_norm + os.sep)):
+                return True
+            # Carpetas _MEIxxxxx de ejecuciones anteriores que quedaron sueltas.
+            # Se miran TODOS los tramos, no solo el ultimo: rutas como
+            # ...\_MEI999\lib tambien apuntan a un empaquetado.
+            return any(t.lower().startswith('_mei') for t in pn.split(os.sep) if t)
+
+        ruta = entorno.get('PATH', '')
+        limpio = [p for p in ruta.split(os.pathsep) if not es_de_pyinstaller(p)]
+        if limpio:
+            entorno['PATH'] = os.pathsep.join(limpio)
+        entorno['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+        return entorno
+
     def _lanzar_actualizacion(self):
         """Cierra la app y lanza un actualizador que copia la versión nueva desde
         la carpeta de red al equipo local y la reabre (V2.0.0)."""
@@ -3226,11 +3408,14 @@ class BuscadorPiezas(QMainWindow):
                 'echo NET=[%NET%] >> "%LOG%"',
                 'echo LOC=[%LOC%] >> "%LOG%"',
                 "rem Margen para que la app se cierre por si misma",
-                "timeout /t 2 /nobreak >nul 2>&1",
+                'set "SYS=%SystemRoot%\\System32"',
+                'rem Rutas absolutas: si el PATH viene contaminado por el',
+                'rem empaquetado, taskkill.exe fallaba con 0xc0000142',
+                '"%SYS%\\timeout.exe" /t 2 /nobreak >nul 2>&1',
                 "rem Forzar cierre de cualquier instancia restante",
-                'taskkill /F /IM BuscadorPiezas.exe >nul 2>&1',
-                'taskkill /F /IM SwPropExtractor.exe >nul 2>&1',
-                "timeout /t 1 /nobreak >nul 2>&1",
+                '"%SYS%\\taskkill.exe" /F /IM BuscadorPiezas.exe >nul 2>&1',
+                '"%SYS%\\taskkill.exe" /F /IM SwPropExtractor.exe >nul 2>&1',
+                '"%SYS%\\timeout.exe" /t 1 /nobreak >nul 2>&1',
                 'copy /Y "%NET%\\BuscadorPiezas.exe" "%LOC%\\BuscadorPiezas.exe.nuevo" >> "%LOG%" 2>&1',
                 'if not exist "%LOC%\\BuscadorPiezas.exe.nuevo" goto :fallo',
                 'move /Y "%LOC%\\BuscadorPiezas.exe.nuevo" "%LOC%\\BuscadorPiezas.exe" >> "%LOG%" 2>&1',
@@ -3264,9 +3449,7 @@ class BuscadorPiezas(QMainWindow):
             # PyInstaller — si el exe nuevo las hereda, intenta cargar las DLL
             # desde la carpeta temporal del app VIEJO (ya borrada) y revienta
             # con "Failed to load Python DLL ..._MEIxxxx\python311.dll".
-            entorno = {k: v for k, v in os.environ.items()
-                       if not k.startswith(('_MEI', '_PYI'))}
-            entorno['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
+            entorno = self._entorno_sin_pyinstaller()
             DETACHED = 0x00000008
             linea = f'cmd /s /c ""{bat}" "{RUTA_DESPLIEGUE_APP}" "{local_dir}""'
             subprocess.Popen(linea, creationflags=DETACHED, close_fds=True,
@@ -3534,11 +3717,20 @@ class BuscadorPiezas(QMainWindow):
                 action.setChecked(tipo in t_list)
             self.actualizar_texto_tipos()
         
-        geom = self.controller.load_preference("geometria")
+        # V2.0.8: la geometría se guarda POR EQUIPO (QSettings). Antes salía de
+        # 'preferencias', que es una tabla COMPARTIDA: si un compañero con dos
+        # monitores guardaba x=2500, a todos los demás la app les abría fuera de
+        # la pantalla y había que rescatarla con Windows+flecha.
+        geom = self.qsettings.value("geometria", "")
+        if not geom:
+            geom = self.controller.load_preference("geometria") or ""
         if geom:
-            parts = geom.split(',')
-            if len(parts) == 4:
-                self.setGeometry(int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+            try:
+                parts = [int(x) for x in str(geom).split(',')]
+                if len(parts) == 4:
+                    self.setGeometry(*self._geometria_visible(*parts))
+            except (ValueError, TypeError):
+                pass
 
         # Restaurar tamaño splitter
         splitter_state = self.controller.load_preference("splitter_sizes", "")
@@ -3550,10 +3742,41 @@ class BuscadorPiezas(QMainWindow):
             except ValueError:
                 pass
 
+    def _geometria_visible(self, x, y, w, h):
+        """Encaja la ventana en una pantalla que exista de verdad (V2.0.8).
+
+        Devuelve (x, y, w, h) garantizando que la barra de título queda
+        accesible: si la posición guardada no cae en ninguna pantalla actual
+        (monitor desconectado, o equipo distinto al que la guardó), se centra
+        en la principal en vez de abrirse donde nadie la ve."""
+        escritorio = QApplication.desktop()
+        rect_guardado = QRect(x, y, max(w, 900), max(h, 600))
+        # ¿se ve al menos una parte razonable en alguna pantalla?
+        for i in range(escritorio.screenCount()):
+            disponible = escritorio.availableGeometry(i)
+            corte = disponible.intersected(rect_guardado)
+            if corte.width() >= 200 and corte.height() >= 100:
+                # cabe: solo se recorta al área utilizable de esa pantalla
+                w = min(rect_guardado.width(), disponible.width())
+                h = min(rect_guardado.height(), disponible.height())
+                x = min(max(rect_guardado.x(), disponible.x()),
+                        disponible.right() - w + 1)
+                y = min(max(rect_guardado.y(), disponible.y()),
+                        disponible.bottom() - h + 1)
+                return (x, y, w, h)
+        # No cae en ninguna pantalla: centrar en la principal
+        disponible = escritorio.availableGeometry(escritorio.primaryScreen())
+        w = min(rect_guardado.width(), disponible.width())
+        h = min(rect_guardado.height(), disponible.height())
+        logger.info("Geometría guardada fuera de pantalla: se centra la ventana")
+        return (disponible.x() + (disponible.width() - w) // 2,
+                disponible.y() + (disponible.height() - h) // 2, w, h)
+
     def save_window_state(self):
         rect = self.geometry()
         val = f"{rect.x()},{rect.y()},{rect.width()},{rect.height()}"
-        self.controller.save_preference("geometria", val)
+        # V2.0.8: por equipo, no compartida (ver load_window_state)
+        self.qsettings.setValue("geometria", val)
         # V2.0.3: guardar el último término SOLO en local (privacidad por equipo)
         self.qsettings.setValue("ultimo_termino", self.input_buscar.text())
         
@@ -3977,6 +4200,17 @@ class BuscadorPiezas(QMainWindow):
                 cod_ord = str(data[8]) if data[8] else ""
                 nom_ord = str(data[9]) if data[9] else ""
                 self.tabla.setItem(row, 10, QTableWidgetItem(f"{cod_ord} {nom_ord}".strip()))
+
+                # V2.0.8: peso y superficie, como NUMERO para que ordene bien
+                for i_data, i_col, dec in ((20, 21, 3), (21, 22, 4)):
+                    it_n = QTableWidgetItem()
+                    val = data[i_data] if len(data) > i_data else None
+                    if val:
+                        it_n.setData(Qt.DisplayRole, round(float(val), dec))
+                    else:
+                        it_n.setText("")
+                    it_n.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    self.tabla.setItem(row, i_col, it_n)
         finally:
             self.tabla.setUpdatesEnabled(True)
 
@@ -4088,8 +4322,9 @@ class BuscadorPiezas(QMainWindow):
                 "QPushButton { background: transparent; color: #999999; border: 1px solid "
                 "#3A3A3A; border-radius: 6px; padding: 3px 10px; }"
                 "QPushButton:hover { color: #E66C32; border-color: #E66C32; }")
-        self.input_refinar.setPlaceholderText(
-            "ej: MOTOR REM 0.37KW   (Enter aplica · ;=Y · ,=O · Esc deshace)")
+        # V2.0.8: el texto de ayuda depende del modo (SI/NO), asi que lo pone
+        # _pintar_modo_refinar en vez de fijarlo aqui y pisarlo
+        self._pintar_modo_refinar()
 
     def _on_profundo_toggled(self, activo):
         """Cambia entre componentes directos y cualquier nivel (V2.0.3).
@@ -4104,16 +4339,54 @@ class BuscadorPiezas(QMainWindow):
         elif getattr(self, 'modo_busqueda', 'nombre') == 'contiene' and self.input_buscar.text().strip():
             self.ejecutar_busqueda(auto=True)  # relanzar la búsqueda de conjuntos
 
-    def _agregar_refinado(self):
-        """Enter en la barra de refinado: apila un nivel (chip) y aplica."""
+    def _pintar_modo_refinar(self):
+        """Marca visualmente el modo activo (V2.0.8). El QSS de la app no
+        distingue lo bastante un QPushButton checkable, y el usuario no sabia
+        cual estaba activo: aqui el activo va relleno y el otro apagado."""
+        try:
+            negativo = self.btn_ref_no.isChecked()
+            for btn, activo, color in (
+                    (self.btn_ref_si, not negativo, "#E66C32"),
+                    (self.btn_ref_no, negativo, "#5B9BD5")):
+                if activo:
+                    btn.setStyleSheet(
+                        f"QPushButton {{ background: {color}; color: #141414; "
+                        f"border: 1px solid {color}; border-radius: 10px; "
+                        f"padding: 4px 12px; font-weight: 800; }}")
+                else:
+                    btn.setStyleSheet(
+                        "QPushButton { background: transparent; color: #777777; "
+                        "border: 1px solid #4A4A4A; border-radius: 10px; "
+                        "padding: 4px 12px; font-weight: 600; }"
+                        f"QPushButton:hover {{ color: {color}; border-color: {color}; }}")
+            self.input_refinar.setPlaceholderText(
+                "ej. MOTOR REM 0.37KW   (Enter aplica)" if not negativo
+                else "ej. MOTOR REM 0.37KW   (se quitaran los que lo lleven)")
+        except Exception as e:
+            logger.debug(f"Pintando modo de refinado: {e}")
+
+    def _agregar_refinado(self, negativo=False):
+        """Enter en la barra de refinado: apila un nivel (chip) y aplica.
+        V2.0.8: negativo=True apila 'que NO contengan' (botón NO). También se
+        acepta escribir el término con un '-' delante."""
         term = self.input_refinar.text().strip()
+        # El modo lo manda el selector SI/NO de la barra; el '-' delante sigue
+        # valiendo como atajo para quien escribe rapido
+        if not negativo and getattr(self, 'btn_ref_no', None) is not None:
+            negativo = self.btn_ref_no.isChecked()
+        if term.startswith('-') and len(term) > 1:
+            negativo = True
+            term = term[1:].strip()
         if not term or not getattr(self, '_res_base', None):
             return
         if not hasattr(self, '_refinados'):
             self._refinados = []
-        self._refinados.append(('contiene', term))
+        self._refinados.append(('no_contiene' if negativo else 'contiene', term))
         self.input_refinar.clear()
         self._aplicar_refinados()
+
+    def _agregar_refinado_negativo(self):
+        self._agregar_refinado(negativo=True)
 
     def _limpiar_refinados(self):
         """Quita todos los niveles: vuelve a la búsqueda base."""
@@ -4148,10 +4421,17 @@ class BuscadorPiezas(QMainWindow):
                 if modo == 'nombre':
                     res = [d for d in res if self._casa_termino_local(d[0], term)]
                 else:
+                    # V2.0.8: el negativo es el COMPLEMENTO del mismo conjunto.
+                    # Un PDF o una pieza no llevan componentes indexados, así
+                    # que "no lo contienen" y se quedan: es lo que literalmente
+                    # se ha pedido, y el chip lo dice para que no sorprenda.
                     keep = self.db.filtrar_por_componente(
                         [d[10] for d in res], term,
                         profundo=self.btn_profundo.isChecked())
-                    res = [d for d in res if d[10] in keep]
+                    if modo == 'no_contiene':
+                        res = [d for d in res if d[10] not in keep]
+                    else:
+                        res = [d for d in res if d[10] in keep]
         except Exception as e:
             logger.error(f"Error aplicando refinados: {e}")
         finally:
@@ -4177,19 +4457,26 @@ class BuscadorPiezas(QMainWindow):
                 if w:
                     w.deleteLater()
             for i, (modo, term) in enumerate(refs):
-                icono = "≡" if modo == 'nombre' else "⚙"
+                negativo = (modo == 'no_contiene')
+                icono = "≡" if modo == 'nombre' else ("⊘" if negativo else "⚙")
                 etiqueta = term if len(term) <= 22 else term[:20] + "…"
-                chip = QPushButton(f"{i+1}· {icono} {etiqueta}  ✕")
+                prefijo = "NO " if negativo else ""
+                chip = QPushButton(f"{i+1}· {icono} {prefijo}{etiqueta}  ✕")
                 chip.setCursor(Qt.PointingHandCursor)
                 chip.setToolTip(
                     ("Nivel %d — En el nombre: " if modo == 'nombre'
-                     else "Nivel %d — Contiene la pieza: ") % (i + 1)
+                     else ("Nivel %d — NO contiene la pieza: " if negativo
+                           else "Nivel %d — Contiene la pieza: ")) % (i + 1)
                     + term + "\nClic para quitar este nivel")
+                # V2.0.8: el nivel negativo en azul apagado, para no confundirlo
+                # de un vistazo con los que SÍ exigen la pieza
+                col = "#5B9BD5" if negativo else "#E66C32"
+                fondo = "#12202A" if negativo else "#2A1B12"
                 chip.setStyleSheet(
-                    "QPushButton { background: #2A1B12; color: #E66C32; border: 1px solid "
-                    "#E66C32; border-radius: 10px; padding: 2px 10px; font-size: 11px; "
-                    "font-weight: 600; }"
-                    "QPushButton:hover { background: #E66C32; color: #141414; }")
+                    f"QPushButton {{ background: {fondo}; color: {col}; "
+                    f"border: 1px solid {col}; border-radius: 10px; "
+                    f"padding: 2px 10px; font-size: 11px; font-weight: 600; }}"
+                    f"QPushButton:hover {{ background: {col}; color: #141414; }}")
                 chip.clicked.connect(lambda _, k=i: self._quitar_refinado(k))
                 self.chips_refinar.addWidget(chip)
             self.btn_ref_limpiar.setVisible(activo)
@@ -4643,6 +4930,20 @@ class BuscadorPiezas(QMainWindow):
                             pm_cache = QPixmap.fromImage(img_bd)
                 except Exception as e:
                     logger.debug(f"Miniatura BD (preview instantáneo) falló: {e}")
+            # V2.0.8: si no hay nada en caché, aprovechar el icono que la TABLA
+            # ya tiene cargado para esa fila. La tabla puede obtener la miniatura
+            # por vías que el panel no usa (el generador del shell sobre el NAS),
+            # y de ahí venía que se viera en la lista pero no en el panel.
+            if pm_cache is None:
+                try:
+                    it_vista = self.tabla.item(row, 4)
+                    if it_vista and not it_vista.icon().isNull():
+                        pm_tabla = it_vista.icon().pixmap(QSize(512, 512))
+                        if not pm_tabla.isNull() and pm_tabla.width() > 32:
+                            pm_cache = pm_tabla
+                except Exception as e:
+                    logger.debug(f"Icono de tabla como preview: {e}")
+
             if pm_cache:
                 self._set_preview_imagen(pm_cache)
                 self.lbl_preview_icon.setText("")
@@ -4793,6 +5094,21 @@ class BuscadorPiezas(QMainWindow):
                     fila_comps = True
         except Exception as e:
             logger.debug(f"Error en info documental de {ruta_canonica}: {e}")
+        # V2.0.8: peso y superficie del archivo seleccionado. Se ocultan las
+        # filas si no hay dato, en vez de enseñar un "—" que no dice nada.
+        hay_peso = False
+        try:
+            fis = self.db.propiedades_fisicas(ruta_canonica)
+            if fis and fis[0]:
+                self._meta_vals['peso'].setText(
+                    f"<b>{fis[0]:,.2f} kg</b>".replace(",", "."))
+                self._meta_vals['peso'].setTextFormat(Qt.RichText)
+                hay_peso = True
+        except Exception as e:
+            logger.debug(f"Propiedades físicas de {ruta_canonica}: {e}")
+        self._meta_keys['peso'].setVisible(hay_peso)
+        self._meta_vals['peso'].setVisible(hay_peso)
+
         self._meta_keys['plano'].setVisible(fila_plano)
         self._meta_vals['plano'].setVisible(fila_plano)
         self._meta_keys['comps'].setVisible(fila_comps)
@@ -4867,11 +5183,33 @@ class BuscadorPiezas(QMainWindow):
     def abrir_carpeta_seleccionada(self):
         row = self.tabla.currentRow()
         if row >= 0:
-            ruta = ruta_accesible(self.tabla.item(row, 0).text())  # V2.0.1
-            if ruta and os.path.exists(ruta):
-                subprocess.Popen(f'explorer /select,"{ruta}"')
-            else:
-                QMessageBox.critical(self, "Error", "No se puede acceder a la ruta. Puede que el servidor no esté disponible.")
+            item = self.tabla.item(row, 0)
+            self._abrir_en_explorador(item.text() if item else "")
+
+    def _abrir_en_explorador(self, ruta_canonica):
+        """Abre el Explorador con el archivo seleccionado (V2.0.9).
+        Reintenta con todos los hosts del NAS y, si falla, dice POR QUÉ en vez
+        de culpar siempre al servidor."""
+        ruta, motivo = resolver_para_abrir(ruta_canonica)
+        if motivo == 'ok':
+            subprocess.Popen(f'explorer /select,"{ruta}"')
+            return True
+        logger.warning(f"No se pudo abrir ({motivo}): {ruta_canonica}")
+        if motivo == 'archivo_no_esta':
+            # la carpeta sí existe: se abre igualmente, es más útil que un error
+            carpeta = os.path.dirname(ruta)
+            QMessageBox.information(self, "El archivo ha cambiado de sitio",
+                                    MENSAJES_RUTA[motivo])
+            try:
+                os.startfile(carpeta)
+            except Exception:
+                pass
+            return False
+        QMessageBox.warning(
+            self, "No se puede abrir",
+            MENSAJES_RUTA.get(motivo, "Ruta no accesible.")
+            + chr(10) + chr(10) + "Ruta:" + chr(10) + ruta_canonica)
+        return False
 
     def copiar_ruta_seleccionada(self):
         row = self.tabla.currentRow()
@@ -5200,9 +5538,8 @@ class BuscadorPiezas(QMainWindow):
         return rutas
 
     def _abrir_carpeta_de(self, ruta):
-        rr = ruta_accesible(ruta)
-        if rr and os.path.exists(rr):
-            subprocess.Popen(f'explorer /select,"{rr}"')
+        """V2.0.9: mismo camino robusto que la rejilla (antes fallaba mudo)."""
+        self._abrir_en_explorador(ruta)
 
     def _copiar_al_portapapeles(self, texto, aviso):
         if texto:
@@ -5389,10 +5726,53 @@ class BuscadorPiezas(QMainWindow):
             lbl_n.setObjectName("StatusDim")
             lay.addWidget(lbl_n)
 
+            # V2.0.8: PESO TOTAL y SUPERFICIE A PINTAR del conjunto. Se suma lo
+            # que hay; si falta el dato de algún componente se dice cuántos,
+            # porque un total incompleto presentado como definitivo es peor que
+            # no dar ninguno (con esto se manda a pintura un nº de m²).
+            masas = [float(f[7]) for f in filas if f[7]]
+            areas = [float(f[8]) for f in filas if f[8]]
+            n_comp_reales = len(filas)
+            faltan_masa = n_comp_reales - len(masas)
+            if masas or areas:
+                partes = []
+                if masas:
+                    total_kg = sum(masas)
+                    partes.append(f'<b>Peso total: {total_kg:,.1f} kg</b>'
+                                  .replace(",", "."))
+                if areas:
+                    total_m2 = sum(areas)
+                    # Se dice "superficie total", no "a pintar": la app no sabe
+                    # si la pieza va pintada, y afirmarlo sería inventárselo
+                    partes.append(f'<b>Superficie total: {total_m2:,.2f} m²</b>'
+                                  .replace(",", "."))
+                aviso_falta = ""
+                if faltan_masa:
+                    aviso_falta = (f'<span style="color:#E0A030;"> · ojo: '
+                                   f'{faltan_masa} de {n_comp_reales} componentes '
+                                   f'sin datos, el total es parcial</span>')
+                lbl_tot = QLabel("   ·   ".join(partes) + aviso_falta)
+                lbl_tot.setTextFormat(Qt.RichText)
+                lbl_tot.setWordWrap(True)
+                lbl_tot.setStyleSheet(
+                    "background: #33291F; border: 1px solid #E66C32; "
+                    "border-radius: 8px; padding: 8px 12px; color: #F5F5F5; "
+                    "font-size: 13px;")
+                lay.addWidget(lbl_tot)
+            else:
+                lbl_tot = QLabel(
+                    "Sin datos de peso todavía: se calculan en el pase nocturno. "
+                    "Si el conjunto es reciente, mañana estarán.")
+                lbl_tot.setObjectName("StatusDim")
+                lbl_tot.setWordWrap(True)
+                lay.addWidget(lbl_tot)
+
             # V2.0.6: arrastrable a SolidWorks + menú completo del botón derecho
             tabla = TablaDialogoArrastrable()
-            tabla.setColumnCount(6)
-            tabla.setHorizontalHeaderLabels(["Vista", "Componente", "Cliente", "Proyecto", "Año", "Origen"])
+            tabla.setColumnCount(8)
+            tabla.setHorizontalHeaderLabels(
+                ["Vista", "Componente", "Peso (kg)", "Sup. (m²)",
+                 "Cliente", "Proyecto", "Año", "Origen"])
             tabla.setRowCount(len(filas))
             tabla.setEditTriggers(QTableWidget.NoEditTriggers)
             tabla.setSelectionBehavior(QTableWidget.SelectRows)
@@ -5406,7 +5786,7 @@ class BuscadorPiezas(QMainWindow):
             tabla.verticalHeader().setDefaultSectionSize(54)
             # V2.0.3: miniaturas desde la caché de BD (un solo query para todos)
             minis = self.db.obtener_miniaturas_lote([f[6] for f in filas if f[6]])
-            for i, (comp, nom_a, origen, anio, cliente, proyecto, ruta_c) in enumerate(filas):
+            for i, (comp, nom_a, origen, anio, cliente, proyecto, ruta_c, masa_c, area_c) in enumerate(filas):
                 it_vista = QTableWidgetItem()
                 it_vista.setData(Qt.UserRole, ruta_c or "")
                 data_img = minis.get(ruta_c)
@@ -5419,8 +5799,21 @@ class BuscadorPiezas(QMainWindow):
                     it_vista.setIcon(QIcon(pixmap_badge_extension(ext, size=44)))
                 it1 = QTableWidgetItem(comp)
                 it1.setData(Qt.UserRole, ruta_c or "")
+                # V2.0.8: peso y superficie, ordenables como numeros (no texto)
+                it_masa = QTableWidgetItem()
+                if masa_c:
+                    it_masa.setData(Qt.DisplayRole, round(float(masa_c), 3))
+                else:
+                    it_masa.setText("—")
+                it_masa.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                it_area = QTableWidgetItem()
+                if area_c:
+                    it_area.setData(Qt.DisplayRole, round(float(area_c), 4))
+                else:
+                    it_area.setText("—")
+                it_area.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 celdas = [
-                    it_vista, it1,
+                    it_vista, it1, it_masa, it_area,
                     QTableWidgetItem(cliente or ("—" if nom_a else "no indexado")),
                     QTableWidgetItem(etiqueta_origen(proyecto or "") if proyecto else "—"),
                     QTableWidgetItem(str(anio) if anio else "—"),
@@ -5432,7 +5825,7 @@ class BuscadorPiezas(QMainWindow):
                     tabla.setItem(i, j, it)
             tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
             tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-            for j in (2, 3, 4, 5):
+            for j in (2, 3, 4, 5, 6, 7):
                 tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
             tabla.setSortingEnabled(True)
             lay.addWidget(tabla, stretch=1)
@@ -5457,8 +5850,11 @@ class BuscadorPiezas(QMainWindow):
             btn_export.setIcon(svg_icon("exportar-descargar", size=15))
             btn_export.setCursor(Qt.PointingHandCursor)
             btn_export.clicked.connect(lambda: self._export_csv_generico(
-                ["Componente", "Cliente", "Proyecto", "Año", "Origen", "Ruta"],
-                [(f[0], f[4] or "", etiqueta_origen(f[5] or "") if f[5] else "",
+                ["Componente", "Peso (kg)", "Superficie (m2)", "Cliente",
+                 "Proyecto", "Año", "Origen", "Ruta"],
+                [(f[0], round(float(f[7]), 3) if f[7] else "",
+                  round(float(f[8]), 4) if f[8] else "",
+                  f[4] or "", etiqueta_origen(f[5] or "") if f[5] else "",
                   f[3] or "", etiqueta_origen(f[2] or "") if f[2] else "", f[6] or "")
                  for f in filas],
                 f"Despiece_{os.path.splitext(nombre)[0]}.csv"))

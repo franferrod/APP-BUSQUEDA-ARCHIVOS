@@ -145,7 +145,7 @@ def extraer_metadata_proyecto(ruta_carpeta, ruta_base):
     return metadata
 
 
-def extraer_sw_props(filepath, preview=False):
+def extraer_sw_props(filepath, preview=False, masa=True):
     """Intenta extraer propiedades SW via SwPropExtractor.exe.
     Con preview=True añade '__PREVIEW_PNG__' (base64) para la caché de
     miniaturas en BD (V2.0.3, equipos sin SolidWorks)."""
@@ -186,6 +186,11 @@ def extraer_sw_props(filepath, preview=False):
         cmd = [exe_path, license_key, filepath]
         if preview:
             cmd.append('--preview')
+        # V2.0.8: masa/volumen/superficie. Medido sobre 65 archivos reales:
+        # +0,2 s de mediana por archivo, así que se pide siempre para piezas y
+        # ensamblajes (en planos no aplica y el extractor lo omite solo).
+        if masa:
+            cmd.append('--masa')
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -256,6 +261,19 @@ def guardar_miniatura_bd(cursor, full_path, sw_props, mtime=None):
         return False
 
 
+def fisicas_de_props(sw_props):
+    """(masa_kg, volumen_m3, area_m2) de la salida del extractor, ya filtradas
+    por densidad creíble (V2.0.8). Devuelve (None, None, None) si no hay dato
+    o si no es plausible."""
+    try:
+        from models import fisicas_creibles
+        return fisicas_creibles(sw_props.get('__MASA_KG__'),
+                                sw_props.get('__VOLUMEN_M3__'),
+                                sw_props.get('__AREA_M2__'))
+    except Exception:
+        return (None, None, None)
+
+
 def upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props):
     """Inserta o actualiza un archivo en buscador.archivos"""
     cursor.execute('''
@@ -265,8 +283,9 @@ def upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props):
          codigo_proyecto, nombre_proyecto, codigo_orden, nombre_orden,
          sw_material, sw_tratamiento, sw_espesor, sw_laser, sw_torno, sw_fresa,
          sw_soldadura, sw_pintura, sw_montaje, sw_tipo_cierre, sw_filo_guiado,
-         sw_onda, sw_cangilon, sw_runer)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+         sw_onda, sw_cangilon, sw_runer,
+         sw_masa_kg, sw_volumen_m3, sw_area_m2)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON CONFLICT (ruta_completa) DO UPDATE SET
             nombre_archivo=EXCLUDED.nombre_archivo, origen=EXCLUDED.origen,
             anio=EXCLUDED.anio, cliente=EXCLUDED.cliente, proyecto=EXCLUDED.proyecto,
@@ -281,6 +300,11 @@ def upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props):
             sw_montaje=EXCLUDED.sw_montaje, sw_tipo_cierre=EXCLUDED.sw_tipo_cierre,
             sw_filo_guiado=EXCLUDED.sw_filo_guiado, sw_onda=EXCLUDED.sw_onda,
             sw_cangilon=EXCLUDED.sw_cangilon, sw_runer=EXCLUDED.sw_runer,
+            -- V2.0.8: COALESCE para no borrar la masa ya calculada cuando
+            -- el reindexado nocturno pasa sin extraer propiedades físicas
+            sw_masa_kg=COALESCE(EXCLUDED.sw_masa_kg, buscador.archivos.sw_masa_kg),
+            sw_volumen_m3=COALESCE(EXCLUDED.sw_volumen_m3, buscador.archivos.sw_volumen_m3),
+            sw_area_m2=COALESCE(EXCLUDED.sw_area_m2, buscador.archivos.sw_area_m2),
             indexado_en=NOW()
     ''', (
         file, origen, metadata['año'], metadata['cliente'], metadata['proyecto'],
@@ -302,6 +326,8 @@ def upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props):
         sw_props.get('ONDA') or None,
         sw_props.get('CANGILÓN') or sw_props.get('CANGILON') or None,
         sw_props.get('RUNER') or None,
+        # V2.0.8: propiedades físicas, pasadas por el filtro de densidad
+        *fisicas_de_props(sw_props),
     ))
     # V2.0.2: componentes del ensamblaje (para "¿en qué ensamblajes se usa?")
     # Se guarda el NOMBRE de archivo en mayúsculas (cruce robusto por nombre).

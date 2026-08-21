@@ -12,36 +12,173 @@ LOG_PATH = CONFIG_DIR / "app.log"
 import sys
 import configparser
 
-def load_pg_config():
-    config = configparser.ConfigParser()
-    config_path = "config.ini"
-    
-    # Soporte para ejecutable PyInstaller
-    if getattr(sys, 'frozen', False):
-        config_path = os.path.join(os.path.dirname(sys.executable), "config.ini")
-        if not os.path.exists(config_path):
-            config_path = "config.ini" # Fallback
-            
-    if not os.path.exists(config_path):
-        msg = f"Falta archivo de configuración: config.ini\nBuscado en: {config_path}\nPor favor, reinstala usando INSTALAR_LOCAL.bat"
+# V2.0.9 - Localización robusta de config.ini.
+#
+# Antes se miraba en UN solo sitio (junto al .exe) con un plan B inútil (la
+# carpeta actual del proceso, que casi nunca es la de la app), y si no aparecía
+# se abría un MessageBox modal SIEMPRE. Eso tenía dos consecuencias malas:
+#   - Abrir el ejecutable desde cualquier otra carpeta (un backup, dist/) daba
+#     "Error fatal" aunque la configuración estuviera a un palmo.
+#   - models.py lo importan también los procesos nocturnos (reindexar_diario,
+#     poblar_propiedades, poblar_masa). Un MessageBox BLOQUEA el proceso hasta
+#     que alguien pulse Aceptar: de noche, sin nadie delante, el reindexado se
+#     quedaba colgado para siempre y sin rastro en el log del motivo.
+CONFIG_ENV = "ALSI_CONFIG_INI"          # permite forzar la ruta desde fuera
+RUTA_RED_APP = (r"\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT"
+                r"\APP BÚSQUEDA ARCHIVOS")
+
+
+def _candidatos_config():
+    """Sitios donde buscar config.ini, en orden de preferencia."""
+    vistos, salida = set(), []
+
+    def add(ruta):
+        if ruta and ruta not in vistos:
+            vistos.add(ruta)
+            salida.append(ruta)
+
+    add(os.environ.get(CONFIG_ENV))                       # ruta forzada
+    if getattr(sys, 'frozen', False):                     # junto al .exe
+        add(os.path.join(os.path.dirname(sys.executable), "config.ini"))
+    add(os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.ini"))
+    local = os.environ.get("LOCALAPPDATA")
+    if local:                                             # instalación estándar
+        add(os.path.join(local, "ALSI_Buscador", "config.ini"))
+    add(str(CONFIG_DIR / "config.ini"))                   # ajustes del usuario
+    add(os.path.join(RUTA_RED_APP, "config.ini"))         # carpeta de red
+    add(os.path.abspath("config.ini"))                    # último recurso
+    return salida
+
+
+def _leer_config(ruta):
+    """Devuelve el dict de conexión si el archivo es válido, o None.
+    Un config.ini que existe pero está incompleto es tan inservible como no
+    tenerlo: antes reventaba con KeyError y el usuario veía un cierre seco."""
+    try:
+        cfg = configparser.ConfigParser()
+        cfg.read(ruta, encoding="utf-8")
+        if 'database' not in cfg:
+            return None
+        d = cfg['database']
+        if not all(k in d and d[k].strip() for k in
+                   ('host', 'port', 'dbname', 'user', 'password')):
+            return None
+        return {'host': d['host'].strip(), 'port': int(d['port']),
+                'dbname': d['dbname'].strip(), 'user': d['user'].strip(),
+                'password': d['password']}
+    except Exception:
+        return None
+
+
+def _hay_interfaz():
+    """True solo para la app con ventana. Los scripts (pases nocturnos) NUNCA
+    deben abrir diálogos: se quedarían bloqueados esperando un clic."""
+    if not getattr(sys, 'frozen', False):
+        return False
+    try:
+        import ctypes
+        return ctypes.windll.kernel32.GetConsoleWindow() == 0
+    except Exception:
+        return True
+
+
+def _avisar_fatal(msg):
+    """Deja constancia SIEMPRE en el log, y además en pantalla si hay app."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"\n[CONFIG] {time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+    except Exception:
+        pass
+    try:
+        sys.stderr.write(f"[CONFIG] {msg}\n")
+    except Exception:
+        pass
+    if _hay_interfaz():
         try:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(0, msg, "Error fatal", 0x10)
-        except:
+            ctypes.windll.user32.MessageBoxW(0, msg, "Error de configuración", 0x10)
+        except Exception:
             pass
-        sys.exit(1)
-        
-    config.read(config_path)
-    return {
-        'host': config['database']['host'],
-        'port': int(config['database']['port']),
-        'dbname': config['database']['dbname'],
-        'user': config['database']['user'],
-        'password': config['database']['password'],
-    }
+
+
+def load_pg_config():
+    intentadas = []
+    for ruta in _candidatos_config():
+        intentadas.append(ruta)
+        if os.path.exists(ruta):
+            datos = _leer_config(ruta)
+            if datos:
+                return datos
+            # existe pero no sirve: se dice y se sigue buscando
+            try:
+                sys.stderr.write(f"[CONFIG] ignorado (incompleto): {ruta}\n")
+            except Exception:
+                pass
+    _avisar_fatal(
+        "No se ha encontrado un config.ini válido.\n\nBuscado en:\n  " +
+        "\n  ".join(intentadas) +
+        "\n\nSolución: ejecuta INSTALAR_LOCAL.bat desde la carpeta de red, "
+        "o define la variable de entorno " + CONFIG_ENV +
+        " con la ruta del archivo.")
+    sys.exit(2)
+
 
 # V1.0.8 - PostgreSQL compartido (credenciales en config.ini)
 PG_CONFIG = load_pg_config()
+
+# V2.0.8 - Filtro de cordura para las propiedades físicas.
+# Medido sobre 114 piezas reales: TODAS caen entre 1.000 y 8.000 kg/m3 (acero
+# e inox ~7.800-8.000, plásticos ~1.000-1.300). Fuera de este rango el dato es
+# basura — en la muestra apareció una "pieza" de 373 toneladas que era un
+# modelo descargado de internet. Un solo dato absurdo en la rejilla destruye
+# la confianza en los 590.000 buenos, así que se descarta al guardar.
+DENSIDAD_MIN, DENSIDAD_MAX = 300.0, 22000.0    # kg/m3 (corcho ... wolframio)
+
+# V2.0.8b: el rango de densidad NO basta. Si un modelo está mal escalado, masa
+# y volumen crecen a la vez y la densidad sigue pareciendo correcta. Medido
+# sobre los 73.377 archivos ya poblados:
+#   - densidad 995-1100 = la del AGUA = "Material <sin especificar>", que es lo
+#     que SolidWorks usa cuando la pieza no tiene material. Ahí la masa no
+#     significa nada. Son 2.330 archivos (3,2%), y entre ellos TODOS los
+#     disparates: naves, altillos y layouts (.L000/.L001, "IMPLANTACIÓN"),
+#     que llegaban a 12.899 toneladas.
+#   - los materiales de verdad quedan fuera de esa banda: acero e inox 7.800-8.000,
+#     PE y PP 900-960, F15 1.300, PVC 1.400.
+DENSIDAD_SIN_MATERIAL = (995.0, 1100.0)
+MASA_MAX_KG = 50000.0    # nada de lo que se fabrica aquí pesa 50 toneladas
+
+
+def fisicas_creibles(masa_kg, volumen_m3, area_m2):
+    """Devuelve (masa, volumen, area) o (None, None, None) si no son creíbles.
+    Se exige densidad plausible: es lo que delata los archivos mal escalados
+    o sin material real."""
+    try:
+        m = float(masa_kg) if masa_kg else None
+        v = float(volumen_m3) if volumen_m3 else None
+        a = float(area_m2) if area_m2 else None
+    except (TypeError, ValueError):
+        return (None, None, None)
+    if not m or not v or m <= 0 or v <= 0:
+        return (None, None, None)
+    dens = m / v
+    if not (DENSIDAD_MIN < dens < DENSIDAD_MAX):
+        return (None, None, None)
+    # Sin material asignado la masa es la del agua: no es un dato, es un relleno
+    if DENSIDAD_SIN_MATERIAL[0] <= dens <= DENSIDAD_SIN_MATERIAL[1]:
+        return (None, None, None)
+    if m > MASA_MAX_KG:
+        return (None, None, None)
+    if a is not None and a <= 0:
+        a = None
+    return (m, v, a)
+
+
+# V2.0.7 - Expresión normalizada del nombre de archivo usada en la búsqueda.
+# Tiene que coincidir LETRA POR LETRA con la del índice idx_ba_nombre_norm_trgm
+# o PostgreSQL no lo usará y volveremos al escaneo completo de la tabla.
+# (buscador.sin_tildes = unaccent declarado IMMUTABLE; ver crear_tablas)
+NOMBRE_NORM = "UPPER(buscador.sin_tildes(nombre_archivo))"
 
 # Configuración de Logging
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -152,9 +289,22 @@ class IndexManager:
                     sw_onda         TEXT,
                     sw_cangilon     TEXT,
                     sw_runer        TEXT,
+                    -- V2.0.8: propiedades físicas leídas de SolidWorks
+                    sw_masa_kg      DOUBLE PRECISION,
+                    sw_volumen_m3   DOUBLE PRECISION,
+                    sw_area_m2      DOUBLE PRECISION,
                     indexado_en     TIMESTAMP DEFAULT NOW()
                 )
             ''')
+
+            # V2.0.8: la tabla se crea con CREATE TABLE IF NOT EXISTS, así que
+            # en las bases ya existentes las columnas nuevas hay que añadirlas
+            # aparte (si no, todo lo de masa/superficie falla en silencio).
+            for col, tipo in (('sw_masa_kg', 'DOUBLE PRECISION'),
+                              ('sw_volumen_m3', 'DOUBLE PRECISION'),
+                              ('sw_area_m2', 'DOUBLE PRECISION')):
+                cursor.execute(
+                    f'ALTER TABLE buscador.archivos ADD COLUMN IF NOT EXISTS {col} {tipo}')
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS buscador.estado_indexacion (
@@ -253,6 +403,32 @@ class IndexManager:
                 cursor.execute('CREATE EXTENSION IF NOT EXISTS unaccent')
             except Exception:
                 logger.warning("Extensión unaccent no disponible, se usará normalización Python")
+
+            # V2.0.7 - BÚSQUEDA INDEXADA (antes: escaneo completo de 589k filas)
+            #
+            # La búsqueda usaba UPPER(unaccent(nombre_archivo)) LIKE '%...%'. Es
+            # correcta, pero unaccent(text) es STABLE y PostgreSQL NO permite
+            # indexar expresiones no inmutables: cada búsqueda recorría la tabla
+            # entera (~520 ms fijos, y mucho peor combinada con otros filtros).
+            #
+            # buscador.sin_tildes() es la MISMA operación declarada IMMUTABLE
+            # (llama a unaccent con el diccionario explícito). Verificado sobre
+            # las 589.459 filas: 0 diferencias respecto a unaccent(). Con el
+            # índice GIN de trigramas encima, la misma búsqueda pasa a 3-145 ms
+            # (de 4x a 172x más rápida) SIN cambiar ni un resultado.
+            try:
+                cursor.execute('CREATE EXTENSION IF NOT EXISTS pg_trgm')
+                cursor.execute("""
+                    CREATE OR REPLACE FUNCTION buscador.sin_tildes(text)
+                    RETURNS text AS $$ SELECT public.unaccent('public.unaccent', $1) $$
+                    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE""")
+                cursor.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ba_nombre_norm_trgm
+                    ON buscador.archivos USING gin
+                    (UPPER(buscador.sin_tildes(nombre_archivo)) gin_trgm_ops)""")
+            except Exception as e:
+                logger.warning(f"Índice de trigramas no disponible ({e}); "
+                               "la búsqueda seguirá funcionando, más lenta")
 
             # Limpieza de temporales huérfanos
             cursor.execute("DELETE FROM buscador.archivos WHERE nombre_archivo LIKE '~$%%'")
@@ -391,6 +567,24 @@ class IndexManager:
         finally:
             wrapper.close()
 
+
+    def propiedades_fisicas(self, ruta_completa):
+        """(masa_kg, volumen_m3, area_m2) de un archivo, o None (V2.0.8).
+        Para el panel de vista previa: una fila por ruta, consulta indexada."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute("""SELECT sw_masa_kg, sw_volumen_m3, sw_area_m2
+                              FROM buscador.archivos WHERE ruta_completa = %s""",
+                           (ruta_completa,))
+            fila = cursor.fetchone()
+            return fila if fila and fila[0] else None
+        except Exception as e:
+            logger.debug(f"Error leyendo propiedades físicas: {e}")
+            return None
+        finally:
+            wrapper.close()
+
     def obtener_miniatura(self, ruta_completa):
         """Bytes de la miniatura cacheada en BD, o None si no existe."""
         wrapper = self.get_connection()
@@ -412,8 +606,10 @@ class IndexManager:
         mejor casa: primero los de la propia carpeta del ensamblaje (pieza del
         proyecto), después el más reciente (piezas de biblioteca compartidas).
         Filas: (componente_nombre, nombre_archivo, origen, anio, cliente,
-                proyecto, ruta_completa). nombre_archivo es NULL si el
-        componente no está en el índice (referencia rota o carpeta excluida)."""
+                proyecto, ruta_completa, sw_masa_kg, sw_area_m2). nombre_archivo
+        es NULL si el componente no está en el índice (referencia rota o carpeta
+        excluida). V2.0.8: masa y superficie para poder sumar el peso total del
+        conjunto y los m2 a pintar."""
         import ntpath
         carpeta = ntpath.dirname(ensamblaje_ruta)
         wrapper = self.get_connection()
@@ -422,10 +618,12 @@ class IndexManager:
             # strpos en vez de LIKE: las rutas UNC llevan '\' que en LIKE es escape
             cursor.execute('''
                 SELECT c.componente_nombre, a.nombre_archivo, a.origen, a.anio,
-                       a.cliente, a.proyecto, a.ruta_completa
+                       a.cliente, a.proyecto, a.ruta_completa,
+                       a.sw_masa_kg, a.sw_area_m2
                 FROM buscador.componentes c
                 LEFT JOIN LATERAL (
-                    SELECT nombre_archivo, origen, anio, cliente, proyecto, ruta_completa
+                    SELECT nombre_archivo, origen, anio, cliente, proyecto, ruta_completa,
+                           sw_masa_kg, sw_area_m2
                     FROM buscador.archivos
                     WHERE UPPER(nombre_archivo) = c.componente_nombre
                     ORDER BY (strpos(ruta_completa, %s) = 1) DESC,
@@ -904,7 +1102,8 @@ class IndexManager:
         base_cols = """nombre_archivo, origen, anio, cliente, proyecto, tipo_carpeta,
                        codigo_proyecto, nombre_proyecto, codigo_orden, nombre_orden,
                        ruta_completa, sw_material, sw_tratamiento, sw_espesor,
-                       sw_laser, sw_torno, sw_fresa, sw_soldadura, sw_pintura, sw_montaje"""
+                       sw_laser, sw_torno, sw_fresa, sw_soldadura, sw_pintura, sw_montaje,
+                       sw_masa_kg, sw_area_m2"""
 
         # V2.1.0: expansión por nº de placa CE — si algún keyword es una placa
         # registrada (ej. "26-0006"), buscamos también por su código de plano
@@ -922,7 +1121,7 @@ class IndexManager:
                 peso_posicion = len(keywords) - i
                 kw_norm = self.normalizar_texto(kw)
                 score_cases.append(
-                    f"CASE WHEN UPPER(unaccent(nombre_archivo)) LIKE %s THEN {peso_posicion * 100} ELSE 0 END"
+                    f"CASE WHEN {NOMBRE_NORM} LIKE %s THEN {peso_posicion * 100} ELSE 0 END"
                 )
                 params.append(f"%{kw_norm}%")
 
@@ -934,7 +1133,7 @@ class IndexManager:
             score_sql = " + ".join(score_cases)
             logic_op = " AND " if is_and_search else " OR "
             where_clause = logic_op.join(
-                ["UPPER(unaccent(nombre_archivo)) LIKE %s" for _ in keywords]
+                [f"{NOMBRE_NORM} LIKE %s" for _ in keywords]
             )
             params.extend([f"%{self.normalizar_texto(k)}%" for k in keywords])
 
@@ -1087,7 +1286,12 @@ class IndexManager:
             query += f" AND ({context_sql})"
             params.extend(context_params)
 
-        query += " ORDER BY score DESC, ultima_modificacion DESC NULLS LAST LIMIT 5000"
+        # V2.0.7: ruta_completa como último criterio de desempate. Sin él, al
+        # cortar en 5000 el conjunto devuelto dependía del plan de acceso, así
+        # que dos búsquedas idénticas podían enseñar 5000 filas DISTINTAS (se
+        # notó al indexar la búsqueda: mismo conjunto, distinto recorte).
+        query += (" ORDER BY score DESC, ultima_modificacion DESC NULLS LAST,"
+                  " ruta_completa LIMIT 5000")
 
         wrapper = self.get_connection()
         try:

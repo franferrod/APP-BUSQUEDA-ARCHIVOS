@@ -1,5 +1,29 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.0.9] - 2026-08-19 (Abrir carpeta fiable)
+- **"Abrir carpeta" ya no falla porque la app arrancara antes que la red.** El host del NAS se detectaba UNA sola vez al abrir la aplicación: si en ese instante el servidor no respondía —lo típico al encender el equipo e iniciar la app enseguida— *todos* los "Abrir carpeta" fallaban el resto de la sesión, aunque la red se recuperase a los cinco segundos. Ahora se comprueba en el momento de abrir, probando las dos formas de llegar al NAS, y se recuerda la que funcione.
+- **El aviso dice qué pasa de verdad.** Antes siempre culpaba al servidor. Ahora distingue tres casos: el archivo se ha movido o renombrado (y abre la carpeta igualmente, que es más útil), no tienes permisos sobre esa carpeta del NAS, o no se llega al servidor. Además queda registrado en el log con la ruta, para poder diagnosticarlo.
+- Los diálogos de resultados usan el mismo camino: antes, si fallaban, no decían nada.
+
+## [2.0.8] - 2026-08-17 (Peso y superficie · refinado "que NO contengan")
+- **Peso y superficie de cada pieza y conjunto**, leídos de SolidWorks (los mismos valores que ves en Herramientas → Propiedades físicas). Medido sobre 65 archivos reales: hay dato en el 96% de las piezas y el 80% de los conjuntos, a 0,2 s por archivo.
+- **Peso total y superficie a pintar en el despiece.** Al abrir "Ver componentes" sale el peso sumado del conjunto y **los m² de superficie**, para poder decirle a pintura cuántos metros cuadrados hay que pintar. Si a algún componente le falta el dato, lo dice: *"3 de 6 componentes sin datos, el total es parcial"* — un total incompleto presentado como definitivo sería peor que no darlo.
+- **Columnas Peso (kg) y Sup. (m²) en el despiece**, ordenables como números, y ambas incluidas al exportar a CSV para mandarlo a pintura o a compras.
+- **Filtro de cordura**: se descarta cualquier valor cuya densidad sea imposible. En la muestra apareció una "pieza" de 373 toneladas que era un modelo descargado de internet; con el filtro no entra. De 114 piezas reales no se descartó ni una legítima.
+- **Fix del actualizador**: a algún compañero le saltaba *"taskkill.exe - La aplicación no se pudo iniciar correctamente (0xc0000142)"* al actualizar. El ejecutable empaquetado deja su carpeta temporal dentro del PATH, y ahí van las DLL del runtime de Visual C++; `taskkill.exe`, lanzado por el actualizador, cargaba esas DLL en vez de las suyas y no arrancaba. Ahora se limpia el PATH antes de lanzar la actualización y se llama a `taskkill` y `timeout` por su ruta absoluta de Windows.
+- **La app ya no muere si se abre desde otra carpeta.** `config.ini` se busca ahora en varios sitios (junto al ejecutable, la instalación local, la carpeta del usuario y la de red) en vez de en uno solo, y se avisa de dónde se ha mirado si de verdad no aparece. Un `config.ini` incompleto se descarta y se sigue buscando, en vez de cerrar la app con un error críptico.
+- **Los procesos nocturnos ya no se pueden quedar colgados.** El aviso de configuración era una ventana modal que se abría siempre, también en el reindexado y los pases de propiedades que corren de noche sin nadie delante: bloqueaban el proceso indefinidamente esperando un clic que nadie iba a dar, y por la mañana no había reindexado ni rastro del motivo. Ahora los scripts escriben el error en el log y terminan; la ventana solo sale en la app.
+- **Peso y Sup. se pueden ocultar** desde el menú Columnas, igual que el resto.
+- **Al contraer el panel de filtros**, la zona de resultados ocupa ya todo el ancho: antes quedaba un hueco muerto porque el divisor mantenía el reparto anterior.
+- En el panel derecho se muestra **solo el Peso**. La superficie se queda en la columna de la lista: decía "a pintar" sin que la app sepa si la pieza se pinta, y afirmarlo no era correcto. Por lo mismo, el total del despiece pasa a llamarse "Superficie total".
+- **Refinado "que NO contengan"** (botón ⊘ azul en la barra de refinar): quita de los resultados los conjuntos que llevan esa pieza. Ejemplo: cintas A450 → NO contengan MOTOR REM = las que llevan otro motor. Atajo: escribe un `-` delante del término y pulsa Enter. Los niveles negativos salen en azul para no confundirlos con los que sí exigen la pieza.
+
+*Nota: los datos de peso se van rellenando en el pase nocturno. Los conjuntos consultados antes de que pase mostrarán el aviso de que aún no hay datos.*
+
+## [2.0.7] - 2026-08-17 (La búsqueda, de 3 a 46 veces más rápida)
+- **Todas las búsquedas son mucho más rápidas, con resultados idénticos.** La consulta normalizaba el nombre del archivo con una función que PostgreSQL no puede indexar, así que cada búsqueda recorría las 589.459 filas de la tabla entera: ese era el ~medio segundo fijo que tenía cualquier búsqueda, y la razón de fondo de los atascos al combinar filtros. Ahora la misma consulta usa un índice: TUERCA M16 pasa de 548 ms a 12 ms (46x), CHASIS PATA de 539 a 34 ms (16x), PLETINA MONTAJE de 561 a 59 ms (9,5x). Verificado archivo por archivo: los resultados son exactamente los mismos.
+- **Resultados estables.** Cuando una búsqueda daba el máximo de 5.000 resultados, cuáles de ellos se mostraban dependía de cómo la base de datos hubiera recorrido la tabla: repetir la misma búsqueda podía enseñar 5.000 archivos distintos. Ahora el orden es determinista y repetir una búsqueda da siempre lo mismo.
+
 ## [2.0.6] - 2026-08-14 (Los diálogos de resultados funcionan como la búsqueda general)
 Una búsqueda dentro de la búsqueda debe permitir lo mismo que la búsqueda principal. Ahora **los cinco diálogos de resultados** — "¿En qué ensamblajes se usa?", "Ver componentes (despiece)", "Piezas idénticas", "Ensamblajes similares" y "Comparar 2 ensamblajes" — se comportan igual que la rejilla:
 - **Arrastrar a SolidWorks para insertar**, con selección múltiple para soltar varios de una vez.

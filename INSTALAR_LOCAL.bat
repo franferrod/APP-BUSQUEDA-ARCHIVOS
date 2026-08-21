@@ -6,7 +6,7 @@ set APP_EXE=BuscadorPiezas.exe
 set TARGET_DIR=%LOCALAPPDATA%\ALSI_Buscador
 set DESKTOP_PATH=%USERPROFILE%\Desktop
 
-set APP_VERSION=2.0.6
+set APP_VERSION=2.0.9
 
 echo.
 echo  ======================================================
