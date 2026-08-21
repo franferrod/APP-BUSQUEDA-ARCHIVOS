@@ -83,6 +83,29 @@ except Exception:
     pass
 
 
+def proceso_vivo(pid):
+    """True si ese PID sigue existiendo (V2.1.1).
+
+    Se usa para no dejar a nadie fuera por un candado huerfano: si el proceso
+    que lo puso ya no existe, el candado se retira. Ante la duda se responde
+    True, que es el lado seguro (respetar el candado).
+    """
+    try:
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        h = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not h:
+            return False
+        codigo = ctypes.c_ulong()
+        ok = ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(codigo))
+        ctypes.windll.kernel32.CloseHandle(h)
+        return bool(ok) and codigo.value == STILL_ACTIVE
+    except Exception:
+        return True
+
+
 def avisar_usuario(titulo, mensaje):
     """Ensena un aviso SIEMPRE, haya o no interfaz creada todavia (V2.1.0).
 
@@ -116,11 +139,12 @@ def exception_hook(exctype, value, traceback):
     # destruido) se registran en el log pero no molestan al usuario con un popup
     if exctype is RuntimeError and "has been deleted" in str(value):
         return
-    avisar_usuario(
-        "Error Inesperado",
-        "Se ha producido un error inesperado:\n\n%s\n\n"
-        "La aplicacion intentara seguir funcionando.\n\n"
-        "Detalle tecnico en:\n%s" % (value, RUTA_LOG))
+    import traceback as _tb
+    mostrar_error(
+        "Error inesperado",
+        "Se ha producido un error inesperado. La aplicación intentará seguir "
+        "funcionando.\n\n%s" % value,
+        "".join(_tb.format_exception(exctype, value, traceback)))
 
 sys.excepthook = exception_hook
 
@@ -339,7 +363,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -1760,6 +1784,139 @@ def generar_diagnostico():
         L.append("(no se ha podido leer el log)")
 
     return chr(10).join(L)
+
+
+def informe_de_error(titulo, mensaje, detalle=None, ultimas_lineas=30):
+    """Arma el texto que un companero puede pegar en un mensaje (V2.1.1).
+
+    Lleva version, equipo, hora, el error y el final del log. La idea es que
+    nadie tenga que explicar "me ha dado un error": pega esto y ya esta todo.
+    """
+    import getpass, platform
+    partes = ["===== Buscador de Piezas ALSI - informe de error =====",
+              "Version:  %s" % APP_VERSION,
+              "Equipo:   %s / %s" % (platform.node(), getpass.getuser()),
+              "Fecha:    %s" % time.strftime("%Y-%m-%d %H:%M:%S"),
+              "Titulo:   %s" % titulo,
+              "",
+              "--- Mensaje ---", str(mensaje)]
+    if detalle:
+        partes += ["", "--- Detalle tecnico ---", str(detalle)]
+    partes += ["", "--- Ultimas lineas del registro ---"]
+    try:
+        with open(RUTA_LOG, encoding="utf-8", errors="ignore") as f:
+            lineas = [l.rstrip() for l in f]
+        partes += [l for l in lineas[-ultimas_lineas:] if " - Qt: " not in l]
+    except Exception as e:
+        partes.append("(no se ha podido leer el registro: %s)" % e)
+    partes += ["", "Registro completo en: %s" % RUTA_LOG,
+               "====================================================="]
+    return chr(10).join(partes)
+
+
+class DialogoError(QDialog):
+    """Aviso de error CON boton de copiar (V2.1.1).
+
+    Peticion de la oficina: que cuando salga un error se pueda mandar tal cual,
+    sin capturas de pantalla ni transcribir nada a mano."""
+
+    def __init__(self, titulo, mensaje, detalle=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(titulo)
+        self.resize(660, 430)
+        self._informe = informe_de_error(titulo, mensaje, detalle)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setSpacing(10)
+
+        cab = QLabel(titulo)
+        cab.setStyleSheet("font-size: 15px; font-weight: 800; color: #F5F5F5; "
+                          "background: transparent;")
+        cab.setWordWrap(True)
+        lay.addWidget(cab)
+
+        cuerpo = QLabel(str(mensaje))
+        cuerpo.setWordWrap(True)
+        cuerpo.setStyleSheet("color: #DFDFDF; background: transparent;")
+        lay.addWidget(cuerpo)
+
+        pista = QLabel("Pulsa «Copiar para enviar» y pega el resultado en un "
+                       "mensaje: lleva la versión, el equipo y el registro.")
+        pista.setObjectName("StatusDim")
+        pista.setWordWrap(True)
+        lay.addWidget(pista)
+
+        self.txt = QTextBrowser()
+        self.txt.setPlainText(self._informe)
+        self.txt.setStyleSheet("font-family: Consolas, 'Courier New', monospace; "
+                               "font-size: 11px;")
+        lay.addWidget(self.txt, stretch=1)
+
+        pie = QHBoxLayout()
+        btn_copiar = QPushButton("Copiar para enviar")
+        btn_copiar.setCursor(Qt.PointingHandCursor)
+        btn_copiar.setStyleSheet(
+            "QPushButton { background: #E66C32; color: #FFFFFF; border: none; "
+            "border-radius: 6px; padding: 7px 16px; font-weight: 800; } "
+            "QPushButton:hover { background: #F07C45; }")
+        btn_copiar.clicked.connect(self._copiar)
+        pie.addWidget(btn_copiar)
+        self.lbl_copiado = QLabel("")
+        self.lbl_copiado.setStyleSheet("color: #7BC67B; background: transparent;")
+        pie.addWidget(self.lbl_copiado)
+        pie.addStretch()
+        btn_carpeta = QPushButton("Abrir carpeta del registro")
+        btn_carpeta.setCursor(Qt.PointingHandCursor)
+        btn_carpeta.clicked.connect(
+            lambda: subprocess.Popen('explorer /select,"%s"' % RUTA_LOG))
+        pie.addWidget(btn_carpeta)
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setCursor(Qt.PointingHandCursor)
+        btn_cerrar.clicked.connect(self.accept)
+        pie.addWidget(btn_cerrar)
+        lay.addLayout(pie)
+
+    def _copiar(self):
+        QApplication.clipboard().setText(self._informe)
+        self.lbl_copiado.setText("Copiado - ya puedes pegarlo en el mensaje")
+        logger.info("Informe de error copiado al portapapeles por el usuario")
+
+
+def avisar_atencion(padre, titulo, mensaje):
+    """Aviso normal (no es un error) que respeta el modo desatendido (V2.1.1).
+
+    Un QMessageBox modal en un arranque automatico o en un pase nocturno deja
+    el proceso esperando un clic que nadie va a dar. Misma leccion que en la
+    V2.0.8 con los scripts de noche."""
+    logger.info("AVISO | %s | %s", titulo, str(mensaje).replace(chr(10), " / "))
+    if os.environ.get("ALSI_SIN_DIALOGOS"):
+        return
+    try:
+        QMessageBox.warning(padre, titulo, mensaje)
+    except Exception as e:
+        logger.warning("No se ha podido mostrar el aviso: %s", e)
+
+
+def mostrar_error(titulo, mensaje, detalle=None, parent=None):
+    """Punto UNICO para ensenar un error al usuario (V2.1.1).
+
+    Siempre deja el error en el registro y, si hay interfaz, abre el dialogo
+    con el boton de copiar. Sin interfaz (o en modo desatendido) se limita al
+    registro, para no bloquear un proceso esperando un clic."""
+    logger.error("ERROR MOSTRADO | %s | %s", titulo,
+                 str(mensaje).replace(chr(10), " / "))
+    if detalle:
+        logger.error("Detalle: %s", str(detalle).replace(chr(10), " / "))
+    if os.environ.get("ALSI_SIN_DIALOGOS"):
+        return
+    try:
+        if QApplication.instance() is not None:
+            DialogoError(titulo, mensaje, detalle, parent).exec_()
+            return
+    except Exception as e:
+        logger.error("No se ha podido abrir el dialogo de error: %s", e)
+    avisar_usuario(titulo, "%s\n\nDetalle en:\n%s" % (mensaje, RUTA_LOG))
 
 
 class ConexionWorker(QThread):
@@ -4354,12 +4511,12 @@ class BuscadorPiezas(QMainWindow):
             # Validación: al menos un origen seleccionado (v1.0.7)
             if not comp_sel:
                 if not auto:
-                    QMessageBox.warning(self, "Atención", "Selecciona al menos un origen.")
+                    avisar_atencion(self, "Atención", "Selecciona al menos un origen.")
                 return
             
             if not termino:
                 if not auto:
-                    QMessageBox.warning(self, "Atención", "Introduce un término de búsqueda.")
+                    avisar_atencion(self, "Atención", "Introduce un término de búsqueda.")
                 return
                 
             logger.info(f"Ejecutando búsqueda auto={auto} | Term: {termino} | Comp: {len(comp_sel)} | Años: {len(años_sel)}")
@@ -4377,6 +4534,7 @@ class BuscadorPiezas(QMainWindow):
             self.lbl_count.setText("…")
             self._res_base = []
             self._refinados = []
+            self._termino_base = None
             self.input_refinar.clear()
             self._actualizar_barra_refinar()
             QApplication.processEvents()
@@ -4468,9 +4626,12 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             self.lbl_status.setText("❌ Error en la búsqueda")
             self.tabla.setRowCount(0)
-            QMessageBox.critical(self, "Error de Búsqueda",
-                               f"Se ha producido un error al realizar la búsqueda:\n\n{str(e)}\n\n"
-                               "Si el error persiste, intenta actualizar el índice.")
+            import traceback as _tb
+            mostrar_error(
+                "Error de búsqueda",
+                "Se ha producido un error al realizar la búsqueda.\n\n"
+                "Si el error persiste, intenta actualizar el índice.",
+                "%s\n%s" % (e, _tb.format_exc()), self)
 
     def _limpiar_search_worker(self, worker):
         try:
@@ -4504,9 +4665,11 @@ class BuscadorPiezas(QMainWindow):
         self._busquedas_ctx.pop(gen, None)
         self.lbl_status.setText("❌ Error en la búsqueda")
         self.tabla.setRowCount(0)
-        QMessageBox.critical(self, "Error de Búsqueda",
-                             f"Se ha producido un error al realizar la búsqueda:\n\n{mensaje}\n\n"
-                             "Si el error persiste, intenta actualizar el índice.")
+        mostrar_error(
+            "Error de búsqueda",
+            "Se ha producido un error al realizar la búsqueda.\n\n"
+            "Si el error persiste, intenta actualizar el índice.",
+            mensaje, self)
 
     def _on_resultados_busqueda(self, gen, resultados):
         """Llega la respuesta del SearchWorker: pintar por TRAMOS para que la
@@ -4522,12 +4685,28 @@ class BuscadorPiezas(QMainWindow):
         # V2.0.3: nueva búsqueda base — resetea la pila de refinados
         self._res_base = resultados
         self._refinados = []
+        # V2.1.1: se guarda el término que ha producido esta base, para saber
+        # si el cuadro de búsqueda ha cambiado desde entonces.
+        self._termino_base = ctx.get('termino', '')
         try:
             self._pintar_resultados(resultados, ctx)
         except Exception as e:
             # Nunca dejar la app muda en 'Buscando…' por un fallo de pintado
             logger.error(f"Error pintando resultados gen={gen}: {e}")
             self.lbl_status.setText("❌ Error mostrando resultados — reintenta la búsqueda")
+
+        # V2.1.1: el usuario escribió en el cuadro principal y aplicó el
+        # refinado sin pulsar Enter. Se lanzó la general primero y el refinado
+        # quedó en espera; ahora que hay base, se aplica.
+        pendiente = getattr(self, '_refinado_pendiente', None)
+        if pendiente:
+            self._refinado_pendiente = None
+            if resultados:
+                self._refinados = [pendiente]
+                self._aplicar_refinados()
+            else:
+                self.lbl_status.setText(
+                    "La búsqueda no ha dado resultados: no hay nada que refinar")
 
     def _pintar_resultados(self, resultados, ctx):
         """Arranca el pintado por tramos de un conjunto de resultados (búsqueda
@@ -4792,8 +4971,44 @@ class BuscadorPiezas(QMainWindow):
         if term.startswith('-') and len(term) > 1:
             negativo = True
             term = term[1:].strip()
-        if not term or not getattr(self, '_res_base', None):
+        if not term:
             return
+
+        # V2.1.1 - COORDINACION CON LA BUSQUEDA GENERAL.
+        # Antes habia que pulsar Enter arriba y LUEGO refinar: si escribias un
+        # termino nuevo en el cuadro principal y aplicabas el refinado, este se
+        # aplicaba sobre los resultados de la busqueda ANTERIOR (o sobre nada),
+        # y parecia que "no busca bien". Ahora, si el cuadro principal no
+        # corresponde a la base actual, se lanza primero la busqueda general y
+        # el refinado se aplica solo en cuanto llegan los resultados.
+        termino_arriba = self.input_buscar.text().strip()
+        base = getattr(self, '_res_base', None)
+        desfasado = bool(termino_arriba) and termino_arriba != getattr(
+            self, '_termino_base', None)
+        if not base or desfasado:
+            if not termino_arriba:
+                self.lbl_status.setText(
+                    "Escribe primero qué buscar en el cuadro de arriba")
+                self.toast.show_message(
+                    "Escribe primero qué buscar arriba y luego refina")
+                return
+            logger.info("Refinado '%s' en espera: se lanza antes la busqueda "
+                        "general de '%s'", term, termino_arriba)
+            self._refinado_pendiente = ('no_contiene' if negativo else 'contiene', term)
+            self.input_refinar.clear()
+            self.lbl_status.setText("Buscando «%s» para poder refinar…" % termino_arriba)
+            antes = getattr(self, '_gen_busqueda', 0)
+            self.ejecutar_busqueda()
+            if getattr(self, '_gen_busqueda', 0) == antes:
+                # La busqueda no llego a lanzarse (p.ej. sin ningun origen
+                # marcado). Se descarta el refinado pendiente: dejarlo colgado
+                # haria que se aplicase solo en una busqueda posterior.
+                self._refinado_pendiente = None
+                self.input_refinar.setText(term)
+                logger.warning("Refinado '%s' descartado: la busqueda general "
+                               "no se lanzo", term)
+            return
+
         if not hasattr(self, '_refinados'):
             self._refinados = []
         self._refinados.append(('no_contiene' if negativo else 'contiene', term))
@@ -4918,7 +5133,7 @@ class BuscadorPiezas(QMainWindow):
             if origenes:
                 self.iniciar_indexacion(origenes, anos)
             else:
-                QMessageBox.warning(self, "Atención", "No has seleccionado ningún origen.")
+                avisar_atencion(self, "Atención", "No has seleccionado ningún origen.")
 
     def iniciar_indexacion(self, origenes_sel, anos_sel):
         """Inicia la indexación del NAS nuevo (v1.0.7)"""
@@ -4934,7 +5149,9 @@ class BuscadorPiezas(QMainWindow):
         self.thread.progress.connect(lambda n: self.lbl_count.setText(f"{n} archivos indexados"))
         self.thread.comp_finished.connect(self.on_comp_indexado)
         self.thread.finished.connect(self.finalizar_indexacion)
-        self.thread.error.connect(lambda e: QMessageBox.critical(self, "Error", f"Error en indexación: {e}"))
+        self.thread.error.connect(
+            lambda e: mostrar_error("Error de indexación",
+                                    "La indexación del NAS ha fallado.", e, self))
         self.thread.start()
 
     def cancelar_indexacion(self):
@@ -5681,7 +5898,8 @@ class BuscadorPiezas(QMainWindow):
                     writer.writerow(row_data)
             self.toast.show_message("✅ Exportado con éxito")
         except Exception as e:
-            QMessageBox.critical(self, "Error al Exportar", f"No se pudo guardar el archivo:\n{e}")
+            mostrar_error("Error al exportar",
+                          "No se ha podido guardar el archivo.", e, self)
 
     def exportar_excel_completo(self):
         rows = list(range(self.tabla.rowCount()))
@@ -6100,7 +6318,8 @@ class BuscadorPiezas(QMainWindow):
                 writer.writerows(filas)
             self.toast.show_message("✅ Exportado con éxito")
         except Exception as e:
-            QMessageBox.critical(self, "Error al Exportar", f"No se pudo guardar el archivo:\n{e}")
+            mostrar_error("Error al exportar",
+                          "No se ha podido guardar el archivo.", e, self)
 
     @staticmethod
     def _abrir_en_explorer(ruta_canonica):
@@ -6966,10 +7185,22 @@ def _arrancar():
     # QLockFile detecta y limpia el candado huerfano de un proceso ya muerto.
     bloqueo = None
     try:
+        if os.environ.get("ALSI_SIN_CANDADO"):
+            raise RuntimeError("candado desactivado a proposito (pruebas)")
         bloqueo = QLockFile(os.path.join(LOG_DIR, "buscador.lock"))
         bloqueo.setStaleLockTime(30000)
         if not bloqueo.tryLock(200):
-            vivo, pid, host, nombre = bloqueo.getLockInfo()
+            hay_info, pid, host, nombre = bloqueo.getLockInfo()
+            # Valvula de seguridad: si el proceso que puso el candado ya no
+            # existe, se retira. Un candado huerfano dejando a alguien sin
+            # poder abrir la app seria el mismo problema que vinimos a
+            # arreglar, solo que causado por el arreglo.
+            if hay_info and pid and not proceso_vivo(pid):
+                logger.warning("Candado huerfano del PID %s: se retira", pid)
+                bloqueo.removeStaleLockFile()
+                bloqueo.tryLock(200)
+        if bloqueo is not None and not bloqueo.isLocked():
+            hay_info, pid, host, nombre = bloqueo.getLockInfo()
             logger.warning("Ya hay otra instancia (PID %s); no se abre otra", pid)
             avisar_usuario(
                 "El Buscador ya esta abierto",
@@ -7018,10 +7249,10 @@ if __name__ == "__main__":
         raise
     except BaseException as e:
         logger.critical("Fallo fatal en el arranque", exc_info=True)
-        avisar_usuario(
+        mostrar_error(
             "El Buscador no ha podido arrancar",
             "El Buscador de Piezas no ha podido abrirse.\n\n"
             "Motivo: %s: %s\n\n"
-            "El detalle completo esta en:@%s\n\n"
+            "El detalle completo esta en:\n%s\n\n"
             "Manda ese archivo y lo miramos." % (type(e).__name__, e, RUTA_LOG))
         sys.exit(1)

@@ -1,5 +1,15 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.1.1] - 2026-08-21 (Refinar sin pulsar Enter · errores que se pueden mandar)
+
+- **El refinado ya coordina con la búsqueda de arriba.** Si escribías un término nuevo en el buscador y aplicabas un refinado sin pulsar Enter, el refinado se aplicaba sobre los resultados de la búsqueda *anterior* (o sobre nada), y parecía que «no busca bien». Ahora, si el cuadro de arriba no corresponde a los resultados que hay en pantalla, se lanza primero la búsqueda general y el refinado se aplica solo en cuanto llegan los resultados. Vale igual para «que contengan» y para «que NO contengan».
+  - Si no hay nada escrito arriba, lo dice en la barra de estado en vez de no hacer nada.
+  - Si la búsqueda no llega a lanzarse (por ejemplo sin ningún origen marcado), el refinado no se queda colgado para aplicarse solo en una búsqueda posterior: vuelve a su cuadro.
+- **Todos los errores se pueden mandar con un botón.** Cualquier error abre ahora un aviso con **«Copiar para enviar»**: copia al portapapeles un informe con la versión, el equipo, la hora, el mensaje, el detalle técnico y las últimas líneas del registro. Un compañero solo tiene que pegarlo en un mensaje — se acabaron las capturas de pantalla y el «me ha dado un error». También hay un botón para abrir la carpeta del registro.
+- **Los avisos ya no bloquean un arranque desatendido.** Los cuadros de «Atención» respetan el modo automático, igual que se hizo en la V2.0.8 con los pases nocturnos.
+- **Válvula de seguridad del candado de instancia única** (V2.1.0): si el proceso que lo puso ya no existe, el candado se retira solo. Un candado huérfano dejando a alguien sin poder abrir la app habría sido el mismo problema que vinimos a arreglar, causado por el arreglo.
+- **Batería de pruebas incluida** (`pruebas_robustez.py`): 90 comprobaciones automáticas en dos escenarios — servidor OK (51) y servidor inaccesible (39). Cubre arranque, tiempos, red, coordinación de la búsqueda, errores copiables, diagnóstico, instancia única, rutas de red y consultas reales. Se lanza con `python pruebas_robustez.py --todo` y devuelve error si algo falla.
+
 ## [2.1.0] - 2026-08-21 (La app abre siempre, y si algo falla lo dice)
 
 Raíz de la incidencia de Pablo y Marcos ("le doy y no se abre"): **la aplicación hablaba con la red antes de dibujar la ventana**. Comprobaba el NAS y abría la conexión con PostgreSQL en el arranque, sin límite de tiempo. En un equipo que no llegaba al servidor —firewall de Windows 11 recién configurado, perfil de red en «Pública», el portátil aún levantando la Wi-Fi— Windows tarda unos 21 segundos en rendirse en cada intento. Durante ese rato había un proceso en el Administrador de tareas y **ni una ventana en pantalla**. Si además la conexión fallaba del todo, la excepción cerraba el proceso sin dejar rastro visible. Nadie podía saber qué estaba pasando.

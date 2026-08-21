@@ -29,3 +29,5 @@ releases/
 # Config & Secrets
 .env
 config.ini
+
+pruebas_resultado*.txt
