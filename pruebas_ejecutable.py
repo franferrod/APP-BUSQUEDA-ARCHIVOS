@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Pruebas del EJECUTABLE empaquetado del Buscador de Piezas ALSI (V2.1.1).
+"""Pruebas del EJECUTABLE empaquetado del Buscador de Piezas ALSI (V2.1.2).
 
 La bateria pruebas_robustez.py trabaja sobre el codigo. Esto prueba el .exe tal
 y como lo recibe un companero: se lanza de verdad, se comprueba que abre
@@ -8,7 +8,7 @@ instancias y que un candado de un proceso muerto no deja a nadie fuera.
 
     python pruebas_ejecutable.py [ruta_al_exe]
 
-Por defecto usa releases/v2.1.1/BuscadorPiezas.exe. Cierra siempre los procesos
+Por defecto usa releases/v2.1.2/BuscadorPiezas.exe. Cierra siempre los procesos
 que abre (y SOLO esos: se identifican por su PID).
 """
 import os
@@ -20,7 +20,7 @@ import time
 RAIZ = os.path.dirname(os.path.abspath(__file__))
 PROYECTO = os.path.abspath(os.path.join(RAIZ, "..", "..", ".."))
 EXE = (sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].endswith(".exe")
-       else os.path.join(PROYECTO, "releases", "v2.1.1", "BuscadorPiezas.exe"))
+       else os.path.join(PROYECTO, "releases", "v2.1.2", "BuscadorPiezas.exe"))
 LOG = os.path.expanduser("~/.alsi_busqueda/app.log")
 INFORME = os.path.join(RAIZ, "pruebas_ejecutable_resultado.txt")
 

@@ -369,7 +369,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.1.2"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -6022,6 +6022,10 @@ class BuscadorPiezas(QMainWindow):
                 menu.addAction(svg_icon("arrastrar-solidworks"), "Abrir/Insertar en SolidWorks").triggered.connect(
                     lambda checked=False, r=ruta: os.startfile(r)
                 )
+                # V2.1.2: abrir directamente el PDF del plano
+                menu.addAction(svg_icon("carpeta"), "Abrir PDF").triggered.connect(
+                    lambda checked=False, r=ruta_canonica: self.abrir_pdf_de(r)
+                )
 
             # Export selection option
             if len(self.tabla.selectedItems()) > self.tabla.columnCount(): # Si hay más de 1 fila seleccionada
@@ -6113,6 +6117,11 @@ class BuscadorPiezas(QMainWindow):
             "Abrir/Insertar en SolidWorks" + (f" ({len(rutas)})" if varias else ""))
         act_sw.triggered.connect(lambda _=False, rr=list(rutas): self._abrir_en_solidworks(rr))
 
+        # V2.1.2: abrir el PDF del plano sin tener que buscarlo aparte
+        act_pdf = menu.addAction(svg_icon("carpeta"), "Abrir PDF")
+        act_pdf.triggered.connect(lambda _=False, r=principal: self.abrir_pdf_de(r))
+        act_pdf.setToolTip("Abre el PDF que comparte código con este archivo")
+
         menu.addSeparator()
         menu.addAction(svg_icon("carpeta"), "Abrir Carpeta").triggered.connect(
             lambda _=False, r=principal: self._abrir_carpeta_de(r))
@@ -6175,6 +6184,163 @@ class BuscadorPiezas(QMainWindow):
                 vistas.add(r)
                 rutas.append(r)
         return rutas
+
+    def _anadir_filtro_tabla(self, lay, tabla, etiqueta_vacio="filas"):
+        """Cuadro para buscar DENTRO de la tabla de un diálogo (V2.1.2).
+
+        Un despiece puede tener cientos de componentes; sin esto habia que
+        recorrerlos a ojo. Filtra en vivo sobre TODAS las columnas de texto:
+        se escriben varias palabras y deben aparecer todas (sin importar
+        mayusculas ni acentos), en cualquier columna.
+        """
+        fila = QHBoxLayout()
+        fila.setSpacing(8)
+        caja = QLineEdit()
+        caja.setPlaceholderText(
+            "Buscar dentro de esta lista…  (varias palabras: deben aparecer todas)")
+        caja.setClearButtonEnabled(True)
+        fila.addWidget(caja, stretch=1)
+        lbl = QLabel("")
+        lbl.setObjectName("StatusDim")
+        fila.addWidget(lbl)
+        lay.addLayout(fila)
+
+        def normalizar(t):
+            try:
+                return self.db.normalizar_texto(t)
+            except Exception:
+                return (t or "").upper()
+
+        # Se cachea el texto de cada fila: filtrar no debe recorrer celdas en
+        # cada pulsacion con cientos de componentes.
+        cache = []
+        for f in range(tabla.rowCount()):
+            trozos = []
+            for c in range(tabla.columnCount()):
+                it = tabla.item(f, c)
+                if it and it.text():
+                    trozos.append(it.text())
+            cache.append(normalizar(" ".join(trozos)))
+
+        def aplicar(texto):
+            palabras = [p for p in normalizar(texto).split() if p]
+            visibles = 0
+            for f in range(tabla.rowCount()):
+                heno = cache[f] if f < len(cache) else ""
+                casa = all(p in heno for p in palabras)
+                tabla.setRowHidden(f, not casa)
+                visibles += 1 if casa else 0
+            total = tabla.rowCount()
+            if palabras:
+                lbl.setText("%d de %d %s" % (visibles, total, etiqueta_vacio))
+                caja.setStyleSheet(
+                    "border: 1.5px solid #E66C32;" if visibles else
+                    "border: 1.5px solid #8C2F2F;")
+            else:
+                lbl.setText("%d %s" % (total, etiqueta_vacio))
+                caja.setStyleSheet("")
+
+        caja.textChanged.connect(aplicar)
+        aplicar("")
+        return caja
+
+    def _anadir_filtro_lista(self, lay, lista, etiqueta_vacio="resultados"):
+        """Igual que _anadir_filtro_tabla pero para los diálogos de lista
+        (¿en qué ensamblajes se usa?). Filtra por el texto de cada fila."""
+        fila = QHBoxLayout()
+        fila.setSpacing(8)
+        caja = QLineEdit()
+        caja.setPlaceholderText(
+            "Buscar dentro de esta lista…  (varias palabras: deben aparecer todas)")
+        caja.setClearButtonEnabled(True)
+        fila.addWidget(caja, stretch=1)
+        lbl = QLabel("")
+        lbl.setObjectName("StatusDim")
+        fila.addWidget(lbl)
+        lay.addLayout(fila)
+
+        def normalizar(t):
+            try:
+                return self.db.normalizar_texto(t)
+            except Exception:
+                return (t or "").upper()
+
+        cache = [normalizar(lista.item(i).text()) for i in range(lista.count())]
+
+        def aplicar(texto):
+            palabras = [p for p in normalizar(texto).split() if p]
+            visibles = 0
+            for i in range(lista.count()):
+                casa = all(p in cache[i] for p in palabras)
+                lista.item(i).setHidden(not casa)
+                visibles += 1 if casa else 0
+            total = lista.count()
+            if palabras:
+                lbl.setText("%d de %d %s" % (visibles, total, etiqueta_vacio))
+                caja.setStyleSheet("border: 1.5px solid #E66C32;" if visibles
+                                   else "border: 1.5px solid #8C2F2F;")
+            else:
+                lbl.setText("%d %s" % (total, etiqueta_vacio))
+                caja.setStyleSheet("")
+
+        caja.textChanged.connect(aplicar)
+        aplicar("")
+        return caja
+
+    def pdfs_de(self, ruta):
+        """PDFs asociados a un archivo (V2.1.2).
+
+        Si el archivo YA es un PDF, es el suyo propio. Si es una pieza, un
+        ensamblaje o un plano, se buscan los PDF que comparten codigo (mismo
+        primer token del nombre: 24120.P027, CTS.E164...)."""
+        if not ruta:
+            return []
+        if Path(ruta).suffix.lower() == '.pdf':
+            return [ruta]
+        try:
+            docs = self.db.buscar_documentacion_de(os.path.basename(ruta))
+        except Exception as e:
+            logger.warning("No se ha podido buscar el PDF de %s: %s", ruta, e)
+            return []
+        return [r for ext, r in docs if ext == '.pdf' and r]
+
+    def abrir_pdf_de(self, ruta):
+        """Abre el PDF del plano (V2.1.2). Si hay varios, deja elegir."""
+        pdfs = self.pdfs_de(ruta)
+        if not pdfs:
+            codigo = None
+            try:
+                codigo = self.db._codigo_de_nombre(os.path.basename(ruta))
+            except Exception:
+                pass
+            self.toast.show_message(
+                "No hay ningún PDF para %s" % (codigo or os.path.basename(ruta)))
+            self.lbl_status.setText(
+                "Sin PDF: no hay ningún PDF con el código %s en el índice"
+                % (codigo or "de esta pieza"))
+            return
+        elegido = pdfs[0]
+        if len(pdfs) > 1:
+            from PyQt5.QtWidgets import QInputDialog
+            nombres = [os.path.basename(p) for p in pdfs]
+            nombre, ok = QInputDialog.getItem(
+                self, "Varios PDF con este código",
+                "Hay %d PDF para esta pieza. ¿Cuál abro?" % len(pdfs),
+                nombres, 0, False)
+            if not ok:
+                return
+            elegido = pdfs[nombres.index(nombre)]
+        ruta_ok, motivo = resolver_para_abrir(elegido)
+        if motivo == 'ok' and ruta_ok:
+            try:
+                os.startfile(ruta_ok)
+                self.toast.show_message("Abriendo %s" % os.path.basename(elegido))
+                return
+            except Exception as e:
+                logger.error("No se ha podido abrir el PDF %s: %s", elegido, e)
+        mostrar_error("No se ha podido abrir el PDF",
+                      "El PDF está en el índice pero no se ha podido abrir.",
+                      "%s\nMotivo: %s" % (elegido, motivo), self)
 
     def _abrir_carpeta_de(self, ruta):
         """V2.0.9: mismo camino robusto que la rejilla (antes fallaba mudo)."""
@@ -6243,6 +6409,7 @@ class BuscadorPiezas(QMainWindow):
                 if not icono_ok:
                     it.setIcon(QIcon(pixmap_badge_extension('.sldasm', size=44)))
                 lista.addItem(it)
+            self._anadir_filtro_lista(lay, lista, 'ensamblajes')
             lay.addWidget(lista, stretch=1)
 
             if not resultados:
@@ -6468,6 +6635,7 @@ class BuscadorPiezas(QMainWindow):
             for j in (2, 3, 4, 5, 6, 7):
                 tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
             tabla.setSortingEnabled(True)
+            self._anadir_filtro_tabla(lay, tabla, 'componentes')
             lay.addWidget(tabla, stretch=1)
 
             if not filas:
@@ -6609,6 +6777,7 @@ class BuscadorPiezas(QMainWindow):
             tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
             tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
             tabla.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+            self._anadir_filtro_tabla(lay, tabla, 'componentes')
             lay.addWidget(tabla, stretch=1)
 
             if not comp_a or not comp_b:
@@ -6733,6 +6902,7 @@ class BuscadorPiezas(QMainWindow):
         tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         for j in range(2, len(columnas) + 1):
             tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
+        self._anadir_filtro_tabla(lay, tabla, 'filas')
         lay.addWidget(tabla, stretch=1)
 
         def abrir_sel():
@@ -6931,7 +7101,28 @@ class BuscadorPiezas(QMainWindow):
                         lines[i] = f"<blockquote>{line_s[2:]}</blockquote>"
                 html = '<br>'.join(lines)
                 html = html.replace("```markdown", "<pre>").replace("```", "</pre>")
-                html = html.replace("**", "<b>").replace("__", "<b>")
+                # V2.1.2: las negritas se cerraban mal. Se sustituia CADA '**'
+                # por '<b>', asi que la primera negrita dejaba el resto de la
+                # seccion en negrita (se veia en la guia: los pasos 2 y 3 en
+                # negrita entera). Ahora se cierran por pares.
+                for marca in ("**", "__"):
+                    trozos = html.split(marca)
+                    if len(trozos) > 1:
+                        html = trozos[0]
+                        for i, trozo in enumerate(trozos[1:]):
+                            html += ("<b>" if i % 2 == 0 else "</b>") + trozo
+                        if len(trozos) % 2 == 0:      # marca sin pareja
+                            html += "</b>"
+                # `codigo` -> monoespaciado, para la sintaxis de busqueda
+                trozos = html.split("`")
+                if len(trozos) > 1:
+                    html = trozos[0]
+                    for i, trozo in enumerate(trozos[1:]):
+                        etq = ('<code style="background:#262626; color:#F0A377; '
+                               'padding:1px 4px;">' if i % 2 == 0 else "</code>")
+                        html += etq + trozo
+                    if len(trozos) % 2 == 0:
+                        html += "</code>"
                 return style + html
 
             # Contenido: dividir el MD en secciones por '## ' para el índice lateral

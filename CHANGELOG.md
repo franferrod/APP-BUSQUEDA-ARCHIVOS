@@ -1,5 +1,14 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.1.2] - 2026-08-21 (Buscar dentro de los diálogos · Abrir PDF · guía al día)
+
+- **Buscar dentro de los resultados de un diálogo.** El despiece de un conjunto puede traer cientos de componentes y había que recorrerlos a ojo. Ahora todos los diálogos —despiece, ¿en qué ensamblajes se usa?, similares, duplicados y comparar— llevan un cuadro que filtra en vivo. Se escriben varias palabras y deben aparecer todas, sin importar tildes ni mayúsculas, y busca en todas las columnas (componente, cliente, proyecto, año…). Al lado indica cuántas filas quedan de cuántas.
+- **"Abrir PDF" en el botón derecho**, sobre una pieza, un ensamblaje o un plano: abre directamente el PDF que comparte código con el archivo (mismo primer token del nombre, por ejemplo `24120.P027`). Si hay varios PDF con ese código, deja elegir. Si no hay ninguno, lo dice en vez de no hacer nada. Está tanto en la rejilla principal como dentro de los diálogos.
+- **Guía Rápida reescrita entera.** Seguía describiendo la versión 1.x —hablaba de "Indexar Compañeros" y de filtrar por quién diseñó la pieza— y **explicaba mal la sintaxis de búsqueda**: decía que las comas buscan archivos que tengan todas las palabras, cuando en realidad las comas amplían (cualquiera de ellas). Ahora son 11 secciones que cubren lo que la app hace hoy:
+  - La sintaxis de verdad: `tuerca m16` es frase exacta (6 resultados), `tuerca;m16` exige todas las palabras (23), `tuerca,m16` admite cualquiera (muchos más). Medido, no supuesto.
+  - Refinado con SÍ/NO contengan, subconjuntos, chips y Esc; buscar conjuntos que lleven una pieza; el despiece con peso y superficie; placas CE; qué hacer si algo va mal; y los atajos.
+- **Fix de la propia guía**: las negritas no se cerraban (se sustituía cada `**` por `<b>`), así que a partir de la primera negrita el resto de la sección salía en negrita. Se veía en el apartado "Mantenerlo al día". Ahora se cierran por pares y el texto entre acentos graves sale en monoespaciado.
+
 ## [2.1.1] - 2026-08-21 (Refinar sin pulsar Enter · errores que se pueden mandar)
 
 - **El refinado ya coordina con la búsqueda de arriba.** Si escribías un término nuevo en el buscador y aplicabas un refinado sin pulsar Enter, el refinado se aplicaba sobre los resultados de la búsqueda *anterior* (o sobre nada), y parecía que «no busca bien». Ahora, si el cuadro de arriba no corresponde a los resultados que hay en pantalla, se lanza primero la búsqueda general y el refinado se aplica solo en cuanto llegan los resultados. Vale igual para «que contengan» y para «que NO contengan».

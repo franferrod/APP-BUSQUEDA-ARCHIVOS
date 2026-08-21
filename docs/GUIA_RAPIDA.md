@@ -1,32 +1,120 @@
 # 🚀 Guía Rápida - Buscador de Piezas ALSI
 
-Bienvenido a tu nueva herramienta para encontrar planos y diseños al instante.
+Encuentra cualquier pieza, conjunto, plano o PDF del NAS en décimas de segundo, y averigua dónde se usa, qué lleva dentro y cuánto pesa.
 
-## 1. ¿Cómo busco algo?
-Simplemente escribe en la barra superior lo que necesitas.
-*   **Ejemplo**: `travesaño`
-*   **Truco Pro**: Puedes buscar varias cosas a la vez separándolas por comas.
-    *   Ejemplo: `mesa, inox, 2024` (Buscará archivos que tengan esas tres palabras).
+El índice tiene **más de 590.000 archivos** de PROYECTOS, BIBLIOTECA 3D y ALSI ESTÁNDAR, y se actualiza solo cada noche.
 
-## 2. Filtros Inteligentes (Barra Izquierda)
-Si te salen demasiados resultados, usa la barra izquierda para afinar:
+## 1. Buscar: la barra de arriba
 
-*   **Compañeros**: ¿Quién diseñó la pieza? (Pablo, Jesús, Marcos, Paco, etc.)
-*   **Años**: ¿De qué año es el proyecto?
-*   **Clientes**: Filtra por el cliente final.
-*   **Búsqueda en Filtros**: Escribe en el cuadro del filtro para localizarlo al instante.
+Escribe y pulsa **Enter**. La forma de separar las palabras cambia lo que encuentras:
 
-> **Nota**: Los filtros funcionan en cascada. Si eliges el año "2024", solo verás los clientes y proyectos de ese año.
+*   `tuerca m16` — **frase exacta**: las palabras juntas y en ese orden. La búsqueda más precisa.
+*   `tuerca;m16` — **todas** las palabras, en cualquier orden y posición del nombre. Más amplia.
+*   `tuerca,m16` — **cualquiera** de las palabras. La más amplia de todas.
 
-## 3. ¿Qué hago con los resultados?
-Una vez encuentres tu archivo en la lista:
+> Regla rápida: el punto y coma **exige**, la coma **amplía**. Si salen pocos resultados prueba con `;`, y si aún así no aparece, con `,`.
 
-*   **Un clic**: Verás una **vista previa** instantánea a la derecha.
-*   **Doble clic**: Abre la carpeta de Windows y selecciona el archivo.
-*   **Botón Derecho**: Menú rápido para abrir carpeta o copiar ruta.
+También puedes buscar por **código** (`24120.P027`), por **número de placa CE** (`24-0947`) o por parte del nombre del proyecto.
 
-## 4. Mantenerlo al día
-Si acabas de guardar un archivo y no aparece:
-1.  Pulsa el botón naranja **"Indexar Compañeros"**.
-2.  Dale a **"Iniciar"**.
-3.  ¡Listo! En unos segundos aparecerá.
+*   **Recientes**: arriba a la derecha están tus últimas búsquedas, para repetirlas de un clic.
+*   **Guardadas**: guarda las búsquedas que repites a menudo.
+
+## 2. Buscar conjuntos que lleven una pieza
+
+Pulsa la **flecha ▾ al lado del botón Buscar** y elige *"Buscar conjuntos que lo lleven"*.
+
+Escribe una referencia (por ejemplo `AC30-Q6A014` o `MOTOR REM 0.37KW`) y saldrán **los ensamblajes que la contienen**, no la pieza. Sirve para responder a "¿en qué máquinas montamos esto?" antes de cambiar nada.
+
+Se le pueden aplicar todos los filtros de la izquierda, igual que a una búsqueda normal.
+
+## 3. Refinar: buscar dentro de tus resultados
+
+Debajo de la barra de búsqueda aparece **"De estos resultados, deja los que…"**. Es una segunda búsqueda **sobre lo que ya tienes en pantalla**, y se pueden encadenar varios niveles.
+
+*   **SÍ contengan** — deja solo los conjuntos que llevan esa pieza.
+*   **NO contengan** — quita los que la llevan. Ejemplo: *cintas A450* → NO contengan *MOTOR REM* = las que llevan otro motor.
+*   **Atajo**: escribe un `-` delante del término y pulsa Enter para el modo NO.
+*   **Subconjuntos**: busca también **dentro de los subconjuntos**, a cualquier profundidad. Sin ese botón solo mira los componentes directos. Ejemplo real: *MOTOR REM 0.37* pasa de 241 conjuntos directos a 627 contando subconjuntos.
+
+Cada nivel deja un **chip** que puedes quitar con su ✕. Los niveles NO salen en azul, para no confundirlos con los que sí exigen la pieza. **Esc** deshace el último nivel, uno a uno, hasta volver a la búsqueda general.
+
+> No hace falta pulsar Enter arriba antes de refinar: si cambias el término de la barra de búsqueda y aplicas el refinado, la búsqueda general se lanza sola y el refinado se aplica encima.
+
+## 4. Los filtros de la izquierda
+
+Se combinan entre sí y funcionan **en cascada**: al elegir un año solo verás los clientes y proyectos de ese año.
+
+*   **Origen**: PROYECTOS, BIBLIOTECA 3D, ALSI ESTÁNDAR.
+*   **Años de proyecto**, **Carpetas** (MECÁNICA, LAYOUT, LISTADOS…), **Clientes** y **Proyectos**.
+*   **Fabricación**: láser, torno, fresa, soldadura, pintura, montaje — leído de las propiedades de SolidWorks.
+*   **Material**, **Tratamiento**, **Cierre**, **Espesor** y **Tipo de banda**.
+*   **Tipos** (arriba): piezas, ensamblajes, planos, DWG, PDF, STEP.
+*   **Placa CE**: deja solo los archivos que tienen placa CE asociada.
+
+Los chips naranjas de arriba muestran qué filtros tienes puestos; **Limpiar** los quita todos.
+
+## 5. Ver los resultados
+
+*   **Lista** o **Galería**, con tamaños **S / M / L / XL** y una barra para el tamaño exacto (o **Ctrl + rueda del ratón**).
+*   **Pasa el ratón por encima** de una miniatura y verás la imagen en grande, sin tener que clicar.
+*   **Un clic**: vista previa y datos a la derecha (cliente, proyecto, material, peso, si tiene plano…).
+*   **Doble clic**: abre la carpeta de Windows con el archivo seleccionado.
+*   **Arrastra** una fila **sobre SolidWorks** para insertar la pieza en el ensamblaje que tengas abierto.
+*   **Columnas**: elige qué columnas ver. **Exportar**: pasa los resultados a Excel (CSV).
+
+## 6. El botón derecho
+
+*   **Abrir/Insertar en SolidWorks**
+*   **Abrir PDF** — abre directamente el PDF del plano que comparte código con la pieza.
+*   **Abrir Carpeta** · **Copiar Ruta** · **Copiar Nombre**
+*   **¿En qué ensamblajes se usa?** — todas las máquinas que llevan esa pieza.
+*   **Ver componentes (despiece)** — todo lo que lleva dentro un conjunto.
+*   **Ensamblajes similares** — máquinas que comparten un alto porcentaje de piezas.
+*   **Buscar piezas idénticas (duplicados)** — misma geometría con otro nombre.
+*   **Comparar componentes de los 2 ensamblajes** — selecciona dos conjuntos y verás qué tiene cada uno y qué comparten.
+
+> Todo esto funciona igual **dentro** de los diálogos: desde el despiece puedes abrir el "dónde se usa" de un componente, y desde ahí su propio despiece.
+
+## 7. El despiece: qué lleva un conjunto
+
+Botón derecho sobre un ensamblaje → **Ver componentes (despiece)**.
+
+*   Lista completa de componentes con cliente, proyecto, año y origen.
+*   **Peso total** y **superficie total** del conjunto, para pedir material o decirle a pintura cuántos m² hay.
+*   Si a algún componente le falta el dato **lo dice**: *"3 de 12 componentes sin datos, el total es parcial"*.
+*   **Buscar dentro de la lista**: el cuadro de arriba filtra los componentes en vivo. Escribe varias palabras y deben aparecer todas. Funciona sin tildes y sin distinguir mayúsculas.
+*   Los componentes en gris no están indexados: son **referencias rotas** o piezas en carpetas excluidas.
+*   **Exportar CSV** para mandarlo a compras o a pintura.
+
+Ese mismo cuadro de búsqueda está en el resto de listas: *dónde se usa*, *similares*, *duplicados* y *comparar*.
+
+## 8. Placas CE
+
+El filtro **Placa CE** deja solo los archivos con placa asociada, y puedes buscar directamente por el número de placa (`24-0947`).
+
+La base de placas se actualiza cada tarde desde los Excel de **NÚMEROS DE SERIE**, de 2005 hasta hoy.
+
+## 9. Si algo va mal
+
+*   **Aviso rojo "Sin conexión con la base de datos"**: la aplicación abre igual y reintenta sola. Puedes pulsar **Reintentar** o **Diagnóstico**.
+*   **Cualquier error** trae un botón **"Copiar para enviar"**: cópialo y pégalo en un mensaje. Lleva la versión, tu equipo, la hora y el registro; con eso se puede arreglar sin adivinar.
+*   **Diagnóstico** comprueba servidor, puerto, NAS, versión y disco, y lo deja listo para copiar.
+*   Si la aplicación **ya está abierta** y vuelves a pulsar el icono, te lo dice en vez de abrir otra ventana.
+*   Si **"Abrir carpeta"** falla, el aviso distingue si el archivo se movió, si no tienes permisos o si no se llega al servidor.
+
+## 10. Mantenerlo al día
+
+El NAS **se reindexa solo cada noche**, así que normalmente no hay que hacer nada.
+
+Si acabas de guardar un archivo y lo necesitas ya, pulsa **Reindexar NAS** abajo a la izquierda. En la esquina inferior derecha se ve cuándo se actualizó el índice por última vez.
+
+Cuando haya una versión nueva saldrá un aviso naranja arriba con el botón **Actualizar ahora**.
+
+## 11. Atajos
+
+*   **Enter** — buscar (en la barra de refinar, aplica el nivel)
+*   **Esc** — deshace el último nivel de refinado
+*   **Ctrl + C** copiar el nombre · **Ctrl + Mayús + C** copiar la ruta
+*   **Doble clic** — abrir la carpeta
+*   **Ctrl + rueda** — agrandar o achicar las miniaturas
+*   **Arrastrar** — soltar sobre SolidWorks para insertar
