@@ -113,7 +113,13 @@ def avisar_usuario(titulo, mensaje):
     y ahi un QMessageBox lanza excepcion: el aviso se perdia y la app moria en
     silencio. Con ctypes se usa el cuadro de dialogo de Windows, que no depende
     de Qt."""
-    logger.error("AVISO AL USUARIO | %s | %s", titulo, str(mensaje).replace(chr(10), " / "))
+    # V2.1.1: solo el titulo y el principio del mensaje. Volcar textos largos
+    # (el informe de diagnostico entero, por ejemplo) en una sola linea deja el
+    # registro ilegible justo cuando hay que leerlo.
+    resumen = str(mensaje).replace(chr(10), " / ")
+    if len(resumen) > 240:
+        resumen = resumen[:240] + " […]"
+    logger.warning("AVISO AL USUARIO | %s | %s", titulo, resumen)
     # V2.1.0: los arranques desatendidos (comprobaciones automaticas, pases
     # nocturnos) NO deben quedarse esperando un clic que nadie va a dar. Misma
     # leccion que en la V2.0.8 con los scripts de noche.
