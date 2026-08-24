@@ -369,7 +369,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.1.2"
+APP_VERSION = "2.1.3"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -5559,15 +5559,23 @@ class BuscadorPiezas(QMainWindow):
             # La versión en alta calidad la trae el PreviewWorker justo después.
             pm_cache = (self.cache_miniaturas.get((ruta, 1024))
                         or self.cache_miniaturas.get((ruta, 256)))
-            if pm_cache is None and ext in self._EXT_CACHEABLE:
+            # V2.1.3: la miniatura del PROPIO archivo (la misma que pinta la
+            # galería) se guarda como REFERENCIA. Sirve para reconocer después
+            # si lo que devuelve el shell es el render de verdad o el icono
+            # genérico, y no dejar que este último tape al bueno.
+            pm_referencia = None
+            if ext in self._EXT_CACHEABLE:
                 try:
                     data_bd = self.db.obtener_miniatura(ruta)
                     if data_bd:
                         img_bd = QImage.fromData(data_bd)
                         if not img_bd.isNull():
-                            pm_cache = QPixmap.fromImage(img_bd)
+                            pm_referencia = QPixmap.fromImage(img_bd)
                 except Exception as e:
                     logger.debug(f"Miniatura BD (preview instantáneo) falló: {e}")
+            self._preview_referencia = (ruta, pm_referencia)
+            if pm_cache is None:
+                pm_cache = pm_referencia
             # V2.0.8: si no hay nada en caché, aprovechar el icono que la TABLA
             # ya tiene cargado para esa fila. La tabla puede obtener la miniatura
             # por vías que el panel no usa (el generador del shell sobre el NAS),
@@ -5780,6 +5788,47 @@ class BuscadorPiezas(QMainWindow):
         except (ValueError, AttributeError):
             pass
 
+    # V2.1.3 - Umbral de parecido entre la miniatura del archivo (la que se ve
+    # en la galería) y lo que devuelve el shell de Windows. Medido sobre
+    # ensamblajes reales: cuando el shell renderiza de verdad el parecido es
+    # 99,6-99,8 %; cuando devuelve el icono genérico de SolidWorks (el cubo
+    # amarillo y azul) cae a 35-36 %. 85 % queda lejos de los dos grupos.
+    UMBRAL_PREVIEW_PARECIDO = 0.85
+
+    @staticmethod
+    def _grises_reducidos(pixmap, lado=32):
+        """La imagen reducida a lado x lado en escala de grises."""
+        img = pixmap.toImage().convertToFormat(QImage.Format_RGB32).scaled(
+            lado, lado, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        from PyQt5.QtGui import qRed, qGreen, qBlue
+        datos = []
+        for y in range(lado):
+            for x in range(lado):
+                p = img.pixel(x, y)
+                datos.append((qRed(p) * 3 + qGreen(p) * 6 + qBlue(p)) // 10)
+        return datos
+
+    @classmethod
+    def _huella_imagen(cls, pixmap):
+        """Huella de la imagen. Dos archivos DISTINTOS no pueden tener la misma
+        vista previa pixel a pixel: si se repite, es un icono genérico."""
+        import hashlib
+        try:
+            return hashlib.md5(
+                bytes(bytearray(cls._grises_reducidos(pixmap)))).hexdigest()
+        except Exception:
+            return None
+
+    @classmethod
+    def _parecido_imagenes(cls, a, b):
+        """0..1 — cuánto se parecen dos imágenes (1 = idénticas)."""
+        try:
+            ga, gb = cls._grises_reducidos(a), cls._grises_reducidos(b)
+            dif = sum(abs(x - y) for x, y in zip(ga, gb)) / float(len(ga))
+            return max(0.0, 1.0 - dif / 255.0)
+        except Exception:
+            return 1.0      # ante la duda, no se descarta nada
+
     def _on_preview_pesado(self, gen, ruta, tam_txt, image, hbitmap):
         """Aplica el resultado del PreviewWorker si sigue siendo el vigente."""
         try:
@@ -5806,6 +5855,47 @@ class BuscadorPiezas(QMainWindow):
                 pixmap = QPixmap.fromImage(image)
 
             if pixmap and not pixmap.isNull():
+                # V2.1.3 - EL ICONO GENERICO NO DEBE TAPAR LA MINIATURA BUENA.
+                # El shell de Windows, cuando no sabe renderizar un ensamblaje,
+                # devuelve el icono genérico de SolidWorks (el cubo amarillo y
+                # azul) — el MISMO para archivos distintos, comprobado. Antes se
+                # aplicaba sin mirar y machacaba la miniatura real que ya estaba
+                # puesta: en la galería se veía la pieza y en el panel derecho
+                # ese cubo. Si lo que llega no se parece a la miniatura del
+                # propio archivo, se descarta y se conserva la buena.
+                ref = getattr(self, '_preview_referencia', None)
+                if ref and ref[0] == ruta and ref[1] is not None:
+                    parecido = self._parecido_imagenes(ref[1], pixmap)
+                    if parecido < self.UMBRAL_PREVIEW_PARECIDO:
+                        logger.info(
+                            "Vista previa del shell descartada (parecido %.0f%% "
+                            "con la miniatura del archivo): %s",
+                            parecido * 100, os.path.basename(ruta))
+                        return          # se conserva la miniatura del archivo
+
+                # Segundo criterio, este exacto: si el shell devuelve la MISMA
+                # imagen para dos archivos distintos, es un icono genérico, se
+                # parezca o no a la miniatura. Cubre tambien el icono de Adobe
+                # en los PDF. El coste de equivocarse es nulo: se conserva la
+                # miniatura del archivo, que tambien es correcta.
+                huella = self._huella_imagen(pixmap)
+                if huella:
+                    if not hasattr(self, '_huellas_shell'):
+                        self._huellas_shell = {}
+                        self._huellas_genericas = set()
+                    if huella in self._huellas_genericas:
+                        return
+                    duena = self._huellas_shell.get(huella)
+                    if duena is not None and duena != ruta:
+                        self._huellas_genericas.add(huella)
+                        logger.info(
+                            "Vista previa del shell descartada (icono genérico: "
+                            "misma imagen que %s): %s",
+                            os.path.basename(duena), os.path.basename(ruta))
+                        return
+                    if len(self._huellas_shell) > 500:
+                        self._huellas_shell.clear()
+                    self._huellas_shell[huella] = ruta
                 if len(self.cache_miniaturas) > 100:
                     self.cache_miniaturas.clear()
                 self.cache_miniaturas[(ruta, 1024)] = pixmap

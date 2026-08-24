@@ -1,5 +1,13 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.1.3] - 2026-08-24 (La vista previa ya no tapa la miniatura buena)
+
+- **Al seleccionar un ensamblaje, el panel derecho mostraba el cubo genérico de SolidWorks** aunque en la galería se viera perfectamente su miniatura. Causa medida: cuando Windows no sabe renderizar un `.SLDASM` devuelve **el mismo icono genérico para archivos distintos** (comprobado: dos ensamblajes diferentes devolvían la misma imagen pixel a pixel), y la app lo aplicaba sin comprobar nada, machacando la miniatura correcta que ya estaba puesta.
+- **Ahora el panel se queda con la imagen buena.** Antes de aplicar lo que devuelve Windows se compara con la miniatura del propio archivo —la misma que pinta la galería—: si no se parece lo suficiente, se descarta. Los números reales de la medición separan los dos casos sin ambigüedad: un render de verdad da 99–100 % de parecido y el icono genérico 35–36 %; el listón está en el 85 %.
+- **Segunda red de seguridad**: si Windows devuelve exactamente la misma imagen para dos archivos distintos, se marca como icono genérico y no se vuelve a usar en toda la sesión. Archivos distintos no pueden tener la misma vista previa.
+- **La miniatura del propio archivo se usa además como respuesta instantánea**: al seleccionar, el panel pinta ya la de la base de datos y solo la sustituye si llega algo mejor de verdad.
+- **11 comprobaciones nuevas** (`pruebas_preview.py`) sobre archivos reales del servidor: que la medida de parecido separa los dos casos, que el icono genérico no reemplaza ni se guarda en caché, que un render de más resolución sí se aplica, y que galería y panel leen la misma imagen.
+
 ## [2.1.2] - 2026-08-21 (Buscar dentro de los diálogos · Abrir PDF · guía al día)
 
 - **Buscar dentro de los resultados de un diálogo.** El despiece de un conjunto puede traer cientos de componentes y había que recorrerlos a ojo. Ahora todos los diálogos —despiece, ¿en qué ensamblajes se usa?, similares, duplicados y comparar— llevan un cuadro que filtra en vivo. Se escriben varias palabras y deben aparecer todas, sin importar tildes ni mayúsculas, y busca en todas las columnas (componente, cliente, proyecto, año…). Al lado indica cuántas filas quedan de cuántas.
