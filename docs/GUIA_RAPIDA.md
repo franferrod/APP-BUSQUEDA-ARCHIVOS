@@ -11,8 +11,24 @@ Escribe y pulsa **Enter**. La forma de separar las palabras cambia lo que encuen
 *   `tuerca m16` — **frase exacta**: las palabras juntas y en ese orden. La búsqueda más precisa.
 *   `tuerca;m16` — **todas** las palabras, en cualquier orden y posición del nombre. Más amplia.
 *   `tuerca,m16` — **cualquiera** de las palabras. La más amplia de todas.
+*   `-banda` — **quita** de la lista todo lo que lleve esa palabra en el nombre.
 
-> Regla rápida: el punto y coma **exige**, la coma **amplía**. Si salen pocos resultados prueba con `;`, y si aún así no aparece, con `,`.
+> Regla rápida: el punto y coma **exige**, la coma **amplía**, el guion **quita**. Si salen pocos resultados prueba con `;`, y si aún así no aparece, con `,`.
+
+### Quitar palabras que no quieres ver
+
+Un guion delante de una palabra la deja fuera. Se mezcla con todo lo demás:
+
+*   `cinta;450;-banda` — cintas de 450 **que no sean de banda**.
+*   `cinta;450;-banda;-inox` — se pueden poner **las que hagan falta**.
+*   `cinta,tapa,-inox` — cinta **o** tapa, pero **ninguna** de inox. Con coma también quita.
+
+Cada palabra que estés quitando aparece bajo la barra como un chip **«Sin …»**: así siempre se ve por qué salen menos resultados, y con su ✕ vuelve a entrar sin reescribir nada.
+
+Dos cosas que conviene saber:
+
+*   El guion solo quita cuando **abre palabra**. Los nombres y referencias que llevan guion de verdad se buscan tal cual: `26-0006`, `AC30-Q6A014` o `NO USAR - COLORES` funcionan como siempre.
+*   `-banda` a solas no busca nada, porque quitar no es buscar. Escribe primero **qué quieres encontrar** y luego lo que sobra.
 
 También puedes buscar por **código** (`24120.P027`), por **número de placa CE** (`24-0947`) o por parte del nombre del proyecto.
 
@@ -25,7 +41,7 @@ Pulsa la **flecha ▾ al lado del botón Buscar** y elige *"Buscar conjuntos que
 
 Escribe una referencia (por ejemplo `AC30-Q6A014` o `MOTOR REM 0.37KW`) y saldrán **los ensamblajes que la contienen**, no la pieza. Sirve para responder a "¿en qué máquinas montamos esto?" antes de cambiar nada.
 
-Se le pueden aplicar todos los filtros de la izquierda, igual que a una búsqueda normal.
+Se le pueden aplicar todos los filtros de la izquierda, igual que a una búsqueda normal, y vale la misma sintaxis: `pata curva;-soporte` son los conjuntos que llevan una pata curva **y no llevan ningún soporte**.
 
 ## 3. Refinar: buscar dentro de tus resultados
 

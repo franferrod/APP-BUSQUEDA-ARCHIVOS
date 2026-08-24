@@ -369,7 +369,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.1.3"
+APP_VERSION = "2.1.4"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -2336,9 +2336,21 @@ class BuscadorPiezas(QMainWindow):
         # Barra de búsqueda
         self.input_buscar = QLineEdit()
         self.input_buscar.setObjectName("SearchBox")
-        self._placeholder_busqueda_original = "Buscar: travesaño, cama, inox (separar por comas)"
+        # V2.1.4: el propio placeholder enseña la sintaxis, incluido el nuevo
+        # '-palabra'. Es el primer sitio donde mira todo el mundo.
+        self._placeholder_busqueda_original = (
+            "Buscar:  cinta; 450; -banda      ·   ';' todas   ·   ',' cualquiera   ·   '-' quita")
         self.input_buscar.setPlaceholderText(self._placeholder_busqueda_original)
-        self.input_buscar.setToolTip("Introduce palabras separadas por comas para una búsqueda inteligente")
+        self.input_buscar.setToolTip(
+            "CÓMO BUSCAR\n"
+            "  cinta 450      frase exacta (tal cual, con el espacio)\n"
+            "  cinta;450      las DOS cosas en el nombre\n"
+            "  cinta,tapa     cualquiera de las dos\n"
+            "  -banda         QUITA lo que lleve 'banda' en el nombre\n"
+            "\n"
+            "Se pueden mezclar:  cinta; 450; -banda; -inox\n"
+            "El guion solo quita si abre palabra:\n"
+            "'26-0006' o 'AC30-Q6A014' se buscan tal cual.")
         self.input_buscar.setMinimumHeight(38)
         # V2.0.0: buscador amplio pero con tope, y un separador elástico después,
         # para que los botones de la derecha respiren sin que se inflen
@@ -3791,6 +3803,22 @@ class BuscadorPiezas(QMainWindow):
                 chip.blockSignals(False)
         self.on_filtro_jerarquico_changed(None)
 
+    def _quitar_exclusion(self, palabra):
+        """Quita un «-palabra» del buscador y repite la búsqueda (V2.1.4).
+
+        El término se reconstruye desde la gramática, no recortando texto:
+        así da igual cómo se escribiera ('-banda', '; - banda', 'cinta -banda')
+        y el resultado siempre vuelve a ser una búsqueda válida."""
+        inc, exc, modo_and = self.db.parsear_termino(self.input_buscar.text())
+        exc = [e for e in exc if e != palabra]
+        sep = '; ' if modo_and else ', '
+        partes = list(inc) + ['-' + e for e in exc]
+        self.input_buscar.setText(sep.join(partes))
+        self._excluidas_activas = exc
+        if partes:
+            self.ejecutar_busqueda(auto=True)
+        else:
+            self._actualizar_chips_contexto()
     def _actualizar_chips_contexto(self):
         """Reconstruye los chips de filtros activos bajo el buscador."""
         try:
@@ -3847,6 +3875,12 @@ class BuscadorPiezas(QMainWindow):
             # V2.1.0 - Toggle Placa CE activo
             if self.btn_placa_ce.isChecked():
                 chips.append(("Solo placa CE", lambda: self.btn_placa_ce.setChecked(False)))
+            # V2.1.4: cada '-palabra' se ve como chip y se quita de un clic.
+            # Sin esto, un resultado corto por una exclusión olvidada no tiene
+            # explicación visible en pantalla.
+            for _p in reversed(getattr(self, '_excluidas_activas', []) or []):
+                chips.insert(0, ('Sin «%s»' % _p,
+                                 lambda p=_p: self._quitar_exclusion(p)))
             # V2.0.3: modo "conjuntos que lo lleven" bien visible y quitable
             if getattr(self, 'modo_busqueda', 'nombre') == 'contiene':
                 chips.insert(0, ("Conjuntos que lo lleven",
@@ -4521,8 +4555,26 @@ class BuscadorPiezas(QMainWindow):
                 return
             
             if not termino:
+                self._excluidas_activas = []      # V2.1.4: sin chip huérfano
+                self._actualizar_chips_contexto()
                 if not auto:
                     avisar_atencion(self, "Atención", "Introduce un término de búsqueda.")
+                return
+
+            # V2.1.4: '-palabra' quita resultados; si SOLO hay exclusiones no
+            # hay nada que buscar. Se dice qué falta y cómo se arregla, en vez
+            # de devolver medio índice o cero resultados sin explicación.
+            _inc, _exc, _and = self.db.parsear_termino(termino)
+            self._excluidas_activas = _exc
+            if _exc and not _inc:
+                ejemplo = 'cinta; ' + '; '.join('-' + e for e in _exc)
+                aviso = ('Un «-palabra» sirve para QUITAR resultados, no para buscar.' + '\n\n' +
+                         'Escribe primero lo que SÍ quieres encontrar:' + '\n' +
+                         '    ' + ejemplo)
+                if not auto:
+                    avisar_atencion(self, 'Falta qué buscar', aviso)
+                self.lbl_status.setText(
+                    'Escribe también lo que sí quieres encontrar — ej.: ' + ejemplo)
                 return
                 
             logger.info(f"Ejecutando búsqueda auto={auto} | Term: {termino} | Comp: {len(comp_sel)} | Años: {len(años_sel)}")
@@ -4886,16 +4938,21 @@ class BuscadorPiezas(QMainWindow):
     # ═══════════════════════════════════════════
     def _casa_termino_local(self, nombre, termino):
         """Matcher en cliente con la MISMA sintaxis del buscador:
-        espacio=frase exacta, ';'=Y, ','=O (sin acentos, sin mayúsculas)."""
+        espacio=frase exacta, ';'=Y, ','=O, '-palabra'=fuera (V2.1.4).
+        Sin acentos y sin distinguir mayúsculas. Comparte gramática con la
+        consulta del servidor (IndexManager.parsear_termino) para que el
+        refinado por nombre y la búsqueda no puedan discrepar."""
         norm = self.db.normalizar_texto
         n = norm(nombre)
-        if ';' in termino:
-            kws = [k.strip() for k in termino.split(';') if k.strip()]
-            return all(norm(k) in n for k in kws)
-        if ',' in termino:
-            kws = [k.strip() for k in termino.split(',') if k.strip()]
-            return any(norm(k) in n for k in kws)
-        return norm(termino.strip()) in n
+        incluidas, excluidas, modo_and = self.db.parsear_termino(termino)
+        if any(norm(x) in n for x in excluidas):
+            return False
+        if not incluidas:
+            # solo exclusiones: pasa todo lo que no lleve esas palabras
+            return True
+        if modo_and:
+            return all(norm(k) in n for k in incluidas)
+        return any(norm(k) in n for k in incluidas)
 
     def _pintar_estilo_refinar(self):
         """Estilos de la barra: input con focus naranja y borde de la barra
@@ -7168,6 +7225,8 @@ class BuscadorPiezas(QMainWindow):
                      border-bottom: 2px solid #E66C32; padding-bottom: 2px; }
                 h2 { color: #F5F5F5; font-size: 13px; margin-top: 10px;
                      margin-bottom: 5px; font-weight: bold; }
+                h3 { color: #F0A377; font-size: 12px; margin-top: 8px;
+                     margin-bottom: 3px; font-weight: bold; }
                 p, li, body { font-size: 11px; line-height: 1.5; color: #DFDFDF; }
                 blockquote { border-left: 3px solid #E66C32; background-color: #3A2C21;
                              padding: 5px; margin: 5px 0; color: #F0A377; font-style: italic; }
@@ -7183,6 +7242,9 @@ class BuscadorPiezas(QMainWindow):
                         lines[i] = f"<h1>{line_s[4:]}</h1>"
                     elif line_s.startswith('# '):
                         lines[i] = f"<h1>{line_s[2:]}</h1>"
+                    elif line_s.startswith('### '):
+                        # V2.1.4: el '###' salia literal en pantalla
+                        lines[i] = f"<h3>{line_s[4:]}</h3>"
                     elif line_s.startswith('## '):
                         lines[i] = f"<h2>{line_s[3:]}</h2>"
                     elif line_s.startswith('*   ') or line_s.startswith('* '):

@@ -2,6 +2,7 @@ import os
 import time
 import logging
 import unicodedata
+import re
 import threading
 import psycopg2
 import psycopg2.pool
@@ -340,6 +341,60 @@ class IndexManager:
         texto = unicodedata.normalize('NFKD', str(texto))
         texto = "".join([c for c in texto if not unicodedata.combining(c)])
         return texto.upper()
+
+    # ══════════════════════════════════════════════════════════════
+    # SINTAXIS DEL BUSCADOR  (V2.1.4)
+    # ══════════════════════════════════════════════════════════════
+    # Un guion que abre palabra EXCLUYE. Se exige que vaya pegado a la
+    # palabra y precedido de espacio (o que abra el trozo) para no romper
+    # los nombres que llevan guion de verdad: '26-0006', 'AC30-Q6A014'.
+    _RE_EXCLUIDA = re.compile(r'(^|\s)-(\S+)')
+
+    @classmethod
+    def parsear_termino(cls, termino):
+        """Descompone lo escrito en el buscador (V2.1.4).
+
+        Devuelve (incluidas, excluidas, modo_and):
+            incluidas  lo que SÍ debe aparecer en el nombre del archivo
+            excluidas  lo que NO debe aparecer
+            modo_and   True = tienen que estar todas · False = cualquiera
+
+        Sintaxis:
+            tuerca m16          frase exacta
+            tuerca;m16          Y  — las dos
+            tuerca,m16          O  — cualquiera
+            cinta;450;-banda    y FUERA lo que lleve 'banda' en el nombre
+
+        El guion solo excluye si abre el trozo ('-banda', '; - banda') o si
+        va pegado a la palabra después de un espacio ('cinta -banda'). Un
+        guion dentro de una palabra ('26-0006') o suelto entre espacios
+        ('TAPA - IZQUIERDA') es texto normal y se busca tal cual.
+        """
+        texto = termino or ""
+        if ';' in texto:
+            trozos, modo_and = texto.split(';'), True
+        elif ',' in texto:
+            trozos, modo_and = texto.split(','), False
+        else:
+            trozos, modo_and = [texto], True
+
+        incluidas, excluidas = [], []
+        for trozo in trozos:
+            t = trozo.strip()
+            if not t:
+                continue
+            if t.startswith('-'):
+                # el trozo entero es una exclusión: '-banda' y también '- banda'
+                fuera = t.lstrip('-').strip()
+                if fuera:
+                    excluidas.append(fuera)
+                continue
+            for _sep, palabra in cls._RE_EXCLUIDA.findall(t):
+                excluidas.append(palabra)
+            t = cls._RE_EXCLUIDA.sub(lambda m: m.group(1), t).strip()
+            if t:
+                incluidas.append(t)
+        return incluidas, excluidas, modo_and
 
     def init_db(self):
         """Crea schema, tablas e índices si no existen."""
@@ -894,21 +949,18 @@ class IndexManager:
         """Busca ENSAMBLAJES que contengan la pieza/subensamblaje indicado
         (V2.0.3). El término se busca en los nombres de los componentes
         (tabla 'componentes'), no en el nombre del ensamblaje.
-        Misma sintaxis del buscador: espacio=frase, ';'=Y, ','=O.
+        Misma sintaxis del buscador: espacio=frase, ';'=Y, ','=O y
+        '-palabra'=fuera los que lleven ese componente (V2.1.4).
         Devuelve filas con el MISMO formato que buscar(), para que la vista
         las pinte igual."""
         if not (termino or "").strip():
             return []
 
-        if ';' in termino:
-            keywords = [k.strip() for k in termino.split(';') if k.strip()]
-            modo_and = True
-        elif ',' in termino:
-            keywords = [k.strip() for k in termino.split(',') if k.strip()]
-            modo_and = False
-        else:
-            keywords = [termino.strip()]
-            modo_and = True
+        # V2.1.4: misma gramática que el buscador principal. Aquí un
+        # '-palabra' quita los conjuntos que LLEVEN un componente así.
+        keywords, excluidas, modo_and = self.parsear_termino(termino)
+        if not keywords:
+            return []
 
         base_cols = """a.nombre_archivo, a.origen, a.anio, a.cliente, a.proyecto, a.tipo_carpeta,
                        a.codigo_proyecto, a.nombre_proyecto, a.codigo_orden, a.nombre_orden,
@@ -924,11 +976,15 @@ class IndexManager:
             try:
                 cur_p = wrapper_p._conn.cursor()
                 conjuntos = [self._rutas_que_contienen(cur_p, kw, True) for kw in keywords]
+                fuera = set()
+                for ex in excluidas:
+                    fuera |= self._rutas_que_contienen(cur_p, ex, True)
             finally:
                 wrapper_p.close()
             rutas_ok = conjuntos[0] if conjuntos else set()
             for c in conjuntos[1:]:
                 rutas_ok = (rutas_ok & c) if modo_and else (rutas_ok | c)
+            rutas_ok -= fuera          # V2.1.4: '-palabra' se resta al final
             if not rutas_ok:
                 return []
             where = ["a.ruta_completa = ANY(%s)"]
@@ -943,6 +999,13 @@ class IndexManager:
                     "    AND UPPER(unaccent(c.componente_nombre)) LIKE %s)")
                 params.append(f"%{self.normalizar_texto(kw)}%")
             where = [f"({(' AND ' if modo_and else ' OR ').join(cond_kw)})"]
+            # V2.1.4: y fuera los que lleven un componente excluido
+            for ex in excluidas:
+                where.append(
+                    "NOT EXISTS (SELECT 1 FROM buscador.componentes c"
+                    "  WHERE c.ensamblaje_ruta = a.ruta_completa"
+                    "    AND UPPER(unaccent(c.componente_nombre)) LIKE %s)")
+                params.append(f"%{self.normalizar_texto(ex)}%")
 
         if compañeros:
             where.append("a.origen IN (%s)" % ','.join(['%s'] * len(compañeros)))
@@ -1205,14 +1268,11 @@ class IndexManager:
         """
         logger.info(f"Buscando: '{termino}' | Orígenes: {compañeros}, Años: {años}")
 
-        is_and_search = False
-        if ';' in termino:
-            keywords = [k.strip() for k in termino.split(';') if k.strip()]
-            is_and_search = True
-        elif ',' in termino:
-            keywords = [k.strip() for k in termino.split(',') if k.strip()]
-        else:
-            keywords = [termino] if termino.strip() else []
+        # V2.1.4: una sola gramatica para todo el buscador. '-palabra' quita
+        # del resultado los nombres que la lleven; convive con ';' y ','.
+        keywords, excluidas, is_and_search = self.parsear_termino(termino)
+        if excluidas:
+            logger.info("Excluyendo del nombre: %s", ", ".join(excluidas))
 
         params = []
         base_cols = """nombre_archivo, origen, anio, cliente, proyecto, tipo_carpeta,
@@ -1261,6 +1321,12 @@ class IndexManager:
 
             query_select = f"SELECT {base_cols}, ({score_sql}) as score FROM buscador.archivos"
             base_where = f"({where_clause})"
+
+        # V2.1.4: '-palabra' -> fuera todo nombre que la contenga. Va siempre
+        # en Y, aunque la busqueda sea de tipo O: quitar es quitar.
+        for fuera in excluidas:
+            base_where += f" AND {NOMBRE_NORM} NOT LIKE %s"
+            params.append(f"%{self.normalizar_texto(fuera)}%")
 
         # V2.1.0 - Filtro "Solo máquinas con placa CE": el prefijo del nombre de
         # archivo (ej. "26047.E107") debe existir como num_plano en placas_ce

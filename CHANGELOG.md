@@ -1,5 +1,18 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.1.4] - 2026-08-24 (Quitar palabras de la búsqueda con «-palabra»)
+
+Petición de un compañero: poder decir en la **barra de búsqueda** qué palabras **no** quieres ver en el nombre del archivo. Hasta ahora eso solo se podía hacer refinando por componentes, que es otra cosa: filtraba por lo que el conjunto lleva dentro, no por cómo se llama.
+
+- **`-palabra` quita resultados.** `cinta;450;-banda` son las cintas de 450 que **no** llevan «banda» en el nombre. Se pueden encadenar (`-banda;-inox`) y convive con el resto de la sintaxis: `;` sigue exigiendo todas, `,` sigue ampliando, y lo que se quita se quita en los dos casos — en una búsqueda con comas, la exclusión manda sobre todo el conjunto.
+- **Los nombres con guion de verdad no se rompen.** El guion solo quita cuando abre palabra. `26-0006`, `AC30-Q6A014`, `22057-188` o un nombre real del índice como `NO USAR - COLORES ERRONEOS` se siguen buscando tal cual. Comprobado archivo a archivo contra el servidor.
+- **Se ve por qué salen menos resultados.** Cada palabra excluida aparece bajo la barra como un chip **«Sin banda»**, y su ✕ la devuelve a la búsqueda sin tener que reescribir el término. Antes, una exclusión olvidada no tenía ninguna explicación en pantalla.
+- **`-banda` a solas no lanza una búsqueda a ciegas.** Quitar no es buscar: la app lo dice y propone el término completo (`cinta; -banda`) en vez de devolver medio índice o cero resultados sin motivo aparente.
+- **El modo «Conjuntos que lo lleven» entiende lo mismo**: `pata curva;-soporte` son los conjuntos que llevan una pata curva y **no** llevan ningún soporte.
+- **Una sola gramática para toda la app.** El troceado del término estaba copiado en cuatro sitios y podían discrepar. Ahora hay un único analizador (`parsear_termino`) que usan la consulta al servidor, el filtro local y el modo Conjuntos — y hay pruebas de que cliente y servidor deciden siempre lo mismo sobre el mismo archivo.
+- **Ayuda al día**: el recuadro de búsqueda y su tooltip enseñan la sintaxis completa, y la Guía Rápida tiene un apartado nuevo con ejemplos y las dos trampas (el guion de las referencias y el `-palabra` a solas). De paso, los subtítulos `###` se pintaban literalmente en la pestaña de Ayuda; ahora se renderizan.
+- **47 comprobaciones nuevas** (`pruebas_exclusiones.py`) sobre datos reales del servidor: gramática, consulta contra SQL a pelo (que se quita exactamente lo pedido, ni uno más), coherencia cliente/servidor, modo Conjuntos, la interfaz y la propia ayuda.
+
 ## [2.1.3] - 2026-08-24 (La vista previa ya no tapa la miniatura buena)
 
 - **Al seleccionar un ensamblaje, el panel derecho mostraba el cubo genérico de SolidWorks** aunque en la galería se viera perfectamente su miniatura. Causa medida: cuando Windows no sabe renderizar un `.SLDASM` devuelve **el mismo icono genérico para archivos distintos** (comprobado: dos ensamblajes diferentes devolvían la misma imagen pixel a pixel), y la app lo aplicaba sin comprobar nada, machacando la miniatura correcta que ya estaba puesta.
