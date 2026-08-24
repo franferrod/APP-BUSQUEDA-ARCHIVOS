@@ -254,6 +254,12 @@ def prueba_servidor_caido():
     origen = os.path.join(os.path.dirname(EXE), "config.ini")
     cfg = configparser.ConfigParser()
     cfg.read(origen, encoding="utf-8")
+    # Si falta el config.ini junto al .exe, esto reventaba con un KeyError seco
+    # a mitad de la bateria y parecia un fallo de la app. Se dice lo que pasa.
+    if "database" not in cfg:
+        comprobar("hay un config.ini junto al ejecutable para esta prueba", False,
+                  "falta %s" % origen)
+        return
     cfg["database"]["host"] = "192.0.2.1"
     falso = os.path.join(tempfile.gettempdir(), "alsi_exe_caido.ini")
     with open(falso, "w", encoding="utf-8") as f:
