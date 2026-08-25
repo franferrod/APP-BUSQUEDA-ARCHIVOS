@@ -19,9 +19,19 @@ máquina que ejecuta los pases nocturnos (`ALSI_Reindexar_Diario` a las 15:45,
 
 ## Reglas del usuario — ya decididas, no volver a discutir
 
-1. **Desplegar solo cuando diga "despliega".** Se prueba en `releases\vX.Y.Z\`; la carpeta de red
-   es producción para toda la oficina. Antes de sobrescribirla, guarda lo que hay en
-   `releases\_backup_red_vX.Y.Z_AAAAMMDD\`.
+1. **Desplegar solo cuando diga "despliega".** El ciclo acordado, sin atajos:
+   probar en `releases\vX.Y.Z\` → subir de versión → copiar a la carpeta de red → al resto de
+   la oficina le sale solo el aviso de "nueva versión disponible" y actualizan ellos.
+   Antes de sobrescribir la red, guarda lo que hay en `releases\_backup_red_vX.Y.Z_AAAAMMDD\`.
+
+   **La carpeta de red es producción de ~10 personas mientras trabajan.** Dos reglas que
+   salieron de romperlo:
+   - **Nunca ejecutes el `.exe` de la carpeta de red.** Ni para probar, ni para pedirle un
+     `--diagnostico`. Se ejecuta siempre la copia de `releases\vX.Y.Z\`. Lanzar el de la red
+     abre una ventana en la pantalla de quien esté delante y compite con la gente.
+   - **Copiar el `.exe` son 82 MB sobre SMB**: durante ese rato, quien abra la app se
+     encuentra el binario a medio reemplazar y se le queda colgada. Avisa antes de copiar, o
+     hazlo fuera de horario. No es un fallo del producto: es el minuto del despliegue.
 2. **Etiquetar es tu trabajo, no hace falta que lo pida.** Cada versión lleva su tag anotado y se
    empuja a GitHub. Tiene que quedar registro de cada cambio.
 3. **Nada de cambios de lógica no pedidos.** Propón primero: *"para la próxima me pides permiso."*
