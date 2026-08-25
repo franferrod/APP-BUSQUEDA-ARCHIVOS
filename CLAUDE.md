@@ -32,16 +32,26 @@ máquina que ejecuta los pases nocturnos (`ALSI_Reindexar_Diario` a las 15:45,
    - **Copiar el `.exe` son 82 MB sobre SMB**: durante ese rato, quien abra la app se
      encuentra el binario a medio reemplazar y se le queda colgada. Avisa antes de copiar, o
      hazlo fuera de horario. No es un fallo del producto: es el minuto del despliegue.
-2. **Etiquetar es tu trabajo, no hace falta que lo pida.** Cada versión lleva su tag anotado y se
+2. **El número de versión lo decide él.** No lo subas por iniciativa propia.
+   Textual: *"Eso lo decido yo... no me lies."*
+
+   **Y si el despliegue va a salir con un número distinto del que te pidió, pregúntaselo ANTES
+   de copiar nada — no lo anuncies después.** Pasó el 25/08/2026: pidió desplegar la v2.2.0,
+   entró un porte limpio encima y desplegué la **v2.3.0** doblando las dos para no dar dos
+   avisos de actualización el mismo día. El razonamiento era bueno y lo aceptó, pero la
+   decisión no era mía. La oficina saltó de la v2.1.4 a la v2.3.0 sin pasar por la v2.2.0.
+   Cuando dos versiones se doblen en una, hay que **etiquetar igualmente la que no se
+   desplegó** para que el historial no tenga huecos.
+3. **Etiquetar es tu trabajo, no hace falta que lo pida.** Cada versión lleva su tag anotado y se
    empuja a GitHub. Tiene que quedar registro de cada cambio.
-3. **Nada de cambios de lógica no pedidos.** Propón primero: *"para la próxima me pides permiso."*
-4. **Ninguna afirmación sin medir.** Este proyecto se ha quemado varias veces con diagnósticos por
+4. **Nada de cambios de lógica no pedidos.** Propón primero: *"para la próxima me pides permiso."*
+5. **Ninguna afirmación sin medir.** Este proyecto se ha quemado varias veces con diagnósticos por
    intuición. Mide contra el servidor real y enseña los números.
-5. **Muchas pruebas, siempre.** *"no puede volver a fallar."* Cada feature trae su batería.
-6. **Se le habla en español**, en su idioma de negocio (piezas, conjuntos, planos).
-7. **Nunca escribir en archivos de producción de SolidWorks.** Abrir siempre `allowReadOnly=true`.
+6. **Muchas pruebas, siempre.** *"no puede volver a fallar."* Cada feature trae su batería.
+7. **Se le habla en español**, en su idioma de negocio (piezas, conjuntos, planos).
+8. **Nunca escribir en archivos de producción de SolidWorks.** Abrir siempre `allowReadOnly=true`.
    Un pase que abra y reguarde modelos de madrugada está descartado de antemano.
-8. **Credenciales fuera del repositorio.** El repo es público. `config.ini` está en `.gitignore`;
+9. **Credenciales fuera del repositorio.** El repo es público. `config.ini` está en `.gitignore`;
    nunca lo añadas ni pegues una contraseña en el código, un test o un mensaje de commit.
 
 ## Compilar y probar
