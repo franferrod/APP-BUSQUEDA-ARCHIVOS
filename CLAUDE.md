@@ -1,7 +1,7 @@
 # Buscador de Piezas ALSI — guía para cada sesión
 
 App PyQt5 de escritorio (Windows) que busca archivos SolidWorks del NAS contra un índice
-PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.1.4**. En desarrollo: **v2.2.0**.
+PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.0**.
 El estado completo del proyecto está en `ESTADO.md`; las decisiones de fondo, en `docs/ADR-002`.
 
 ## Dónde trabajar
@@ -43,6 +43,7 @@ Compila `SwPropExtractor.cs` con `csc.exe` y empaqueta con PyInstaller (*onefile
 Git Bash, `csc` necesita flags con guion (`-reference:`), no con barra.
 
 ```bash
+python pruebas_cascada.py         # 30 · cascada de filtros de propiedades
 python pruebas_credenciales.py    # 16 · de dónde salen las credenciales
 python pruebas_analisis.py        # 31 · conjuntos con piezas sin vista previa
 python pruebas_exclusiones.py     # 47 · gramática de búsqueda y exclusiones
@@ -53,7 +54,7 @@ python pruebas_preview.py         # 11 · panel de vista previa e icono genéric
 python pruebas_ejecutable.py      # 29 · sobre el .exe empaquetado
 ```
 
-Total: **291**. Reglas del banco de pruebas:
+Total: **321**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - La carpeta de pruebas del `.exe` necesita su `config.ini`.

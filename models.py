@@ -1697,6 +1697,65 @@ class IndexManager:
         finally:
             wrapper.close()
 
+    def obtener_propiedades_contexto(self, compañeros=None, años=None, clientes=None, proyectos=None):
+        """V2.3.0 - Cascada de filtros de propiedades: valores de Material,
+        Tratamiento, Espesor y Cierre presentes en el contexto filtrado actual
+        (origen/años/clientes/proyectos), igual que la cascada de Clientes y
+        Proyectos. Una sola pasada de tabla con GROUPING SETS; SIEMPRE se llama
+        desde un hilo de fondo, nunca desde el de UI.
+        Réplica de la semántica de buscar(): las bibliotecas ignoran los
+        filtros jerárquicos (sus piezas siempre entran en la búsqueda)."""
+        normales = [c for c in (compañeros or []) if c not in ("BIBLIOTECA_3D", "ALSI_ESTANDAR")]
+        bibliotecas = [c for c in (compañeros or []) if c in ("BIBLIOTECA_3D", "ALSI_ESTANDAR")]
+
+        params = []
+        ramas = []
+        if normales:
+            cond = [f"origen IN ({','.join(['%s'] * len(normales))})"]
+            params.extend(normales)
+            if años:
+                cond.append(f"anio IN ({','.join(['%s'] * len(años))})")
+                params.extend([int(a) for a in años])
+            if clientes:
+                cond.append(f"cliente IN ({','.join(['%s'] * len(clientes))})")
+                params.extend(clientes)
+            if proyectos:
+                cond.append(f"codigo_proyecto IN ({','.join(['%s'] * len(proyectos))})")
+                params.extend(proyectos)
+            ramas.append("(" + " AND ".join(cond) + ")")
+        if bibliotecas:
+            ramas.append(f"origen IN ({','.join(['%s'] * len(bibliotecas))})")
+            params.extend(bibliotecas)
+        where_sql = " OR ".join(ramas) if ramas else "1=1"
+
+        query = (
+            "SELECT sw_material, sw_tratamiento, sw_espesor, sw_tipo_cierre"
+            f" FROM buscador.archivos WHERE {where_sql}"
+            " GROUP BY GROUPING SETS ((sw_material),(sw_tratamiento),(sw_espesor),(sw_tipo_cierre))"
+        )
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute(query, params)
+            res = {'materiales': set(), 'tratamientos': set(), 'espesores': set(), 'cierres': set()}
+            claves = ('materiales', 'tratamientos', 'espesores', 'cierres')
+            for fila in cursor.fetchall():
+                # Cada fila trae valor solo en su columna agrupada (resto NULL)
+                for i, clave in enumerate(claves):
+                    if fila[i]:
+                        # Se normaliza ANTES de comprobar: un valor que es solo
+                        # espacios no es un valor. Si se colaba, entraba como
+                        # cadena vacia y descuadraba el recuento.
+                        valor = str(fila[i]).strip().upper()
+                        if valor:
+                            res[clave].add(valor)
+            return res
+        except Exception as e:
+            logger.error(f"Error obteniendo propiedades de contexto: {e}")
+            return {}
+        finally:
+            wrapper.close()
+
     def obtener_ordenes(self, clientes=None, proyectos=None, compañeros=None, años=None):
         wrapper = self.get_connection()
         try:

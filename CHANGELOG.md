@@ -1,5 +1,18 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.3.0] - 2026-08-25 (Los filtros de propiedades ya se estrechan al contexto)
+
+Incluye todo lo de la 2.2.0, que no llegó a desplegarse por separado.
+
+- **Material, Tratamiento, Cierre y Espesor funcionan ya en cascada**, igual que Clientes y Proyectos: solo se ofrecen los valores que **existen en lo que tienes filtrado**. Hasta ahora la lista de materiales mostraba los **204** del índice entero aunque tuvieras marcado un cliente que solo usa **68**. Había que bajar por una lista larguísima llena de opciones que no iban a devolver nada.
+- **Se recalcula solo** al cambiar origen, años, clientes o proyectos, y también después de reindexar el NAS.
+- **Lo que tengas marcado nunca se esconde**, aunque deje de aplicar: si no, no habría forma de desmarcarlo. Y **«Todos» ya no marca lo que está oculto**, que era una manera silenciosa de filtrar por valores inexistentes y quedarse sin resultados.
+- **No cuesta fluidez.** La consulta es una sola pasada con `GROUPING SETS` y corre **en segundo plano**, nunca en el hilo de la interfaz; lanzarla devuelve en 0,000 s. Lleva número de generación para descartar respuestas que llegan tarde, y si el mismo contexto ya está calculado no se vuelve a preguntar.
+- **Si el servidor falla, se ve todo**, exactamente como antes: la cascada nunca deja la lista vacía por un error.
+- **28 comprobaciones nuevas** (`pruebas_cascada.py`) contra el servidor real: que estrecha de verdad y cuadra con el SQL, que las bibliotecas siguen ignorando los filtros jerárquicos, que lo marcado no se esconde, que una respuesta obsoleta no pisa a la buena y que los espesores (`3`, `3.00`, `5.5`) se traducen bien a milímetros.
+
+*De paso se corrigió un fallo del código original: un valor de propiedad formado solo por espacios entraba como cadena vacía y descuadraba el recuento en uno.*
+
 ## [2.2.0] - 2026-08-25 (Recuperar vistas previas · credenciales fuera del repositorio)
 
 **Análisis nuevo: «Conjuntos con más piezas sin vista previa».** Cierra la investigación de las miniaturas perdidas. Quedó demostrado que no las rompe ni la app ni el NAS ni el indexado, sino guardar en bloque desde SolidWorks, y que **no hay forma de repararlas automáticamente**: la API de Document Manager sabe *leer* la vista previa pero no escribirla, así que lo único que la regenera es abrir el archivo, reconstruir (Ctrl+Q) y volver a guardar.

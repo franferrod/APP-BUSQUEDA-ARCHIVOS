@@ -58,7 +58,7 @@ Cada nivel deja un **chip** que puedes quitar con su ✕. Los niveles NO salen e
 
 ## 4. Los filtros de la izquierda
 
-Se combinan entre sí y funcionan **en cascada**: al elegir un año solo verás los clientes y proyectos de ese año.
+Se combinan entre sí y funcionan **en cascada**: al elegir un año solo verás los clientes y proyectos de ese año, y **Material, Tratamiento, Cierre y Espesor solo ofrecen los valores que existen en lo que tienes filtrado**. Si marcas un cliente que usa 68 materiales, no tendrás que bajar por los 204 del índice entero.
 
 *   **Origen**: PROYECTOS, BIBLIOTECA 3D, ALSI ESTÁNDAR.
 *   **Años de proyecto**, **Carpetas** (MECÁNICA, LAYOUT, LISTADOS…), **Clientes** y **Proyectos**.
@@ -68,6 +68,8 @@ Se combinan entre sí y funcionan **en cascada**: al elegir un año solo verás 
 *   **Placa CE**: deja solo los archivos que tienen placa CE asociada.
 
 Los chips naranjas de arriba muestran qué filtros tienes puestos; **Limpiar** los quita todos.
+
+> Si tenías marcado un valor que deja de aplicar al cambiar de contexto, **no se esconde**: sigue ahí para que puedas desmarcarlo. Y **Todos** marca solo lo que se ve, nunca lo oculto.
 
 ## 5. Ver los resultados
 

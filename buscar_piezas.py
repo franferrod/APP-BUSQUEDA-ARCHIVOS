@@ -369,7 +369,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -1005,6 +1005,29 @@ class GaleriaArrastrable(QListWidget):
         if urls:
             mime.setUrls(urls)
         return mime
+
+
+class PropsContextWorker(QThread):
+    """V2.3.0: cascada de los filtros de propiedades SW — consulta en segundo
+    plano qué valores de Material/Tratamiento/Espesor/Cierre existen en el
+    contexto filtrado (origen/años/clientes/proyectos), igual que la cascada
+    de Clientes y Proyectos pero sin tocar el hilo de UI. Lleva número de
+    generación para descartar respuestas obsoletas."""
+    listo = pyqtSignal(int, dict)  # generacion, {'materiales': set, ...}
+
+    def __init__(self, generacion, controller, kwargs):
+        super().__init__()
+        self.generacion = generacion
+        self.controller = controller
+        self.kwargs = kwargs
+
+    def run(self):
+        try:
+            data = self.controller.get_propiedades_contexto(**self.kwargs)
+        except Exception as e:
+            logger.debug(f"PropsContextWorker falló: {e}")
+            data = {}
+        self.listo.emit(self.generacion, data)
 
 
 # -----------------------------------------------------------------------------
@@ -2060,6 +2083,9 @@ class BuscadorPiezas(QMainWindow):
             self.refrescar_filtros_jerarquicos()
             self.cargar_filtros_propiedades()
             self.cargar_preferencias()
+            # V2.3.0: cascada inicial de propiedades SW con las preferencias
+            # ya restauradas (corre en segundo plano)
+            self._refrescar_props_contexto()
             self._actualizar_chips_contexto()
             self.lbl_status.setText("Listo")
         except Exception as e:
@@ -2198,9 +2224,15 @@ class BuscadorPiezas(QMainWindow):
             logger.info(f"Rutas NAS OK por host: {NAS_HOST_ACTIVO}")
 
     def toggle_checkboxes(self, list_widget, state):
-        """Activa o desactiva todos los checkboxes en un QListWidget"""
+        """Activa o desactiva todos los checkboxes en un QListWidget.
+        V2.3.0: 'Todos' no marca los valores ocultos por la cascada de
+        propiedades (no existen en el contexto actual); 'Ninguno' desmarca
+        siempre todo, ocultos incluidos."""
         for i in range(list_widget.count()):
-            list_widget.item(i).setCheckState(Qt.Checked if state else Qt.Unchecked)
+            item = list_widget.item(i)
+            if state and item.isHidden():
+                continue
+            item.setCheckState(Qt.Checked if state else Qt.Unchecked)
     
     def get_selected_items(self, list_widget):
         """Devuelve una lista con el texto o data de los items marcados en un QListWidget"""
@@ -4438,6 +4470,8 @@ class BuscadorPiezas(QMainWindow):
                 except (TypeError, RuntimeError):
                     pass
                 w.wait(1500)
+            # V2.3.0: idem con los workers de la cascada de propiedades
+            self._detener_props_workers()
         except Exception as e:
             logger.debug(f"Error deteniendo tareas al cerrar: {e}")
         self.save_window_state()
@@ -4468,6 +4502,8 @@ class BuscadorPiezas(QMainWindow):
     def _refrescar_real_jerarquico(self):
         """Ejecución real de la cascada tras el debouncing"""
         self.refrescar_filtros_jerarquicos()
+        # V2.3.0: cascada de propiedades SW en segundo plano (no bloquea)
+        self._refrescar_props_contexto()
         # V1.0.1: Disparar búsqueda automática (silenciosa)
         self.ejecutar_busqueda(auto=True)
 
@@ -4486,6 +4522,102 @@ class BuscadorPiezas(QMainWindow):
             # Tratamientos y Espesores son fijos (definidos en la UI)
         except Exception as e:
             logger.error(f"Error cargando propiedades: {e}")
+
+    def _refrescar_props_contexto(self):
+        """V2.3.0: cascada de los filtros de propiedades SW. Lanza en segundo
+        plano la consulta de valores presentes en el contexto actual y oculta
+        en Material/Tratamiento/Cierre/Espesor los que no tienen archivos.
+        La consulta nunca corre en el hilo de UI: cero impacto en fluidez."""
+        try:
+            kwargs = {
+                'companions': self.get_selected_items(self.list_companeros),
+                'years': self.get_selected_items(self.list_años),
+                'clientes': self.get_selected_items(self.list_clientes) or None,
+                'proyectos': [i.split(' - ')[0]
+                              for i in self.get_selected_items(self.list_proyectos)] or None,
+            }
+            # Mismo contexto que la última vez: nada que refrescar
+            if getattr(self, '_props_ctx_kwargs', None) == kwargs:
+                return
+            self._props_ctx_kwargs = kwargs
+            self._gen_props = getattr(self, '_gen_props', 0) + 1
+            worker = PropsContextWorker(self._gen_props, self.controller, kwargs)
+            worker.listo.connect(self._on_props_contexto)
+            if not hasattr(self, '_props_workers'):
+                self._props_workers = []
+                # Este worker arranca ya en la carga inicial, antes de que el
+                # usuario toque nada. Si el proceso termina por una via que no
+                # pasa por closeEvent, Qt destruye el hilo en marcha y el
+                # proceso se cae al salir. aboutToQuit cubre todas las vias.
+                app = QApplication.instance()
+                if app is not None:
+                    app.aboutToQuit.connect(self._detener_props_workers)
+            self._props_workers.append(worker)
+            worker.finished.connect(lambda w=worker: self._limpiar_props_worker(w))
+            worker.start()
+        except Exception as e:
+            logger.debug(f"Error lanzando cascada de propiedades: {e}")
+
+    def _limpiar_props_worker(self, worker):
+        try:
+            self._props_workers.remove(worker)
+        except (ValueError, AttributeError):
+            pass
+
+    def _detener_props_workers(self):
+        """Espera a los workers de la cascada antes de que Qt se desmonte."""
+        for w in list(getattr(self, '_props_workers', [])):
+            try:
+                w.listo.disconnect(self._on_props_contexto)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                w.wait(2000)
+            except RuntimeError:
+                pass
+        self._props_workers = []
+
+    def _on_props_contexto(self, gen, data):
+        """Aplica la cascada: oculta los valores sin archivos en el contexto.
+        Lo marcado nunca se oculta (para poder desmarcarlo). setHidden no
+        dispara itemChanged, así que no provoca búsquedas en cadena."""
+        if gen != getattr(self, '_gen_props', 0):
+            return  # respuesta obsoleta: hay un contexto más nuevo en curso
+        try:
+            listas = (self.list_materiales, self.list_tratamientos,
+                      self.list_cierres, self.list_espesores)
+            if not data:
+                # Error de BD: mostrar todo (mismo comportamiento que antes)
+                for lw in listas:
+                    for i in range(lw.count()):
+                        lw.item(i).setHidden(False)
+                return
+            mats = data.get('materiales', set())
+            trats = data.get('tratamientos', set())
+            cierres = data.get('cierres', set())
+            # Espesores de BD ("3", "3.00", "3.5"...) -> mm enteros, con la
+            # misma semántica que el filtro de buscar(): '3' o '3.%'
+            esp_mm = set()
+            for v in data.get('espesores', set()):
+                m = re.match(r'^(\d+)(?:[.,]\d*)?$', v)
+                if m:
+                    esp_mm.add(int(m.group(1)))
+
+            def aplicar(lw, visible_fn):
+                for i in range(lw.count()):
+                    item = lw.item(i)
+                    try:
+                        visible = visible_fn(item.text())
+                    except Exception:
+                        visible = True   # ante la duda, no se esconde nada
+                    item.setHidden(item.checkState() != Qt.Checked and not visible)
+
+            aplicar(self.list_materiales, lambda t: t.strip().upper() in mats)
+            aplicar(self.list_tratamientos, lambda t: t.strip().upper() in trats)
+            aplicar(self.list_cierres, lambda t: any(t.upper() in v for v in cierres))
+            aplicar(self.list_espesores, lambda t: int(t.replace('mm', '').strip()) in esp_mm)
+        except Exception as e:
+            logger.debug(f"Error aplicando cascada de propiedades: {e}")
 
     def refrescar_filtros_jerarquicos(self, solo_proyectos=False, solo_ordenes=False):
         """Puebla las listas de Clientes, Proyectos y Órdenes con lógica de cascada total (V1.0.0)"""
@@ -5242,6 +5374,9 @@ class BuscadorPiezas(QMainWindow):
         QMessageBox.information(self, "Éxito", f"Se han indexado {total} archivos en {tiempo:.1f} segundos.")
         self.lbl_status.setText(f"Última indexación: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
         self.refrescar_filtros_jerarquicos()
+        # V2.3.0: el índice ha cambiado — recalcular la cascada de propiedades
+        self._props_ctx_kwargs = None
+        self._refrescar_props_contexto()
 
     # ═══════════════════════════════════════════
     # PREVISUALIZACIÓN (Cambio 4)
