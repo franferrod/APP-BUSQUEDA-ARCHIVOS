@@ -72,8 +72,15 @@ def buscar_datos_de_prueba():
                    GROUP BY 1 HAVING count(*) >= 8
                    ORDER BY count(*) DESC LIMIT 1""")
     ens = cur.fetchone()[0]
+    # El primer token tiene que parecer un CODIGO, igual que exige
+    # _codigo_de_nombre: con punto y con algun digito ('24120.P027').
+    # Sin esa condicion la muestra acababa cayendo en nombres como
+    # 'PLACA CE 22-0404.SLDPRT', cuyo primer token es 'PLACA': la prueba
+    # pedia un PDF que el producto, con razon, no tiene por que encontrar.
     cur.execute("""SELECT ruta_completa, nombre_archivo FROM buscador.archivos
                    WHERE extension IN ('.sldprt','.sldasm')
+                     AND split_part(nombre_archivo,' ',1) ~ '^[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$'
+                     AND split_part(nombre_archivo,' ',1) ~ '[0-9]'
                      AND upper(split_part(nombre_archivo,' ',1)) IN (
                          SELECT upper(split_part(nombre_archivo,' ',1))
                          FROM buscador.archivos WHERE extension='.pdf')

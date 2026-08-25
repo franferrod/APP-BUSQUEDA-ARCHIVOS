@@ -1,5 +1,26 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.2.0] - 2026-08-25 (Recuperar vistas previas · credenciales fuera del repositorio)
+
+**Análisis nuevo: «Conjuntos con más piezas sin vista previa».** Cierra la investigación de las miniaturas perdidas. Quedó demostrado que no las rompe ni la app ni el NAS ni el indexado, sino guardar en bloque desde SolidWorks, y que **no hay forma de repararlas automáticamente**: la API de Document Manager sabe *leer* la vista previa pero no escribirla, así que lo único que la regenera es abrir el archivo, reconstruir (Ctrl+Q) y volver a guardar.
+
+- Como eso lo tiene que hacer una persona, la app señala **dónde compensa hacerlo**: el botón **Análisis** lista los conjuntos ordenados por cuántas de sus piezas recuperarías de una sola pasada. El primero de la lista arregla 278 piezas de golpe.
+- Cada fila trae su miniatura, el año, el cliente y el proyecto, y se abre en SolidWorks con el botón derecho como cualquier otro resultado. Se exporta a CSV para repartir el trabajo.
+- El conteo es **conservador a propósito**: una pieza solo cuenta como rota si **ninguna** copia suya del índice tiene vista previa. La tabla de componentes guarda el nombre, no la ruta, y una misma pieza está copiada en decenas de proyectos: contar "le falta en alguna copia" habría mandado a la gente a reabrir conjuntos que están bien.
+- La **Guía Rápida** explica por qué pasa, cómo arreglarlo y cómo evitarlo (Ctrl+Q antes de *Guardar todo*).
+
+**Las credenciales pueden salir del repositorio.** `config.ini` lleva la contraseña de PostgreSQL en claro y el repositorio es público en GitHub. Se ha comprobado que **nunca llegó a subirse** —no aparece en ningún commit del historial—, pero nada lo impedía.
+
+- Ahora la conexión se puede definir con las variables de entorno `ALSI_PG_HOST`, `ALSI_PG_PORT`, `ALSI_PG_DBNAME`, `ALSI_PG_USER` y `ALSI_PG_PASSWORD`, y no hace falta ningún archivo.
+- El caso más práctico: dejar el `config.ini` **sin la línea `password`** y poner solo `ALSI_PG_PASSWORD` en el entorno del equipo. Si están las dos, manda el entorno.
+- **Ningún equipo instalado se rompe**: un `config.ini` completo sigue funcionando exactamente igual que antes.
+- `.gitignore` ahora bloquea `config.ini`, los artefactos de compilación y las sondas de diagnóstico.
+- **16 comprobaciones nuevas** (`pruebas_credenciales.py`) sobre las cinco vías posibles, incluida la de que el archivo no esté en el árbol de git.
+
+**Corrección de intendencia.** `INSTALAR_LOCAL.bat` anunciaba la versión **2.1.2** mientras la app ya iba por la 2.1.4: el instalador llevaba dos versiones desfasado en el rótulo. Ahora se sube junto con `APP_VERSION`.
+
+**Historial de versiones completo.** Se han creado las etiquetas que faltaban de la v2.0.0 a la v2.1.2 — el etiquetado se había quedado parado en la v1.1.0. Cada versión apunta ya a su commit.
+
 ## [2.1.4] - 2026-08-24 (Quitar palabras de la búsqueda con «-palabra»)
 
 Petición de un compañero: poder decir en la **barra de búsqueda** qué palabras **no** quieres ver en el nombre del archivo. Hasta ahora eso solo se podía hacer refinando por componentes, que es otra cosa: filtraba por lo que el conjunto lleva dentro, no por cómo se llama.

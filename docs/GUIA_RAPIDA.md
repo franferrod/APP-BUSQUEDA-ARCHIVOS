@@ -2,7 +2,7 @@
 
 Encuentra cualquier pieza, conjunto, plano o PDF del NAS en décimas de segundo, y averigua dónde se usa, qué lleva dentro y cuánto pesa.
 
-El índice tiene **más de 590.000 archivos** de PROYECTOS, BIBLIOTECA 3D y ALSI ESTÁNDAR, y se actualiza solo cada noche.
+El índice tiene **más de 560.000 archivos** de PROYECTOS, BIBLIOTECA 3D y ALSI ESTÁNDAR, y se actualiza solo cada noche.
 
 ## 1. Buscar: la barra de arriba
 
@@ -118,7 +118,17 @@ La base de placas se actualiza cada tarde desde los Excel de **NÚMEROS DE SERIE
 *   Si la aplicación **ya está abierta** y vuelves a pulsar el icono, te lo dice en vez de abrir otra ventana.
 *   Si **"Abrir carpeta"** falla, el aviso distingue si el archivo se movió, si no tienes permisos o si no se llega al servidor.
 
-## 10. Mantenerlo al día
+## 10. Recuperar vistas previas perdidas
+
+Algunos archivos antiguos aparecen **sin miniatura**: en la galería y en el panel de la derecha sale el icono genérico en vez del modelo. No es culpa de la app ni del NAS. Pasa cuando SolidWorks guarda muchos archivos de golpe (al hacer *Guardar todo* sobre un conjunto): a los hijos que necesitaban reconstruirse no les graba la imagen de vista previa.
+
+**Sólo hay una forma de arreglarlo**: abrir el archivo en SolidWorks, reconstruir con **Ctrl + Q** y volver a guardar. No se puede hacer desde el indexado nocturno — la API que usamos sabe leer la miniatura, pero no escribirla.
+
+Para que compense el rato, el botón **Análisis › Conjuntos con más piezas sin vista previa** ordena los conjuntos por cuántas piezas suyas recuperarías de una sola pasada. Abre uno con el botón derecho (**Abrir en SolidWorks**), reconstruye, guarda todo, y esa noche el índice recoge las miniaturas nuevas.
+
+> **Cómo evitarlo de aquí en adelante:** pulsa **Ctrl + Q** antes de *Guardar todo*. Los planos (`.slddrw`) no se ven afectados nunca.
+
+## 11. Mantenerlo al día
 
 El NAS **se reindexa solo cada noche**, así que normalmente no hay que hacer nada.
 
@@ -126,7 +136,7 @@ Si acabas de guardar un archivo y lo necesitas ya, pulsa **Reindexar NAS** abajo
 
 Cuando haya una versión nueva saldrá un aviso naranja arriba con el botón **Actualizar ahora**.
 
-## 11. Atajos
+## 12. Atajos
 
 *   **Enter** — buscar (en la barra de refinar, aplica el nivel)
 *   **Esc** — deshace el último nivel de refinado

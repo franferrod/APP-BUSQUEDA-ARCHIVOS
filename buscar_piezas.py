@@ -369,7 +369,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.1.4"
+APP_VERSION = "2.2.0"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -2948,6 +2948,10 @@ class BuscadorPiezas(QMainWindow):
         self.menu_analisis.addAction(
             svg_icon("capas-tipos"), "Piezas más reutilizadas (candidatas a biblioteca)",
             self.mostrar_reutilizadas)
+        # V2.2.0: los conjuntos que más vistas previas recuperan de una pasada
+        self.menu_analisis.addAction(
+            svg_icon("ensamblaje-cubo"), "Conjuntos con más piezas sin vista previa",
+            self.mostrar_sin_vista_previa)
         self.btn_analisis.setMenu(self.menu_analisis)
         toolbar_layout.addWidget(self.btn_analisis)
 
@@ -7193,6 +7197,44 @@ class BuscadorPiezas(QMainWindow):
                 "Candidatas_a_biblioteca.csv")
         except Exception as e:
             logger.error(f"Error en reutilizadas: {e}")
+
+    def mostrar_sin_vista_previa(self):
+        """V2.2.0: conjuntos ordenados por cuántas de sus piezas han perdido la
+        vista previa de Windows. Se abren desde aquí con el botón derecho
+        ('Abrir en SolidWorks'), se reconstruye con Ctrl+Q y se guarda todo:
+        una sola pasada recupera todas las miniaturas del conjunto."""
+        try:
+            self.lbl_status.setText("Buscando conjuntos con piezas sin vista previa…")
+            QApplication.processEvents()
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                filas = self.db.ensamblajes_sin_vista_previa(50)
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not filas:
+                self.lbl_status.setText("No hay conjuntos con piezas sin vista previa.")
+                avisar_usuario("Vistas previas",
+                               "Ningún conjunto del índice tiene piezas sin vista previa.")
+                return
+            datos = [(nom, f"{sin_v} de {total}", anio or 0, cli or "",
+                      etiqueta_origen(pro or "") if pro else "", ruta)
+                     for nom, cli, pro, anio, sin_v, total, ruta in filas]
+            self._dialogo_tabla(
+                "Conjuntos con piezas sin vista previa",
+                'Conjuntos que más vistas previas recuperan '
+                '<span style="color:#E66C32;">de una sola pasada</span>',
+                f"Top {len(datos)} · ábrelo en SolidWorks (botón derecho), reconstruye "
+                f"con Ctrl+Q y guarda todo: se regeneran las miniaturas de sus piezas. "
+                f"Una pieza cuenta si ninguna copia suya del índice tiene vista previa.",
+                ["Conjunto", "Piezas sin vista", "Año", "Cliente", "Proyecto"],
+                datos,
+                "Conjuntos_sin_vista_previa.csv")
+            self.lbl_status.setText(f"{len(datos)} conjuntos con piezas sin vista previa.")
+        except Exception as e:
+            logger.error(f"Error en conjuntos sin vista previa: {e}")
+            mostrar_error("No se ha podido calcular el informe de vistas previas",
+                          "El servidor no ha respondido a la consulta.",
+                          detalle=str(e), parent=self)
 
     def copiar_nombre_seleccionado(self):
         """Acción proactiva: copiar el nombre del archivo SIN extensión

@@ -29,6 +29,17 @@ CONFIG_ENV = "ALSI_CONFIG_INI"          # permite forzar la ruta desde fuera
 RUTA_RED_APP = (r"\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT"
                 r"\APP BÚSQUEDA ARCHIVOS")
 
+# V2.2.0 - Las credenciales pueden venir del entorno en vez del archivo.
+# Motivo: config.ini lleva la contraseña de PostgreSQL en claro y el repo es
+# público en GitHub. El archivo se sigue admitiendo (ningún equipo instalado
+# se rompe), pero ahora hay una vía que no deja la contraseña en disco:
+#   ALSI_PG_HOST / ALSI_PG_PORT / ALSI_PG_DBNAME / ALSI_PG_USER / ALSI_PG_PASSWORD
+# Y el caso más útil de todos: dejar el config.ini SIN la línea password y
+# poner solo ALSI_PG_PASSWORD en el entorno.
+ENV_PG = {'host': 'ALSI_PG_HOST', 'port': 'ALSI_PG_PORT',
+          'dbname': 'ALSI_PG_DBNAME', 'user': 'ALSI_PG_USER',
+          'password': 'ALSI_PG_PASSWORD'}
+
 
 def _candidatos_config():
     """Sitios donde buscar config.ini, en orden de preferencia."""
@@ -60,10 +71,46 @@ def _entero(valor, por_defecto):
         return por_defecto
 
 
+def _ajustes_conexion(d, password):
+    """Parte común del dict de conexión, venga del entorno o del archivo."""
+    return {'host': d['host'], 'port': int(d['port']),
+            'dbname': d['dbname'], 'user': d['user'],
+            'password': password,
+            # V2.1.0 - INCIDENCIA "la app no abre" (Pablo y Marcos):
+            # sin connect_timeout, un equipo que no llega al servidor se
+            # queda ~21 s bloqueado en el connect de Windows, y eso ocurría
+            # ANTES de dibujar la ventana: el usuario veía un proceso en el
+            # Administrador de tareas y nada más. Se puede ajustar desde
+            # config.ini con  connect_timeout = N.
+            'connect_timeout': _entero(d.get('connect_timeout'), 5),
+            # Y con keepalives, una conexión que se queda a medias (Wi-Fi
+            # o VPN que cae) se detecta en ~60 s en vez de dejar la consulta
+            # colgada para siempre.
+            'keepalives': 1, 'keepalives_idle': 30,
+            'keepalives_interval': 10, 'keepalives_count': 3}
+
+
+def _leer_entorno():
+    """V2.2.0 - Conexión completa desde variables de entorno, o None.
+    Es la vía preferente: no deja la contraseña escrita en ningún archivo."""
+    try:
+        d = {}
+        for clave, var in ENV_PG.items():
+            valor = (os.environ.get(var) or "").strip()
+            if not valor:
+                return None
+            d[clave] = valor
+        d['connect_timeout'] = os.environ.get("ALSI_PG_CONNECT_TIMEOUT")
+        return _ajustes_conexion(d, d['password'])
+    except Exception:
+        return None
+
+
 def _leer_config(ruta):
     """Devuelve el dict de conexión si el archivo es válido, o None.
     Un config.ini que existe pero está incompleto es tan inservible como no
-    tenerlo: antes reventaba con KeyError y el usuario veía un cierre seco."""
+    tenerlo: antes reventaba con KeyError y el usuario veía un cierre seco.
+    V2.2.0: la contraseña puede faltar en el archivo si viene por entorno."""
     try:
         cfg = configparser.ConfigParser()
         cfg.read(ruta, encoding="utf-8")
@@ -71,23 +118,19 @@ def _leer_config(ruta):
             return None
         d = cfg['database']
         if not all(k in d and d[k].strip() for k in
-                   ('host', 'port', 'dbname', 'user', 'password')):
+                   ('host', 'port', 'dbname', 'user')):
             return None
-        return {'host': d['host'].strip(), 'port': int(d['port']),
-                'dbname': d['dbname'].strip(), 'user': d['user'].strip(),
-                'password': d['password'],
-                # V2.1.0 - INCIDENCIA "la app no abre" (Pablo y Marcos):
-                # sin connect_timeout, un equipo que no llega al servidor se
-                # queda ~21 s bloqueado en el connect de Windows, y eso ocurría
-                # ANTES de dibujar la ventana: el usuario veía un proceso en el
-                # Administrador de tareas y nada más. Se puede ajustar desde
-                # config.ini con  connect_timeout = N.
-                'connect_timeout': _entero(d.get('connect_timeout'), 5),
-                # Y con keepalives, una conexión que se queda a medias (Wi-Fi
-                # o VPN que cae) se detecta en ~60 s en vez de dejar la consulta
-                # colgada para siempre.
-                'keepalives': 1, 'keepalives_idle': 30,
-                'keepalives_interval': 10, 'keepalives_count': 3}
+        # La contraseña del entorno manda sobre la del archivo: así un equipo
+        # puede quedarse con un config.ini sin secretos.
+        password = (os.environ.get(ENV_PG['password']) or "").strip()
+        if not password:
+            password = d.get('password', '')
+            if not password.strip():
+                return None
+        datos = {'host': d['host'].strip(), 'port': d['port'].strip(),
+                 'dbname': d['dbname'].strip(), 'user': d['user'].strip(),
+                 'connect_timeout': d.get('connect_timeout')}
+        return _ajustes_conexion(datos, password)
     except Exception:
         return None
 
@@ -125,7 +168,12 @@ def _avisar_fatal(msg):
 
 
 def load_pg_config():
-    intentadas = []
+    # V2.2.0 - El entorno primero: si están las cinco variables ALSI_PG_*, no
+    # hace falta ningún archivo y la contraseña no vive en disco.
+    desde_entorno = _leer_entorno()
+    if desde_entorno:
+        return desde_entorno
+    intentadas = ["(variables de entorno ALSI_PG_*)"]
     for ruta in _candidatos_config():
         intentadas.append(ruta)
         if os.path.exists(ruta):
@@ -142,7 +190,9 @@ def load_pg_config():
         "\n  ".join(intentadas) +
         "\n\nSolución: ejecuta INSTALAR_LOCAL.bat desde la carpeta de red, "
         "o define la variable de entorno " + CONFIG_ENV +
-        " con la ruta del archivo.")
+        " con la ruta del archivo, o define las cinco variables "
+        "ALSI_PG_HOST / ALSI_PG_PORT / ALSI_PG_DBNAME / ALSI_PG_USER / "
+        "ALSI_PG_PASSWORD.")
     sys.exit(2)
 
 
@@ -896,6 +946,72 @@ class IndexManager:
             return cursor.fetchall()
         except Exception as e:
             logger.error(f"Error en piezas_mas_reutilizadas: {e}")
+            return []
+        finally:
+            wrapper.close()
+
+    def ensamblajes_sin_vista_previa(self, limite=50, desde_anio=None):
+        """V2.2.0 - Ensamblajes ordenados por cuántos de sus componentes no
+        tienen vista previa de Windows. Sirven para abrirlos en SolidWorks,
+        reconstruir (Ctrl+Q) y volver a guardar: se arreglan de golpe todas
+        las piezas del conjunto.
+
+        Un componente cuenta como "sin vista" cuando NINGÚN archivo del índice
+        con ese nombre tiene miniatura guardada. La tabla `componentes` solo
+        conserva el NOMBRE del componente, no su ruta, así que exigir que
+        ninguna copia la tenga es el criterio conservador: los que salen están
+        rotos seguro. Si se hiciera al revés (que falte en alguna copia) se
+        llenaría de falsos positivos, porque una misma pieza aparece copiada
+        en decenas de proyectos.
+
+        Filas: (nombre, cliente, proyecto, anio, sin_vista, total, ruta)."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            # El filtro de año se acopla al SQL en vez de ir como
+            # "(%s IS NULL OR e.anio >= %s)": con el OR, el planificador no
+            # puede usar el índice de año y la consulta pasaba de 7 s a más de
+            # dos minutos. Y se aplica ANTES de agrupar, para que el conteo
+            # pesado solo se haga sobre los conjuntos que van a salir.
+            filtro_anio = ""
+            args = []
+            if desde_anio is not None:
+                filtro_anio = "WHERE anio >= %s"
+                args.append(int(desde_anio))
+            args.append(limite)
+            cursor.execute('''
+                WITH con_vista AS (
+                    SELECT DISTINCT UPPER(a.nombre_archivo) AS nom
+                    FROM buscador.miniaturas m
+                    JOIN buscador.archivos a ON a.ruta_completa = m.ruta_completa
+                    WHERE LOWER(a.extension) IN ('.sldprt', '.sldasm')
+                ),
+                conjuntos AS (
+                    SELECT ruta_completa, nombre_archivo, cliente, proyecto, anio
+                    FROM buscador.archivos
+                    ''' + filtro_anio + '''
+                ),
+                conteo AS (
+                    SELECT c.ensamblaje_ruta,
+                           COUNT(DISTINCT c.componente_nombre)
+                               FILTER (WHERE v.nom IS NULL) AS sin_vista,
+                           COUNT(DISTINCT c.componente_nombre) AS total
+                    FROM buscador.componentes c
+                    JOIN conjuntos j ON j.ruta_completa = c.ensamblaje_ruta
+                    LEFT JOIN con_vista v ON v.nom = UPPER(c.componente_nombre)
+                    GROUP BY c.ensamblaje_ruta
+                )
+                SELECT e.nombre_archivo, e.cliente, e.proyecto, e.anio,
+                       k.sin_vista, k.total, e.ruta_completa
+                FROM conteo k
+                JOIN conjuntos e ON e.ruta_completa = k.ensamblaje_ruta
+                WHERE k.sin_vista > 0
+                ORDER BY k.sin_vista DESC, e.nombre_archivo
+                LIMIT %s
+            ''', tuple(args))
+            return cursor.fetchall()
+        except Exception as e:
+            logger.error(f"Error en ensamblajes_sin_vista_previa: {e}")
             return []
         finally:
             wrapper.close()

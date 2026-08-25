@@ -1,3 +1,25 @@
+# ── CREDENCIALES ─────────────────────────────────────────────────────────
+# config.ini lleva la contraseña de PostgreSQL y la licencia del Document
+# Manager de SolidWorks. NUNCA debe entrar en el repositorio: es público.
+# Si necesitas que un equipo no tenga el archivo, usa las variables de
+# entorno ALSI_PG_* (ver load_pg_config en models.py).
+config.ini
+config_temp.ini
+*.config.ini
+.env
+
+# ── RESULTADOS DE PRUEBAS ────────────────────────────────────────────────
 pruebas_resultado*.txt
-pruebas_ejecutable_resultado.txt
-pruebas_v212_resultado.txt
+pruebas_*_resultado.txt
+
+# ── ARTEFACTOS DE COMPILACIÓN ────────────────────────────────────────────
+build/
+dist/
+__pycache__/
+*.pyc
+releases/
+
+# ── SONDAS Y RESTOS DE DIAGNÓSTICO ───────────────────────────────────────
+sonda_*.py
+sonda_*.txt
+*.bak_*
