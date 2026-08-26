@@ -20,6 +20,9 @@ RAIZ = os.path.dirname(os.path.abspath(__file__))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["ALSI_SIN_DIALOGOS"] = "1"
 os.environ["ALSI_SIN_CANDADO"] = "1"
+# V2.3.1: las pruebas NO escriben en la tabla de preferencias, que es
+# compartida por toda la oficina.
+os.environ["ALSI_SIN_PREFERENCIAS"] = "1"
 sys.path.insert(0, RAIZ)
 os.chdir(RAIZ)
 

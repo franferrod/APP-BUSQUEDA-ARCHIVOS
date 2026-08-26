@@ -17,6 +17,11 @@ import sys
 import tempfile
 import time
 
+# V2.3.1: esta bateria lanza el .exe DE VERDAD, y al cerrarse guardaria los
+# filtros en buscador.preferencias, que es COMPARTIDA por toda la oficina.
+# El hijo hereda el entorno, asi que con esto tampoco escribe.
+os.environ["ALSI_SIN_PREFERENCIAS"] = "1"
+
 RAIZ = os.path.dirname(os.path.abspath(__file__))
 PROYECTO = os.path.abspath(os.path.join(RAIZ, "..", "..", ".."))
 EXE = (sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].endswith(".exe")

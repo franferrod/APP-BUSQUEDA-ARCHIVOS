@@ -15,7 +15,7 @@ guardados en el NAS Synology, sin navegar por carpetas.
 - **Backend**: PostgreSQL en `192.168.1.10:5433`, base `ALSI`, esquema `buscador`.
 - **Distribución**: un `.exe` de ~82 MB (PyInstaller *onefile*) que cada compañero instala desde
   la carpeta de red con `INSTALAR_LOCAL.bat`. La app avisa sola cuando hay versión nueva.
-- **En producción: v2.3.0** (desplegada el 25/08/2026).
+- **En producción: v2.3.1**.
 
 **Cifras reales del índice, medidas el 25/08/2026:**
 
@@ -108,7 +108,7 @@ Toda la línea 2.x hasta la **v2.3.0** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 321 comprobaciones en verde** (30 cascada + 31 análisis + 16 credenciales + 47
+**Pruebas: 357 comprobaciones en verde** (17 fluidez + 30 cascada + 31 análisis + 16 credenciales + 47
 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos + 19 v2.1.2 +
 11 preview + 29 sobre el `.exe` empaquetado).
 
@@ -178,6 +178,14 @@ cadena vacía y descuadraba el recuento en uno.
 
 ## 7. Bugs conocidos y riesgos
 
+0. 🔴 **`buscador.preferencias` es una tabla COMPARTIDA por toda la oficina.** Los filtros
+   (orígenes, años, carpetas, tipos) que guarda el último que cierra la app se los encuentra
+   puestos el siguiente que la abre. El 26/08/2026 dejó a todo el mundo con solo PROYECTOS y
+   solo PIEZAS marcados, y la app parecía rota cuando solo estaba filtrando en silencio.
+   Es el mismo fallo que se corrigió con la geometría de ventana en la v2.0.8 — pero entonces
+   solo se movió la geometría a QSettings. **Toca llevar los filtros al equipo de cada uno.**
+   Es el siguiente arreglo pendiente.
+
 1. **Diálogos anidados con aspecto distinto** — en la segunda anidación de "¿qué componentes
    lleva?" el símbolo de la ventana y el tooltip cambian de color. Se descartaron icono, flags,
    paleta, modalidad y tamaños: todos idénticos a nivel Qt. Posiblemente resuelto en la última
@@ -186,7 +194,10 @@ cadena vacía y descuadraba el recuento en uno.
    v2.2.0 existe la alternativa por entorno, pero los equipos ya instalados siguen con el archivo.
 4. **La lectura nocturna de vista previa falla ~1 % de las veces** (10 de 44 discrepancias eran
    archivos que sí la tenían y el pase no se la encontró). Declarado en el informe.
-5. **La consulta de conjuntos sin vista previa tarda ~7-9 s** y bloquea la interfaz con el cursor
+5. **RESUELTO en la v2.3.1**: tocar un filtro congelaba la ventana 0,65 s porque
+   `refrescar_filtros_jerarquicos` consultaba la base de datos en el hilo de la interfaz.
+   Era código de febrero, la última pieza sin migrar a segundo plano. Ahora bloquea 0,000 s.
+6. **La consulta de conjuntos sin vista previa tarda ~7-9 s** y bloquea la interfaz con el cursor
    de espera, igual que "Piezas más reutilizadas". Si molesta, toca moverla a un worker.
 
 **Resueltos el 25/08:** el conteo de archivos de la guía (decía 590.000, son 563.742) · el desfase

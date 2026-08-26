@@ -87,7 +87,16 @@ def _ajustes_conexion(d, password):
             # o VPN que cae) se detecta en ~60 s en vez de dejar la consulta
             # colgada para siempre.
             'keepalives': 1, 'keepalives_idle': 30,
-            'keepalives_interval': 10, 'keepalives_count': 3}
+            'keepalives_interval': 10, 'keepalives_count': 3,
+            # V2.3.1 - Tope de espera POR UN BLOQUEO. No limita lo que tarde una
+            # consulta en calcular: limita lo que espera a que otro suelte la
+            # tabla. Sin esto, una transacción larga de un tercero (el 26/08 fue
+            # un pg_dump de otra base del mismo servidor) deja a toda la oficina
+            # con el "Buscando…" subiendo sin fin y sin ninguna pista de por qué.
+            # Mejor fallar en unos segundos con un error que se entiende.
+            # Ajustable en config.ini con  lock_timeout = N  (segundos, 0 = sin tope).
+            'options': '-c lock_timeout=%dms' % (
+                _entero(d.get('lock_timeout'), 15) * 1000)}
 
 
 def _leer_entorno():
@@ -446,14 +455,59 @@ class IndexManager:
                 incluidas.append(t)
         return incluidas, excluidas, modo_and
 
+    # V2.3.1 - Lo que tiene que existir para que la app funcione. Si está todo,
+    # init_db no toca la base: ni una sentencia de esquema, ni un bloqueo.
+    _TABLAS_ESPERADAS = ('archivos', 'estado_indexacion', 'preferencias',
+                         'componentes', 'miniaturas', 'placas_ce')
+    _COLUMNAS_MASA = ('sw_masa_kg', 'sw_volumen_m3', 'sw_area_m2')
+
+    def _esquema_al_dia(self, cursor):
+        """¿Está ya todo creado? Solo lecturas de catálogo, sin bloqueos."""
+        try:
+            cursor.execute("""
+                SELECT
+                  (SELECT count(*) FROM information_schema.tables
+                     WHERE table_schema='buscador' AND table_name = ANY(%s)),
+                  (SELECT count(*) FROM information_schema.columns
+                     WHERE table_schema='buscador' AND table_name='archivos'
+                       AND column_name = ANY(%s)),
+                  (SELECT count(*) FROM pg_indexes
+                     WHERE schemaname='buscador'
+                       AND indexname='idx_ba_nombre_norm_trgm')
+            """, (list(self._TABLAS_ESPERADAS), list(self._COLUMNAS_MASA)))
+            tablas, columnas, trigrama = cursor.fetchone()
+            return (tablas == len(self._TABLAS_ESPERADAS)
+                    and columnas == len(self._COLUMNAS_MASA)
+                    and trigrama == 1)
+        except Exception as e:
+            logger.debug("No se ha podido comprobar el esquema: %s", e)
+            return False
+
     def init_db(self):
-        """Crea schema, tablas e índices si no existen."""
+        """Crea schema, tablas e índices si no existen.
+
+        V2.3.1 - INCIDENCIA "la app tarda 45 s y no encuentra nada": esto corría
+        entero en CADA arranque y en cada reconexión — un esquema, seis tablas y
+        quince índices, todos con `IF NOT EXISTS`. Parece gratis y no lo es:
+        cada sentencia pide un bloqueo sobre la tabla aunque no haya nada que
+        hacer. El 26/08/2026 un pg_dump de otra base del mismo servidor
+        mantuvo 8 horas una transacción sobre `archivos`; los ALTER de arranque
+        se quedaron en cola, y en PostgreSQL todo lo que llega después se encola
+        detrás. Diez personas abriendo la app = 9 sentencias atascadas y 31
+        consultas paradas. Oficina entera sin buscador.
+
+        Ahora, si el esquema ya está completo, esto no ejecuta NADA."""
         wrapper = self.get_connection()
         try:
             conn = wrapper._conn
             conn.autocommit = True
             cursor = conn.cursor()
 
+            if self._esquema_al_dia(cursor):
+                logger.debug("Esquema ya completo: no se toca la base.")
+                return
+
+            logger.info("Falta parte del esquema: se crea lo que no esté.")
             cursor.execute('CREATE SCHEMA IF NOT EXISTS buscador')
 
             cursor.execute('''
@@ -498,11 +552,45 @@ class IndexManager:
             # V2.0.8: la tabla se crea con CREATE TABLE IF NOT EXISTS, así que
             # en las bases ya existentes las columnas nuevas hay que añadirlas
             # aparte (si no, todo lo de masa/superficie falla en silencio).
-            for col, tipo in (('sw_masa_kg', 'DOUBLE PRECISION'),
-                              ('sw_volumen_m3', 'DOUBLE PRECISION'),
-                              ('sw_area_m2', 'DOUBLE PRECISION')):
-                cursor.execute(
-                    f'ALTER TABLE buscador.archivos ADD COLUMN IF NOT EXISTS {col} {tipo}')
+            #
+            # V2.3.1 - INCIDENCIA "la app tarda 45 s y no encuentra nada":
+            # esto corre en CADA arranque y en cada reconexión. `ADD COLUMN IF
+            # NOT EXISTS` parece inofensivo, pero pide un bloqueo EXCLUSIVO de
+            # la tabla aunque la columna ya esté. Si algo mantiene una
+            # transacción larga sobre `archivos` —el 26/08/2026 fue un pg_dump
+            # de otra base del mismo servidor, 8 horas abierto— el ALTER se
+            # queda esperando, y en PostgreSQL **todas las consultas que llegan
+            # después se encolan detrás de él**. Con diez personas abriendo la
+            # app: 9 ALTER atascados y 31 consultas paradas. Oficina entera sin
+            # buscador.
+            #
+            # Se mira primero si falta algo (una lectura barata, sin bloqueos) y
+            # solo se altera cuando de verdad hace falta. Y aun entonces, con un
+            # tope de espera: es preferible que el arranque siga sin la columna
+            # nueva (los datos de masa se verán vacíos) a dejar clavada la tabla
+            # para todo el mundo.
+            columnas_masa = (('sw_masa_kg', 'DOUBLE PRECISION'),
+                             ('sw_volumen_m3', 'DOUBLE PRECISION'),
+                             ('sw_area_m2', 'DOUBLE PRECISION'))
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='buscador' AND table_name='archivos'")
+            ya_estan = {r[0] for r in cursor.fetchall()}
+            faltan = [(c, t) for c, t in columnas_masa if c not in ya_estan]
+            if faltan:
+                logger.info("Faltan columnas en buscador.archivos: %s",
+                            ", ".join(c for c, _ in faltan))
+                cursor.execute("SET LOCAL lock_timeout = '5s'")
+                for col, tipo in faltan:
+                    try:
+                        cursor.execute(
+                            f'ALTER TABLE buscador.archivos '
+                            f'ADD COLUMN IF NOT EXISTS {col} {tipo}')
+                    except psycopg2.errors.LockNotAvailable:
+                        logger.warning(
+                            "No se ha podido añadir %s: la tabla está ocupada. "
+                            "Se reintentará en el próximo arranque.", col)
+                        break
 
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS buscador.estado_indexacion (
@@ -640,7 +728,18 @@ class IndexManager:
             wrapper.close()
 
     def guardar_preferencia(self, clave, valor):
-        """V2.1.0: sin servidor no se guarda, pero tampoco se rompe nada."""
+        """V2.1.0: sin servidor no se guarda, pero tampoco se rompe nada.
+
+        V2.3.1 - `buscador.preferencias` es COMPARTIDA por toda la oficina: lo
+        que guarda el último que cierra la app se lo encuentra puesto el
+        siguiente que la abre. Las baterías de pruebas abren y cierran la app de
+        verdad, así que sin este freno dejaban a todo el mundo con los filtros
+        de la última prueba — el 26/08/2026 la oficina se quedó con solo
+        PROYECTOS y solo PIEZAS marcados y parecía que la app no encontraba
+        nada. Con ALSI_SIN_PREFERENCIAS=1 se lee normal pero no se escribe."""
+        if os.environ.get("ALSI_SIN_PREFERENCIAS"):
+            logger.debug("Preferencia '%s' no guardada: modo pruebas", clave)
+            return
         if self._pool is None:
             logger.warning("Preferencia '%s' no guardada: sin conexion", clave)
             return

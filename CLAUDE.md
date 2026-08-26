@@ -1,7 +1,7 @@
 # Buscador de Piezas ALSI — guía para cada sesión
 
 App PyQt5 de escritorio (Windows) que busca archivos SolidWorks del NAS contra un índice
-PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.0**.
+PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.1**.
 El estado completo del proyecto está en `ESTADO.md`; las decisiones de fondo, en `docs/ADR-002`.
 
 ## Dónde trabajar
@@ -17,21 +17,42 @@ máquina que ejecuta los pases nocturnos (`ALSI_Reindexar_Diario` a las 15:45,
 - Los pases usan la ruta corta 8.3 `BSQUED~1` porque el Programador de tareas de Windows falla con
   la `Ú` (`0x8007010B`). No "arregles" esa ruta.
 
+## NO DEJAR COLGADA A LA OFICINA — leer antes de tocar nada
+
+Diez personas dependen de esto **mientras trabajan**, y comparten un servidor y una
+carpeta de red. Estas reglas salieron de romperlo, no de la teoría.
+
+1. **El servidor PostgreSQL es de producción y está compartido con otras aplicaciones.**
+   No lances baterías de pruebas contra él en horario de oficina sin decirlo. Si hay que
+   hacerlo, **de una en una**, nunca en paralelo: varias a la vez se estorban entre sí y
+   parece que la app se ha colgado.
+2. **Nada de DDL sobre tablas en uso.** Un `ALTER TABLE` o un `CREATE INDEX`, aunque lleven
+   `IF NOT EXISTS` y no tengan nada que hacer, piden un bloqueo. Si alguien mantiene una
+   transacción larga encima (el 26/08/2026 fue un `pg_dump` de otra base, 8 horas), el DDL
+   se encola **y todas las consultas que llegan después se encolan detrás de él**. Se
+   comprueba antes con `information_schema` y solo se altera si de verdad falta algo.
+3. **Las pruebas no escriben en `buscador.preferencias`.** Es una tabla **compartida**:
+   lo que guarda el último que cierra la app se lo encuentra puesto el siguiente. Todas las
+   baterías corren con `ALSI_SIN_PREFERENCIAS=1`. Si escribes una batería nueva, ponlo.
+4. **Nunca ejecutes el `.exe` de la carpeta de red**, ni para pedirle un `--diagnostico`:
+   abre una ventana en la pantalla de quien esté delante. Se ejecuta siempre la copia de
+   `releases\vX.Y.Z\`.
+5. **Copiar el `.exe` a la red son 82 MB sobre SMB.** Durante ese rato, quien abra la app se
+   encuentra el binario a medio reemplazar y se le queda colgada. **Despliega fuera de
+   horario**, o avisa antes.
+6. **Nunca `taskkill /F /IM python.exe`** ni nada por nombre de imagen: eso mató un pase
+   nocturno a mitad. Se mata por PID, y solo el proceso concreto.
+7. **Si algo va mal, mira el servidor antes que el código.** `pg_stat_activity`,
+   `pg_locks` con `NOT granted`, y transacciones abiertas ordenadas por antigüedad. La
+   incidencia del 26/08 no estaba en la app: eran 31 consultas esperando un bloqueo.
+
 ## Reglas del usuario — ya decididas, no volver a discutir
 
 1. **Desplegar solo cuando diga "despliega".** El ciclo acordado, sin atajos:
    probar en `releases\vX.Y.Z\` → subir de versión → copiar a la carpeta de red → al resto de
    la oficina le sale solo el aviso de "nueva versión disponible" y actualizan ellos.
    Antes de sobrescribir la red, guarda lo que hay en `releases\_backup_red_vX.Y.Z_AAAAMMDD\`.
-
-   **La carpeta de red es producción de ~10 personas mientras trabajan.** Dos reglas que
-   salieron de romperlo:
-   - **Nunca ejecutes el `.exe` de la carpeta de red.** Ni para probar, ni para pedirle un
-     `--diagnostico`. Se ejecuta siempre la copia de `releases\vX.Y.Z\`. Lanzar el de la red
-     abre una ventana en la pantalla de quien esté delante y compite con la gente.
-   - **Copiar el `.exe` son 82 MB sobre SMB**: durante ese rato, quien abra la app se
-     encuentra el binario a medio reemplazar y se le queda colgada. Avisa antes de copiar, o
-     hazlo fuera de horario. No es un fallo del producto: es el minuto del despliegue.
+   Las reglas 4 y 5 de arriba mandan sobre el momento de copiar.
 2. **El número de versión lo decide él.** No lo subas por iniciativa propia.
    Textual: *"Eso lo decido yo... no me lies."*
 
@@ -63,6 +84,7 @@ Compila `SwPropExtractor.cs` con `csc.exe` y empaqueta con PyInstaller (*onefile
 Git Bash, `csc` necesita flags con guion (`-reference:`), no con barra.
 
 ```bash
+python pruebas_fluidez.py         # 19 · que tocar un filtro no congele la ventana
 python pruebas_cascada.py         # 30 · cascada de filtros de propiedades
 python pruebas_credenciales.py    # 16 · de dónde salen las credenciales
 python pruebas_analisis.py        # 31 · conjuntos con piezas sin vista previa
@@ -74,7 +96,7 @@ python pruebas_preview.py         # 11 · panel de vista previa e icono genéric
 python pruebas_ejecutable.py      # 29 · sobre el .exe empaquetado
 ```
 
-Total: **321**. Reglas del banco de pruebas:
+Total: **357**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - La carpeta de pruebas del `.exe` necesita su `config.ini`.
@@ -112,8 +134,6 @@ Total: **321**. Reglas del banco de pruebas:
   `lambda _checked=False, r=ruta: ...` o acabarás en `os.startfile(True)`.
 - **PyInstaller contamina el entorno del hijo** (`_MEI*`, `_PYI*`, y el temporal en el `PATH`).
   Cualquier `subprocess` a un exe del sistema va con entorno limpio y ruta absoluta.
-- **El proceso padre pequeño (~6 MB) del `.exe` onefile es normal**, no es un zombi.
-- **Nunca `taskkill /F /IM python.exe`.** Eso mató un pase nocturno a mitad. Se mata por PID.
 - **Windows devuelve el mismo icono genérico** para `.SLDASM` distintos; umbral de parecido 85 %.
 - **`componentes` guarda el NOMBRE del componente, no su ruta.** Unir por nombre contra `archivos`
   multiplica por todas las copias del NAS: una pieza común aparece en decenas de proyectos.

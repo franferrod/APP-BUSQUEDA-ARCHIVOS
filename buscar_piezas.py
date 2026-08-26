@@ -369,7 +369,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -1005,6 +1005,45 @@ class GaleriaArrastrable(QListWidget):
         if urls:
             mime.setUrls(urls)
         return mime
+
+
+class FiltrosJerarquicosWorker(QThread):
+    """V2.3.1: Clientes y Proyectos, fuera del hilo de la interfaz.
+
+    Estas dos consultas se hacian en el hilo de UI desde la V1.0.0, asi que
+    cada clic en un filtro congelaba la ventana mientras duraban. Medido
+    contra el servidor: 0,14 s los clientes y 0,51 s los proyectos cuando no
+    hay ningun cliente marcado — que es justo como arranca la app.
+
+    Devuelve tambien si la consulta salio bien: ante un fallo NO se tocan las
+    listas, porque vaciarlas dejaria al usuario sin filtros por un corte de
+    red pasajero."""
+    listo = pyqtSignal(int, bool, list, list)   # generacion, ok, clientes, proyectos
+
+    def __init__(self, generacion, controller, compañeros, años, clientes_marcados):
+        super().__init__()
+        self.generacion = generacion
+        self.controller = controller
+        self.compañeros = compañeros
+        self.años = años
+        self.clientes_marcados = clientes_marcados
+
+    def run(self):
+        try:
+            clientes = self.controller.get_all_clients(
+                companions=self.compañeros, years=self.años) or []
+            # Solo pesan las marcas que siguen existiendo en el contexto nuevo,
+            # igual que hacia la version sincrona al releer la lista tras
+            # repoblarla.
+            vivos = [c for c in self.clientes_marcados if c in clientes]
+            proyectos = self.controller.get_all_projects(
+                clientes=vivos or None,
+                companions=self.compañeros or None,
+                years=self.años or None) or []
+            self.listo.emit(self.generacion, True, list(clientes), list(proyectos))
+        except Exception as e:
+            logger.warning("No se han podido refrescar Clientes y Proyectos: %s", e)
+            self.listo.emit(self.generacion, False, [], [])
 
 
 class PropsContextWorker(QThread):
@@ -2080,9 +2119,13 @@ class BuscadorPiezas(QMainWindow):
                 return
             self.lbl_status.setText("Cargando filtros…")
             QApplication.processEvents()
-            self.refrescar_filtros_jerarquicos()
             self.cargar_filtros_propiedades()
             self.cargar_preferencias()
+            # V2.3.1: Clientes y Proyectos DESPUÉS de restaurar las
+            # preferencias. Antes se poblaban con el contexto por defecto y
+            # quedaban desajustados con los orígenes y años restaurados hasta
+            # que el usuario tocaba algo.
+            self.refrescar_filtros_jerarquicos()
             # V2.3.0: cascada inicial de propiedades SW con las preferencias
             # ya restauradas (corre en segundo plano)
             self._refrescar_props_contexto()
@@ -4470,8 +4513,8 @@ class BuscadorPiezas(QMainWindow):
                 except (TypeError, RuntimeError):
                     pass
                 w.wait(1500)
-            # V2.3.0: idem con los workers de la cascada de propiedades
-            self._detener_props_workers()
+            # V2.3.1: idem con los de la cascada y los de Clientes/Proyectos
+            self._detener_workers_de_fondo()
         except Exception as e:
             logger.debug(f"Error deteniendo tareas al cerrar: {e}")
         self.save_window_state()
@@ -4500,12 +4543,12 @@ class BuscadorPiezas(QMainWindow):
         self.timer_filtros.start(300)
 
     def _refrescar_real_jerarquico(self):
-        """Ejecución real de la cascada tras el debouncing"""
-        self.refrescar_filtros_jerarquicos()
-        # V2.3.0: cascada de propiedades SW en segundo plano (no bloquea)
-        self._refrescar_props_contexto()
-        # V1.0.1: Disparar búsqueda automática (silenciosa)
-        self.ejecutar_busqueda(auto=True)
+        """Ejecución real de la cascada tras el debouncing.
+        V2.3.1: todo va encadenado desde el worker de Clientes/Proyectos —
+        primero se repueblan las listas y solo después salen la cascada de
+        propiedades y la búsqueda, que es el orden que tenía la versión
+        síncrona. El hilo de la interfaz no se bloquea en ningún punto."""
+        self.refrescar_filtros_jerarquicos(disparar_busqueda=True)
 
     def cargar_filtros_propiedades(self):
         try:
@@ -4539,19 +4582,13 @@ class BuscadorPiezas(QMainWindow):
             # Mismo contexto que la última vez: nada que refrescar
             if getattr(self, '_props_ctx_kwargs', None) == kwargs:
                 return
+            self._asegurar_parada_al_salir()
             self._props_ctx_kwargs = kwargs
             self._gen_props = getattr(self, '_gen_props', 0) + 1
             worker = PropsContextWorker(self._gen_props, self.controller, kwargs)
             worker.listo.connect(self._on_props_contexto)
             if not hasattr(self, '_props_workers'):
                 self._props_workers = []
-                # Este worker arranca ya en la carga inicial, antes de que el
-                # usuario toque nada. Si el proceso termina por una via que no
-                # pasa por closeEvent, Qt destruye el hilo en marcha y el
-                # proceso se cae al salir. aboutToQuit cubre todas las vias.
-                app = QApplication.instance()
-                if app is not None:
-                    app.aboutToQuit.connect(self._detener_props_workers)
             self._props_workers.append(worker)
             worker.finished.connect(lambda w=worker: self._limpiar_props_worker(w))
             worker.start()
@@ -4564,16 +4601,41 @@ class BuscadorPiezas(QMainWindow):
         except (ValueError, AttributeError):
             pass
 
+    def _asegurar_parada_al_salir(self):
+        """Un unico enganche a aboutToQuit para todos los hilos de fondo.
+
+        Estos workers arrancan ya en la carga inicial, antes de que el usuario
+        toque nada. Si el proceso termina por una via que no pasa por
+        closeEvent, Qt destruye el hilo en marcha y el proceso se cae al salir
+        (segmentation fault). aboutToQuit cubre todas las vias."""
+        if getattr(self, '_parada_conectada', False):
+            return
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._detener_workers_de_fondo)
+        # Y una última red por debajo de Qt: aboutToQuit solo salta si se llegó
+        # a entrar en el bucle de eventos. Un proceso que termina por otra vía
+        # (una utilidad de linea de comandos, un banco de pruebas) destruiría
+        # los hilos en marcha y se caería al salir. atexit corre siempre.
+        import atexit
+        atexit.register(self._detener_workers_de_fondo)
+        self._parada_conectada = True
+
+    def _detener_workers_de_fondo(self):
+        self._detener_props_workers()
+        self._detener_filtros_workers()
+
     def _detener_props_workers(self):
         """Espera a los workers de la cascada antes de que Qt se desmonte."""
         for w in list(getattr(self, '_props_workers', [])):
             try:
                 w.listo.disconnect(self._on_props_contexto)
-            except (TypeError, RuntimeError):
+            except Exception:
                 pass
             try:
-                w.wait(2000)
-            except RuntimeError:
+                if w.isRunning():
+                    w.wait(5000)
+            except Exception:
                 pass
         self._props_workers = []
 
@@ -4619,61 +4681,132 @@ class BuscadorPiezas(QMainWindow):
         except Exception as e:
             logger.debug(f"Error aplicando cascada de propiedades: {e}")
 
-    def refrescar_filtros_jerarquicos(self, solo_proyectos=False, solo_ordenes=False):
-        """Puebla las listas de Clientes, Proyectos y Órdenes con lógica de cascada total (V1.0.0)"""
+    def refrescar_filtros_jerarquicos(self, disparar_busqueda=False):
+        """Puebla las listas de Clientes y Proyectos con lógica de cascada.
+
+        V2.3.1: las dos consultas se hacían aquí mismo, en el hilo de la
+        interfaz, y congelaban la ventana ~0,65 s en cada clic de filtro.
+        Ahora se lanzan a un worker y la ventana no se bloquea; el repintado
+        ocurre en `_on_filtros_jerarquicos` cuando llegan los datos.
+
+        `disparar_busqueda=True` encadena la cascada de propiedades y la
+        búsqueda automática DESPUÉS de repoblar, que es el orden que tenía la
+        versión síncrona: si al cambiar de contexto desaparece un cliente que
+        estaba marcado, la búsqueda tiene que salir ya sin él."""
         if self.bloqueo_filtros:
             return
-            
-        self.bloqueo_filtros = True
-        
-        # Bloquear señales de las listas para evitar eventos espurios
-        self.list_clientes.blockSignals(True)
-        self.list_proyectos.blockSignals(True)
-        
         try:
-            # Selecciones globales
+            self._asegurar_parada_al_salir()
             comp_sel = self.get_selected_items(self.list_companeros)
             años_sel = self.get_selected_items(self.list_años)
-            
-            # Obtener selecciones actuales para intentar mantenerlas
             clientes_sel = self.get_selected_items(self.list_clientes)
-            proyectos_sel = [item.split(' - ')[0] for item in self.get_selected_items(self.list_proyectos)]
 
-            # 1. CLIENTES (Solo si no es una actualización parcial)
-            if not solo_proyectos and not solo_ordenes:
-                clientes = self.controller.get_all_clients(companions=comp_sel, years=años_sel)
+            self._gen_filtros = getattr(self, '_gen_filtros', 0) + 1
+            if not hasattr(self, '_filtros_buscan'):
+                self._filtros_buscan = {}
+            # Se apunta también en qué búsqueda estábamos al pedir el refresco.
+            # Al volver, si ya hay una búsqueda más nueva (por ejemplo la que
+            # lanza un refinado), NO se dispara la automática: pisaría a la que
+            # el usuario acaba de pedir. Con la versión síncrona esto no podía
+            # pasar porque el orden era siempre el mismo.
+            self._filtros_buscan[self._gen_filtros] = (
+                bool(disparar_busqueda), getattr(self, '_gen_busqueda', 0))
+
+            worker = FiltrosJerarquicosWorker(self._gen_filtros, self.controller,
+                                              comp_sel, años_sel, clientes_sel)
+            worker.listo.connect(self._on_filtros_jerarquicos)
+            if not hasattr(self, '_filtros_workers'):
+                self._filtros_workers = []
+            self._filtros_workers.append(worker)
+            worker.finished.connect(lambda w=worker: self._limpiar_filtros_worker(w))
+            worker.start()
+        except Exception as e:
+            logger.error(f"Error lanzando el refresco de filtros: {e}")
+
+    def _limpiar_filtros_worker(self, worker):
+        try:
+            self._filtros_workers.remove(worker)
+        except (ValueError, AttributeError):
+            pass
+
+    def _detener_filtros_workers(self):
+        """Espera a los workers de Clientes/Proyectos antes de desmontar Qt.
+
+        Todo va protegido: esto corre también desde atexit, cuando Qt puede
+        estar ya a medio desmontar y cualquier llamada sobre un objeto muerto
+        tumbaría el proceso al salir."""
+        for w in list(getattr(self, '_filtros_workers', [])):
+            try:
+                w.listo.disconnect(self._on_filtros_jerarquicos)
+            except Exception:
+                pass
+            try:
+                if w.isRunning():
+                    w.wait(5000)
+            except Exception:
+                pass
+        self._filtros_workers = []
+
+    def _on_filtros_jerarquicos(self, gen, ok, clientes, proyectos):
+        """Repuebla Clientes y Proyectos con lo que trajo el worker.
+
+        Las marcas se conservan; las que ya no existen en el contexto nuevo
+        desaparecen, igual que antes. Si la consulta falló no se toca nada:
+        vaciar las listas por un corte de red dejaría al usuario sin filtros."""
+        disparar, gen_busqueda_al_pedir = False, 0
+        if hasattr(self, '_filtros_buscan'):
+            disparar, gen_busqueda_al_pedir = self._filtros_buscan.pop(gen, (False, 0))
+        if gen != getattr(self, '_gen_filtros', 0):
+            return   # respuesta obsoleta: hay un contexto más nuevo en curso
+        if ok:
+            self.bloqueo_filtros = True
+            self.list_clientes.blockSignals(True)
+            self.list_proyectos.blockSignals(True)
+            try:
+                clientes_sel = set(self.get_selected_items(self.list_clientes))
+                proyectos_sel = {t.split(' - ')[0]
+                                 for t in self.get_selected_items(self.list_proyectos)}
+
                 self.list_clientes.clear()
                 for cli in clientes:
                     item = QListWidgetItem(cli)
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
                     item.setCheckState(Qt.Checked if cli in clientes_sel else Qt.Unchecked)
                     self.list_clientes.addItem(item)
-                # Actualizamos selecciones locales tras el clear
-                clientes_sel = self.get_selected_items(self.list_clientes)
-            
-            # 2. PROYECTOS
-            if not solo_ordenes:
-                proyectos = self.controller.get_all_projects(
-                    clientes=clientes_sel if clientes_sel else None,
-                    companions=comp_sel if comp_sel else None,
-                    years=años_sel if años_sel else None
-                )
+
                 self.list_proyectos.clear()
                 for cod, nom in proyectos:
                     item = QListWidgetItem(f"{cod} - {nom}")
                     item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-                    item.setCheckState(Qt.Checked if str(cod) in proyectos_sel else Qt.Unchecked)
+                    item.setCheckState(Qt.Checked if str(cod) in proyectos_sel
+                                       else Qt.Unchecked)
                     self.list_proyectos.addItem(item)
-                
-                # V1.0.1: Eliminado duplicado y añadido proyectos_sel final
-                proyectos_sel = [item.text().split(' - ')[0] for item in self.get_selected_items(self.list_proyectos)]
-                
-        except Exception as e:
-            logger.error(f"Error refrescando filtros jerárquicos: {e}")
-        finally:
-            self.list_clientes.blockSignals(False)
-            self.list_proyectos.blockSignals(False)
-            self.bloqueo_filtros = False
+            except Exception as e:
+                logger.error(f"Error repoblando Clientes y Proyectos: {e}")
+            finally:
+                self.list_clientes.blockSignals(False)
+                self.list_proyectos.blockSignals(False)
+                self.bloqueo_filtros = False
+        if disparar:
+            # La cascada de propiedades siempre: depende del contexto, no de
+            # qué búsqueda esté en curso.
+            self._refrescar_props_contexto()
+            # Dos motivos para NO lanzar la búsqueda automática. Con la versión
+            # síncrona no podían darse, porque el refresco terminaba antes de
+            # que nadie más pudiera pedir nada.
+            if getattr(self, '_refinado_pendiente', None):
+                # Hay un refinado esperando a unos resultados concretos: esa
+                # búsqueda es suya. Si la pisamos, el refinado se aplica sobre
+                # una lista vacía y se pierde — que es justo lo que arreglaba
+                # la V2.1.1.
+                logger.debug("Búsqueda automática omitida: hay un refinado en espera")
+                return
+            if getattr(self, '_gen_busqueda', 0) != gen_busqueda_al_pedir:
+                # El usuario ha lanzado una búsqueda mientras se refrescaban
+                # los filtros. Esa es la buena.
+                logger.debug("Búsqueda automática omitida: ya hay una más nueva en curso")
+                return
+            self.ejecutar_busqueda(auto=True)
 
     # ═══════════════════════════════════════════
     # BÚSQUEDA (Cambio 3: filtro por extensión)
@@ -4713,7 +4846,18 @@ class BuscadorPiezas(QMainWindow):
                     'Escribe también lo que sí quieres encontrar — ej.: ' + ejemplo)
                 return
                 
-            logger.info(f"Ejecutando búsqueda auto={auto} | Term: {termino} | Comp: {len(comp_sel)} | Años: {len(años_sel)}")
+            # V2.3.1: la traza llevaba solo término, orígenes y años. Cuando una
+            # búsqueda vuelve vacía y no se sabe por qué, lo que hace falta es
+            # ver TODOS los filtros que iban puestos — también en el informe que
+            # manda un compañero con "Copiar para enviar".
+            logger.info(
+                "Ejecutando búsqueda auto=%s | Term: %s | Comp: %d | Años: %d | "
+                "Clientes: %d | Proyectos: %d | Carpetas: %d | Tipos: %d",
+                auto, termino, len(comp_sel), len(años_sel),
+                len(self.get_selected_items(self.list_clientes)),
+                len(self.get_selected_items(self.list_proyectos)),
+                len(self.get_selected_items(self.list_carpetas)),
+                len(self.get_selected_tipos()))
             self.lbl_status.setText("Buscando...")
 
             # V2.0.3: vaciar la rejilla AL LANZAR — con la búsqueda asíncrona,
@@ -4893,8 +5037,15 @@ class BuscadorPiezas(QMainWindow):
         # refinado sin pulsar Enter. Se lanzó la general primero y el refinado
         # quedó en espera; ahora que hay base, se aplica.
         pendiente = getattr(self, '_refinado_pendiente', None)
+        # V2.3.1: solo lo consume LA búsqueda que lo dejó en espera. Antes se lo
+        # llevaba cualquier respuesta que llegase, incluida la de una búsqueda
+        # anterior aún en vuelo, y el refinado se perdía.
+        esperada = getattr(self, '_gen_refinado_pendiente', None)
+        if pendiente and esperada is not None and gen != esperada:
+            pendiente = None
         if pendiente:
             self._refinado_pendiente = None
+            self._gen_refinado_pendiente = None
             if resultados:
                 self._refinados = [pendiente]
                 self._aplicar_refinados()
@@ -5197,6 +5348,14 @@ class BuscadorPiezas(QMainWindow):
             self.input_refinar.clear()
             self.lbl_status.setText("Buscando «%s» para poder refinar…" % termino_arriba)
             antes = getattr(self, '_gen_busqueda', 0)
+            # V2.3.1: el refinado queda atado a SU búsqueda, y hay que atarlo
+            # ANTES de lanzarla: dentro de ejecutar_busqueda hay un
+            # processEvents, y por ahí puede entrar la respuesta de una
+            # búsqueda anterior aún en vuelo. Si llega con el refinado suelto,
+            # se lo lleva, lo aplica sobre la base equivocada, y la búsqueda
+            # buena lo borra al llegar. La generación que tendrá es la
+            # siguiente, porque ejecutar_busqueda la incrementa en uno.
+            self._gen_refinado_pendiente = antes + 1
             self.ejecutar_busqueda()
             if getattr(self, '_gen_busqueda', 0) == antes:
                 # La busqueda no llego a lanzarse (p.ej. sin ningun origen

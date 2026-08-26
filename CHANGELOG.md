@@ -1,5 +1,46 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.3.1] - 2026-08-26 (Que nada pueda dejar colgada a la oficina)
+
+### La app ya no bloquea la base de datos al arrancar
+
+**Lo que pasó el 26/08.** Toda la oficina se quedó con el buscador inservible: «Buscando… (45 s)» subiendo sin fin y cero resultados. La causa, sacada del propio PostgreSQL:
+
+1. Un `pg_dump` —copia de seguridad de **otra** base del mismo servidor— llevaba **8 horas** con una transacción abierta.
+2. Eso dejó esperando a un `ALTER TABLE buscador.archivos` que lanza la app **al arrancar**.
+3. En PostgreSQL, todo lo que llega después se encola **detrás** de ese ALTER. Diez personas abriendo la app: **9 sentencias atascadas y 31 consultas paradas**.
+
+**Por qué la app lanzaba ese ALTER.** `init_db()` corría entero en cada arranque y en cada reconexión: un esquema, seis tablas y quince índices, todos con `IF NOT EXISTS`. Parece gratis y no lo es — cada sentencia pide un bloqueo sobre la tabla aunque no haya nada que hacer. Y las tres columnas que intentaba añadir **existían desde hacía semanas**. Nueve bloqueos para no hacer absolutamente nada. Llevaba latente desde la v2.0.8; hasta ese día no se había dado la coincidencia.
+
+- **Si el esquema ya está completo, el arranque no ejecuta ni una sentencia.** Se comprueba antes con una lectura de catálogo, que no bloquea nada. Medido: arranque de 0,03 s y **cero** sentencias de esquema.
+- **Y si de verdad falta algo**, se crea con un tope de espera de 5 s. Es preferible arrancar sin una columna nueva —los datos de masa saldrían vacíos— a dejar la tabla clavada para todos.
+- **Cinturón general: `lock_timeout` de 15 s en todas las conexiones.** Ninguna consulta puede volver a quedarse esperando un bloqueo indefinidamente. No limita lo que tarda una búsqueda en calcular: limita lo que espera a que otro suelte la tabla. Ajustable en `config.ini` con `lock_timeout = N`.
+
+### Tocar un filtro ya no congela la ventana
+
+- **La app se quedaba muerta ~0,65 s cada vez que tocabas un filtro**, porque repoblaba Clientes y Proyectos haciendo **dos consultas en el mismo hilo que dibuja la ventana**. Durante ese rato no respondía a nada. Si tocabas varios filtros seguidos, se acumulaba.
+
+  | | Antes | Ahora |
+  |---|---|---|
+  | Ventana bloqueada al tocar un filtro | **0,65 s** | **0,000 s** |
+
+  El peor caso era el más frecuente: la consulta de proyectos tarda **0,51 s cuando no hay ningún cliente marcado** (0,06 s con uno marcado), que es justo el estado en que la app arranca.
+- **Ahora corren en segundo plano**, con el mismo patrón que ya usaban la búsqueda, las miniaturas y la cascada de propiedades. Era la última pieza de la interfaz sin migrar: venía del código original de febrero.
+- **El orden se respeta**: la cascada de propiedades y la búsqueda automática salen **después** de repoblar las listas.
+- **Un corte de red ya no te deja sin filtros**: si la consulta falla, las listas se quedan como estaban en vez de vaciarse.
+- **Arreglado un desajuste del arranque**: Clientes y Proyectos se calculaban **antes** de restaurar tus preferencias, así que al abrir la app mostraban todo aunque tuvieras guardado un filtro, hasta que tocabas algo.
+- **El refinado ya no se pierde por una carrera.** Al pasar los filtros a segundo plano apareció esto: dentro de `ejecutar_busqueda` hay un `processEvents`, y por ahí se colaba la respuesta de una búsqueda anterior aún en vuelo — **4 milisegundos** después de dejar el refinado en espera. Se lo llevaba, lo aplicaba sobre la base equivocada, y la búsqueda buena lo borraba al llegar. Ahora el refinado queda **atado a su propia búsqueda** y ninguna otra respuesta puede llevárselo.
+
+### Para poder diagnosticar la próxima
+
+- **La traza de cada búsqueda lleva ahora todos los filtros** (clientes, proyectos, carpetas y tipos), no solo el término y los años. Cuando una búsqueda vuelve vacía, eso es exactamente lo que hace falta ver — también en el informe que manda un compañero con «Copiar para enviar».
+- **Las pruebas ya no pueden tocar los filtros de la oficina.** `buscador.preferencias` es una tabla **compartida**: lo que guarda el último que cierra la app se lo encuentra puesto el siguiente. Las baterías abren y cierran la app de verdad, y dejaron a todo el mundo con solo PROYECTOS y solo PIEZAS marcados — la app parecía rota y solo estaba filtrando en silencio. Ahora todas corren con `ALSI_SIN_PREFERENCIAS=1`: leen normal, pero no escriben.
+- **19 comprobaciones nuevas** (`pruebas_fluidez.py`).
+
+*Se evaluó además un índice compuesto para acelerar la consulta de proyectos. **No sirve**: PostgreSQL sigue recorriendo la tabla entera para el `DISTINCT`, mismo tiempo con índice y sin él (0,52 s). Se probó en el servidor y se retiró.*
+
+> **Pendiente, y no es de la app:** esa tabla de preferencias sigue siendo compartida, así que **el último que cierra le fija los filtros a todos los demás**. Es el mismo fallo que se corrigió con la geometría de ventana en la v2.0.8, pero los filtros se quedaron sin mover. Toca llevarlos a los ajustes de cada equipo.
+
 ## [2.3.0] - 2026-08-25 (Los filtros de propiedades ya se estrechan al contexto)
 
 Incluye todo lo de la 2.2.0, que no llegó a desplegarse por separado.

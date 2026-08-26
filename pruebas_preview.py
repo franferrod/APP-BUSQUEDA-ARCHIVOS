@@ -18,6 +18,9 @@ RAIZ = os.path.dirname(os.path.abspath(__file__))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["ALSI_SIN_DIALOGOS"] = "1"
 os.environ["ALSI_SIN_CANDADO"] = "1"
+# V2.3.1: las pruebas NO escriben en la tabla de preferencias, que es
+# compartida por toda la oficina.
+os.environ["ALSI_SIN_PREFERENCIAS"] = "1"
 sys.path.insert(0, RAIZ)
 os.chdir(RAIZ)
 
@@ -249,6 +252,17 @@ def main():
             emitir("EXCEPCION:")
             emitir(traceback.format_exc())
             RESULTADOS.append(("la bateria termina sin excepciones", False, ""))
+
+        # V2.3.1: parar los hilos de fondo antes de salir, igual que hacen
+        # closeEvent y aboutToQuit en la app real. Este arnes no pasa por
+        # ninguno de los dos, y Qt destruyendo un QThread en marcha tumba el
+        # proceso al terminar (aunque las comprobaciones hayan pasado).
+        try:
+            win = next(x for x in QApplication.topLevelWidgets()
+                       if type(x).__name__ == "BuscadorPiezas")
+            win._detener_workers_de_fondo()
+        except Exception:
+            pass
 
         emitir("")
         emitir("=" * 70)
