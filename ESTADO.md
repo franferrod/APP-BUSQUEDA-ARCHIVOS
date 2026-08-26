@@ -52,11 +52,11 @@ Lo que la app hace hoy, en corto:
 | Sitio | Qué es | Estado |
 |---|---|---|
 | `Desktop\ANTIGRAVITY\BÚSQUEDA PIEZAS\` (**raíz**) | Copia de trabajo principal **y** máquina servidor de los pases nocturnos | Sincronizada con `master` el 25/08. Copia de los ficheros de producción previos en `BACKUPS\produccion_antes_de_sincronizar_20260825\` |
-| `.claude\worktrees\recursing-shamir-b9fab6\` | Worktree donde se desarrolla la línea 2.x | v2.3.0 |
+| `.claude\worktrees\recursing-shamir-b9fab6\` | Worktree donde se desarrolla la línea 2.x | v2.3.1 |
 | `.claude\worktrees\nervous-ptolemy-89ad8f\` | Investigación de las miniaturas perdidas | v2.0.9, cerrada. Contenido absorbido en master |
 | `.claude\worktrees\plate-search-freezing-3491f2\` | Rama de julio | v2.0.2. Su feature de cascada ya está portada (§6.1); la rama se puede retirar |
-| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.0** |
-| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **23 etiquetas** (v1.0.0 → v2.3.0) | Al día |
+| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.1** |
+| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **24 etiquetas** (v1.0.0 → v2.3.1) | Al día |
 
 **Tareas programadas en OFITEC-4**: `ALSI_Reindexar_Diario` (15:45) y
 `ALSI_Poblar_Props_Miniaturas` (16:30), con la ruta corta 8.3 `BSQUED~1` porque el Programador de
@@ -87,7 +87,7 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 
 ## 4. Terminado
 
-Toda la línea 2.x hasta la **v2.3.0** está en producción. Lo más reciente:
+Toda la línea 2.x hasta la **v2.3.1** está en producción. Lo más reciente:
 
 - **v2.1.4** — exclusiones `-palabra` con chips «Sin …» y un único analizador `parsear_termino`.
 - **v2.1.3** — la vista previa ya no machaca la miniatura buena con el icono genérico de Windows.
@@ -96,6 +96,20 @@ Toda la línea 2.x hasta la **v2.3.0** está en producción. Lo más reciente:
 - **v2.1.0** — la app abre siempre; diagnóstico; `crash.log`; instancia única.
 - **v2.0.7–v2.0.9** — búsqueda indexada, peso y superficie, `config.ini` robusto, arreglo del
   `taskkill 0xc0000142`, "Abrir carpeta" con re-detección de host.
+
+**v2.3.1 — desplegada el 26/08**:
+
+- **El arranque ya no lanza DDL.** `init_db()` corría entero en cada arranque: un esquema, seis
+  tablas y quince índices con `IF NOT EXISTS`, todos pidiendo bloqueo aunque no hubiera nada que
+  hacer. Con un `pg_dump` ajeno de 8 horas encima, eso dejó **9 sentencias atascadas y 31
+  consultas paradas**: la oficina entera sin buscador. Ahora, si el esquema está completo, cero
+  sentencias.
+- **`lock_timeout` de 15 s** en todas las conexiones: ninguna consulta puede volver a esperar un
+  bloqueo indefinidamente.
+- **Tocar un filtro pasa de congelar la ventana 0,65 s a 0,000 s.**
+- **El refinado queda atado a su propia búsqueda** (carrera de 4 ms destapada al pasar los
+  filtros a segundo plano).
+- **Las pruebas ya no escriben en `buscador.preferencias`** (`ALSI_SIN_PREFERENCIAS=1`).
 
 **v2.3.0 — desplegada el 25/08** (incluye la v2.2.0, que no salió por separado para no dar dos avisos de actualización el mismo día):
 
@@ -108,7 +122,7 @@ Toda la línea 2.x hasta la **v2.3.0** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 357 comprobaciones en verde** (17 fluidez + 30 cascada + 31 análisis + 16 credenciales + 47
+**Pruebas: 357 comprobaciones en verde** (19 fluidez + 30 cascada + 31 análisis + 16 credenciales + 47
 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos + 19 v2.1.2 +
 11 preview + 29 sobre el `.exe` empaquetado).
 
