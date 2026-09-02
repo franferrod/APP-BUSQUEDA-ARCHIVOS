@@ -84,6 +84,7 @@ Compila `SwPropExtractor.cs` con `csc.exe` y empaqueta con PyInstaller (*onefile
 Git Bash, `csc` necesita flags con guion (`-reference:`), no con barra.
 
 ```bash
+python pruebas_preferencias.py    # 18 · que los filtros sean de cada equipo
 python pruebas_fluidez.py         # 19 · que tocar un filtro no congele la ventana
 python pruebas_cascada.py         # 30 · cascada de filtros de propiedades
 python pruebas_credenciales.py    # 16 · de dónde salen las credenciales
@@ -92,11 +93,11 @@ python pruebas_exclusiones.py     # 47 · gramática de búsqueda y exclusiones
 python pruebas_robustez.py --todo # 90 · servidor OK (51) + servidor caído (39)
 python pruebas_datos.py           # 48 · consultas reales contra el servidor
 python pruebas_v212.py            # 19 · diálogos, filtro interno, Abrir PDF
-python pruebas_preview.py         # 11 · panel de vista previa e icono genérico
+python pruebas_preview.py         #  7 · panel de vista previa e icono genérico
 python pruebas_ejecutable.py      # 29 · sobre el .exe empaquetado
 ```
 
-Total: **357**. Reglas del banco de pruebas:
+Total: **353**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - La carpeta de pruebas del `.exe` necesita su `config.ini`.
@@ -137,6 +138,10 @@ Total: **357**. Reglas del banco de pruebas:
 - **Windows devuelve el mismo icono genérico** para `.SLDASM` distintos; umbral de parecido 85 %.
 - **`componentes` guarda el NOMBRE del componente, no su ruta.** Unir por nombre contra `archivos`
   multiplica por todas las copias del NAS: una pieza común aparece en decenas de proyectos.
+- **Las baterias que abren la ventana salen con `arnes_pruebas.salir()`, DENTRO del arnes.**
+  Si se deja volver a `runpy`, este desmonta el modulo de la app con los hilos de fondo aun
+  vivos y Windows mata el proceso (`0xC0000409`) *despues* de imprimir todo en verde. Y ojo:
+  Git Bash enseña ese codigo como `127`. Pideselo a Python si algo no cuadra.
 - **Peso (21) y Sup. (22) van al final de la tabla** a propósito: no desplaces índices de columna.
 
 ## Sintaxis de búsqueda (medida, no supuesta)
