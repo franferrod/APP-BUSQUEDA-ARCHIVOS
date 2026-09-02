@@ -15,7 +15,7 @@ guardados en el NAS Synology, sin navegar por carpetas.
 - **Backend**: PostgreSQL en `192.168.1.10:5433`, base `ALSI`, esquema `buscador`.
 - **Distribución**: un `.exe` de ~82 MB (PyInstaller *onefile*) que cada compañero instala desde
   la carpeta de red con `INSTALAR_LOCAL.bat`. La app avisa sola cuando hay versión nueva.
-- **En producción: v2.3.1**.
+- **En producción: v2.3.2**.
 
 **Cifras reales del índice, medidas el 25/08/2026:**
 
@@ -52,11 +52,11 @@ Lo que la app hace hoy, en corto:
 | Sitio | Qué es | Estado |
 |---|---|---|
 | `Desktop\ANTIGRAVITY\BÚSQUEDA PIEZAS\` (**raíz**) | Copia de trabajo principal **y** máquina servidor de los pases nocturnos | Sincronizada con `master` el 25/08. Copia de los ficheros de producción previos en `BACKUPS\produccion_antes_de_sincronizar_20260825\` |
-| `.claude\worktrees\recursing-shamir-b9fab6\` | Worktree donde se desarrolla la línea 2.x | v2.3.1 |
+| `.claude\worktrees\recursing-shamir-b9fab6\` | Worktree donde se desarrolla la línea 2.x | v2.3.2 |
 | `.claude\worktrees\nervous-ptolemy-89ad8f\` | Investigación de las miniaturas perdidas | v2.0.9, cerrada. Contenido absorbido en master |
 | `.claude\worktrees\plate-search-freezing-3491f2\` | Rama de julio | v2.0.2. Su feature de cascada ya está portada (§6.1); la rama se puede retirar |
-| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.1** |
-| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **24 etiquetas** (v1.0.0 → v2.3.1) | Al día |
+| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.2** |
+| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **25 etiquetas** (v1.0.0 → v2.3.2) | Al día |
 
 **Tareas programadas en OFITEC-4**: `ALSI_Reindexar_Diario` (15:45) y
 `ALSI_Poblar_Props_Miniaturas` (16:30), con la ruta corta 8.3 `BSQUED~1` porque el Programador de
@@ -87,7 +87,7 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 
 ## 4. Terminado
 
-Toda la línea 2.x hasta la **v2.3.1** está en producción. Lo más reciente:
+Toda la línea 2.x hasta la **v2.3.2** está en producción. Lo más reciente:
 
 - **v2.1.4** — exclusiones `-palabra` con chips «Sin …» y un único analizador `parsear_termino`.
 - **v2.1.3** — la vista previa ya no machaca la miniatura buena con el icono genérico de Windows.
@@ -96,6 +96,16 @@ Toda la línea 2.x hasta la **v2.3.1** está en producción. Lo más reciente:
 - **v2.1.0** — la app abre siempre; diagnóstico; `crash.log`; instancia única.
 - **v2.0.7–v2.0.9** — búsqueda indexada, peso y superficie, `config.ini` robusto, arreglo del
   `taskkill 0xc0000142`, "Abrir carpeta" con re-detección de host.
+
+**v2.3.2 — desplegada el 02/09**:
+
+- **Los filtros son de cada equipo.** Origen, años, carpetas, tipos y el reparto de la ventana
+  se guardaban en `buscador.preferencias`, una tabla compartida de dos columnas: los del último
+  que cerraba la app se los encontraba puestos el siguiente. Ahora van a QSettings, con herencia
+  la primera vez para que nadie note un salto.
+- **El banco de pruebas vuelve a ser fiable**: varias baterías terminaban con error aunque
+  pasaran todo, porque `runpy` desmontaba la app con los hilos de fondo vivos. Se sale desde
+  dentro del arnés (`arnes_pruebas.salir`). 353 comprobaciones, todas en verde.
 
 **v2.3.1 — desplegada el 26/08**:
 
@@ -122,7 +132,7 @@ Toda la línea 2.x hasta la **v2.3.1** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 357 comprobaciones en verde** (19 fluidez + 30 cascada + 31 análisis + 16 credenciales + 47
+**Pruebas: 353 comprobaciones en verde** (19 fluidez + 30 cascada + 31 análisis + 16 credenciales + 47
 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos + 19 v2.1.2 +
 11 preview + 29 sobre el `.exe` empaquetado).
 
@@ -191,14 +201,6 @@ cadena vacía y descuadraba el recuento en uno.
 ---
 
 ## 7. Bugs conocidos y riesgos
-
-0. 🔴 **`buscador.preferencias` es una tabla COMPARTIDA por toda la oficina.** Los filtros
-   (orígenes, años, carpetas, tipos) que guarda el último que cierra la app se los encuentra
-   puestos el siguiente que la abre. El 26/08/2026 dejó a todo el mundo con solo PROYECTOS y
-   solo PIEZAS marcados, y la app parecía rota cuando solo estaba filtrando en silencio.
-   Es el mismo fallo que se corrigió con la geometría de ventana en la v2.0.8 — pero entonces
-   solo se movió la geometría a QSettings. **Toca llevar los filtros al equipo de cada uno.**
-   Es el siguiente arreglo pendiente.
 
 1. **Diálogos anidados con aspecto distinto** — en la segunda anidación de "¿qué componentes
    lleva?" el símbolo de la ventana y el tooltip cambian de color. Se descartaron icono, flags,
