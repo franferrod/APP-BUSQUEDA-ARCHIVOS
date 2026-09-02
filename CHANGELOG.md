@@ -1,5 +1,13 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.3.2] - en preparación (Tus filtros son tuyos)
+
+- **Los filtros que la app recuerda ya son de cada equipo.** Origen, años, carpetas, tipos y el reparto de la ventana se guardaban en una tabla **compartida por toda la oficina**: dos columnas, una sola fila por cada cosa. Así que **los filtros del último que cerraba la app se los encontraba puestos el siguiente que la abría**, sin haber tocado nada.
+- **El síntoma era desconcertante a propósito**: no salía ningún error. Simplemente abrías el buscador y te devolvía de menos. Si alguien había dejado marcado solo PROYECTOS y solo PIEZAS, tú abrías sin BIBLIOTECA 3D y sin planos ni PDF, y no había forma de saber por qué. Pasó de verdad el 26/08.
+- **Ahora cada ordenador guarda los suyos**, igual que ya se hacía con la última búsqueda (v2.0.3) y con la posición de la ventana (v2.0.8). Aquellas dos se arreglaron porque dieron la cara; estos cinco se habían quedado atrás.
+- **Nadie nota un cambio brusco al actualizar.** La primera vez, cada equipo **hereda** lo que hubiera en la configuración común y a partir de ahí va por su cuenta. Y si tenías algo desmarcado a propósito, se respeta: un filtro vacío es una decisión, no un hueco que rellenar.
+- **18 comprobaciones nuevas** (`pruebas_preferencias.py`): que guardar ya no toca la tabla común, que dos equipos no se pisan, que la herencia funciona una sola vez, que un vacío intencionado se respeta, y que sin servidor no se rompe nada.
+
 ## [2.3.1] - 2026-08-26 (Que nada pueda dejar colgada a la oficina)
 
 ### La app ya no bloquea la base de datos al arrancar

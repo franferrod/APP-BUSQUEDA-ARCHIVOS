@@ -369,7 +369,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.3.2"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -4360,6 +4360,39 @@ class BuscadorPiezas(QMainWindow):
     # ═══════════════════════════════════════════
     # PREFERENCIAS
     # ═══════════════════════════════════════════
+    # V2.3.2 - Los cuatro filtros que se recuerdan entre sesiones. Estaban en
+    # `buscador.preferencias`, que es una tabla COMPARTIDA de dos columnas
+    # (clave, valor): una sola fila por clave para toda la oficina. O sea que
+    # los filtros del último que cerraba la app se los encontraba puestos el
+    # siguiente que la abría, y la app le devolvía de menos sin que supiera por
+    # qué — ni un error en pantalla, solo resultados que faltan.
+    # Es el mismo fallo que ya se corrigió con la última búsqueda (V2.0.3) y con
+    # la geometría de ventana (V2.0.8); estos cuatro se quedaron atrás.
+    FILTROS_RECORDADOS = ("companeros_checked", "años_checked",
+                          "carpetas_checked", "tipos_checked",
+                          "splitter_sizes")
+
+    def _leer_filtro_guardado(self, clave):
+        """El valor de ESTE equipo. La primera vez lo siembra del compartido.
+
+        La siembra evita que a nadie le cambien los filtros de golpe el día que
+        actualice: se toma una sola vez lo que hubiera en la tabla común y a
+        partir de ahí cada equipo va por su cuenta. Mismo patrón que
+        `ultimo_termino`."""
+        local = self.qsettings.value(clave, None)
+        if local is not None:
+            return str(local)
+        try:
+            heredado = self.controller.load_preference(clave, "") or ""
+        except Exception as e:
+            logger.debug("No se ha podido heredar '%s': %s", clave, e)
+            heredado = ""
+        if heredado:
+            logger.info("Filtro '%s' heredado de la configuración común "
+                        "(a partir de ahora es de este equipo)", clave)
+            self.qsettings.setValue(clave, heredado)
+        return heredado
+
     def cargar_preferencias(self):
         # V2.0.3: NO pisar lo que el usuario ya haya escrito/buscado — la carga
         # de preferencias es diferida y podía llegar DESPUÉS de una búsqueda
@@ -4377,7 +4410,7 @@ class BuscadorPiezas(QMainWindow):
         # Restaurar Checkbox Biblioteca (V1.0.0) - ELIMINADO PARA NAS NUEVO
 
         
-        comp_guardados = self.controller.load_preference("companeros_checked", "")
+        comp_guardados = self._leer_filtro_guardado("companeros_checked")
         if comp_guardados:
             comp_list = comp_guardados.split(',')
             for i in range(self.list_companeros.count()):
@@ -4385,7 +4418,7 @@ class BuscadorPiezas(QMainWindow):
                 item.setCheckState(Qt.Checked if item.text() in comp_list else Qt.Unchecked)
 
         # Restaurar Años (V1.2.3)
-        años_guardados = self.controller.load_preference("años_checked", "")
+        años_guardados = self._leer_filtro_guardado("años_checked")
         if años_guardados:
             años_list = años_guardados.split(',')
             for i in range(self.list_años.count()):
@@ -4393,7 +4426,7 @@ class BuscadorPiezas(QMainWindow):
                 item.setCheckState(Qt.Checked if item.text() in años_list else Qt.Unchecked)
 
         # Restaurar Carpetas (V1.2.3)
-        carpetas_guardadas = self.controller.load_preference("carpetas_checked", "")
+        carpetas_guardadas = self._leer_filtro_guardado("carpetas_checked")
         if carpetas_guardadas:
             c_list = carpetas_guardadas.split(',')
             for i in range(self.list_carpetas.count()):
@@ -4401,7 +4434,7 @@ class BuscadorPiezas(QMainWindow):
                 item.setCheckState(Qt.Checked if item.text() in c_list else Qt.Unchecked)
 
         # Restaurar Tipos (V1.0.0 - Desde Botón Superior)
-        tipos_guardados = self.controller.load_preference("tipos_checked", "")
+        tipos_guardados = self._leer_filtro_guardado("tipos_checked")
         if tipos_guardados:
             t_list = tipos_guardados.split(',')
             for tipo, action in self.tipos_actions.items():
@@ -4424,7 +4457,7 @@ class BuscadorPiezas(QMainWindow):
                 pass
 
         # Restaurar tamaño splitter
-        splitter_state = self.controller.load_preference("splitter_sizes", "")
+        splitter_state = self._leer_filtro_guardado("splitter_sizes")
         if splitter_state:
             try:
                 sizes = [int(s) for s in splitter_state.split(',')]
@@ -4475,21 +4508,20 @@ class BuscadorPiezas(QMainWindow):
 
         
 
-        comp_checked = ','.join(self.get_selected_items(self.list_companeros))
-        self.controller.save_preference("companeros_checked", comp_checked)
-
-        años_checked = ','.join(self.get_selected_items(self.list_años))
-        self.controller.save_preference("años_checked", años_checked)
-
-        carpetas_checked = ','.join(self.get_selected_items(self.list_carpetas))
-        self.controller.save_preference("carpetas_checked", carpetas_checked)
-
-        tipos_checked = ','.join(self.get_selected_tipos())
-        self.controller.save_preference("tipos_checked", tipos_checked)
+        # V2.3.2: los filtros son de CADA EQUIPO (QSettings), ya no van a la
+        # tabla compartida. Ver FILTROS_RECORDADOS.
+        self.qsettings.setValue("companeros_checked",
+                                ','.join(self.get_selected_items(self.list_companeros)))
+        self.qsettings.setValue("años_checked",
+                                ','.join(self.get_selected_items(self.list_años)))
+        self.qsettings.setValue("carpetas_checked",
+                                ','.join(self.get_selected_items(self.list_carpetas)))
+        self.qsettings.setValue("tipos_checked",
+                                ','.join(self.get_selected_tipos()))
 
         # Guardar tamaño splitter
         sizes = self.splitter.sizes()
-        self.controller.save_preference("splitter_sizes", f"{sizes[0]},{sizes[1]}")
+        self.qsettings.setValue("splitter_sizes", f"{sizes[0]},{sizes[1]}")
 
     def closeEvent(self, event):
         # V2.0.0: parar timers e hilo de miniaturas ANTES de destruir widgets,
@@ -4622,6 +4654,16 @@ class BuscadorPiezas(QMainWindow):
         self._parada_conectada = True
 
     def _detener_workers_de_fondo(self):
+        """Para los hilos de fondo. Se llama desde closeEvent, desde aboutToQuit
+        y desde atexit, y ese último puede llegar con Qt ya a medio desmontar:
+        si el objeto C++ de la ventana ya no existe, tocar cualquier cosa suya
+        tumba el proceso al salir. Por eso se comprueba antes."""
+        try:
+            from PyQt5 import sip
+            if sip.isdeleted(self):
+                return
+        except Exception:
+            pass
         self._detener_props_workers()
         self._detener_filtros_workers()
 

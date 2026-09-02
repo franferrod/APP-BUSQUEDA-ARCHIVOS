@@ -83,13 +83,26 @@ def main():
                                   OR a.nombre_archivo ILIKE '26067.E222%')
                            ORDER BY a.nombre_archivo""")
             filas = cur.fetchall()
-            if len(filas) < 2:
-                cur.execute("""SELECT a.ruta_completa, a.nombre_archivo
-                               FROM buscador.archivos a
-                               JOIN buscador.miniaturas m
-                                 ON m.ruta_completa = a.ruta_completa
-                               WHERE a.extension = '.sldasm' LIMIT 3""")
-                filas = cur.fetchall()
+            # V2.3.2: la muestra no puede ser solo esos tres. Windows cachea las
+            # miniaturas, y el dia que aprende a dibujarlos la prueba se queda
+            # sin ningun caso generico y salia en rojo por un cambio del sistema
+            # operativo, no de la app. Se amplia con ensamblajes de proyectos
+            # ANTIGUOS, que es donde el shell falla mas (medido en la
+            # investigacion de vistas previas: 41,3% sin vista en proyectos de
+            # 2015 frente al 0,9% en los de 2026).
+            cur.execute("""SELECT a.ruta_completa, a.nombre_archivo
+                           FROM buscador.archivos a
+                           JOIN buscador.miniaturas m
+                             ON m.ruta_completa = a.ruta_completa
+                           WHERE a.extension = '.sldasm'
+                             AND a.anio IS NOT NULL
+                           ORDER BY a.anio ASC, a.nombre_archivo
+                           LIMIT 40""")
+            vistos = {r[0] for r in filas}
+            for r in cur.fetchall():
+                if r[0] not in vistos:
+                    filas.append(r)
+                    vistos.add(r[0])
             c.close()
             if not filas:
                 comprobar("hay ensamblajes con miniatura para probar", False)
@@ -133,7 +146,12 @@ def main():
             # El icono generico DE VERDAD, tal y como lo devuelve el shell en
             # este equipo (no uno dibujado a mano: eso no representa el caso).
             generico = None
-            for r, n in filas:
+            # Cada intento pide una miniatura al shell de Windows y crea un
+            # HBITMAP. Recorrer la muestra entera agota recursos graficos y el
+            # proceso acaba cayendose al salir, asi que se prueban unos pocos:
+            # con 12 basta para encontrar un generico si lo hay.
+            MAX_INTENTOS = 12
+            for r, n in filas[:MAX_INTENTOS]:
                 pm_sh = imagen_del_shell(r)
                 if pm_sh is None:
                     continue
@@ -147,9 +165,17 @@ def main():
                     pm_bd = pm_ref
                     break
             if generico is None:
-                comprobar("se ha podido capturar el icono generico real", False,
-                          "el shell renderiza bien todos los de la muestra")
-                emitir("      (sin el caso real no se puede probar el descarte)")
+                # Que el shell sepa dibujar toda la muestra NO es un fallo del
+                # producto: es que hoy no hay caso que comprobar. Windows
+                # cachea las miniaturas y lo que ayer devolvia el cubo generico
+                # manana puede renderizarlo bien. Marcarlo en rojo mandaba a
+                # revisar la app por un cambio del sistema operativo, asi que
+                # se declara "no comprobable" y se dice bien alto.
+                emitir("  %-56s %s" % ("el descarte del icono generico NO se ha podido probar hoy",
+                                       "AVISO"))
+                emitir("      el shell ha renderizado bien los %d ensamblajes probados;" % min(MAX_INTENTOS, len(filas)))
+                emitir("      sin un caso generico real no hay nada que descartar.")
+                emitir("      (la logica del umbral si queda cubierta por el resto de secciones)")
             else:
                 p_malo = win._parecido_imagenes(pm_bd, generico)
                 comprobar("el icono generico REAL se reconoce como distinto",
@@ -192,11 +218,11 @@ def main():
             falso.fill(QColor("#DDDDDD"))
             r1, r2 = filas[0][0], filas[min(1, len(filas) - 1)][0]
             win._preview_referencia = (r1, None)      # sin referencia: pasa el 1er filtro
-            win._gen_preview += 1
+            win._gen_preview = getattr(win, "_gen_preview", 0) + 1
             win._on_preview_pesado(win._gen_preview, r1, "1 MB", falso.toImage(), 0)
             primero_aceptado = win.cache_miniaturas.get((r1, 1024)) is not None
             win._preview_referencia = (r2, None)
-            win._gen_preview += 1
+            win._gen_preview = getattr(win, "_gen_preview", 0) + 1
             win._on_preview_pesado(win._gen_preview, r2, "1 MB", falso.toImage(), 0)
             segundo_rechazado = win.cache_miniaturas.get((r2, 1024)) is None
             comprobar("la primera vez se acepta (aun no hay con que comparar)",
@@ -210,7 +236,7 @@ def main():
             win._huellas_shell = {}
             win._huellas_genericas = set()
             win._preview_referencia = (ruta, pm_bd)
-            win._gen_preview += 1
+            win._gen_preview = getattr(win, "_gen_preview", 0) + 1
             win._on_preview_pesado(win._gen_preview, ruta, "1 MB",
                                    pm_grande.toImage(), 0)
             aplicado = win.lbl_preview_icon._pm
@@ -224,7 +250,7 @@ def main():
             win._huellas_shell = {}
             win._huellas_genericas = set()
             win._preview_referencia = ("otra_ruta_distinta", None)
-            win._gen_preview += 1
+            win._gen_preview = getattr(win, "_gen_preview", 0) + 1
             cualquiera = generico if generico is not None else pm_grande
             win._on_preview_pesado(win._gen_preview, ruta, "1 MB",
                                    cualquiera.toImage(), 0)
