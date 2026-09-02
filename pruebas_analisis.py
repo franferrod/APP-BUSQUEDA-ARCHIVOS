@@ -281,6 +281,12 @@ def main():
                 emitir("    - %s %s" % (t, ("(%s)" % d) if d else ""))
         emitir("=" * 70)
         salida["codigo"] = 0 if not fallos else 1
+        # V2.3.2: se sale AQUI, con Qt todavia sano. Si se dejaba volver a
+        # runpy, este desmontaba el modulo de la app con los hilos de fondo
+        # aun vivos y el proceso se mataba solo (0xC0000409) despues de
+        # imprimir todas las comprobaciones en verde.
+        import arnes_pruebas
+        arnes_pruebas.salir(salida["codigo"], _f)
         return 0
 
     QApplication.exec_ = _exec
@@ -293,4 +299,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # V2.3.2: salida determinista. Ver arnes_pruebas: con hilos Qt vivos,
+    # el desmontaje del interprete tumbaba el proceso y el codigo de salida
+    # dejaba de significar lo que decian las comprobaciones.
+    import arnes_pruebas
+    arnes_pruebas.salir(main(), _f)

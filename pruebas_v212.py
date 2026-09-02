@@ -307,6 +307,12 @@ def main():
             traceback.print_exc()
             RESULTADOS.append(("la bateria termina sin excepciones", False, ""))
         salida["codigo"] = resumen()
+        # V2.3.2: se sale AQUI, con Qt todavia sano. Si se dejaba volver a
+        # runpy, este desmontaba el modulo de la app con los hilos de fondo
+        # aun vivos y el proceso se mataba solo (0xC0000409) despues de
+        # imprimir todas las comprobaciones en verde.
+        import arnes_pruebas
+        arnes_pruebas.salir(salida["codigo"], TEE)
         return 0
 
     QApplication.exec_ = _exec
@@ -319,4 +325,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # V2.3.2: salida determinista. Ver arnes_pruebas: con hilos Qt vivos,
+    # el desmontaje del interprete tumbaba el proceso y el codigo de salida
+    # dejaba de significar lo que decian las comprobaciones.
+    import arnes_pruebas
+    arnes_pruebas.salir(main(), TEE)
