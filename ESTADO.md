@@ -15,7 +15,7 @@ guardados en el NAS Synology, sin navegar por carpetas.
 - **Backend**: PostgreSQL en `192.168.1.10:5433`, base `ALSI`, esquema `buscador`.
 - **Distribución**: un `.exe` de ~82 MB (PyInstaller *onefile*) que cada compañero instala desde
   la carpeta de red con `INSTALAR_LOCAL.bat`. La app avisa sola cuando hay versión nueva.
-- **En producción: v2.3.2**.
+- **En producción: v2.3.3**.
 
 **Cifras reales del índice, medidas el 25/08/2026:**
 
@@ -52,11 +52,11 @@ Lo que la app hace hoy, en corto:
 | Sitio | Qué es | Estado |
 |---|---|---|
 | `Desktop\ANTIGRAVITY\BÚSQUEDA PIEZAS\` (**raíz**) | Copia de trabajo principal **y** máquina servidor de los pases nocturnos | Sincronizada con `master` el 25/08. Copia de los ficheros de producción previos en `BACKUPS\produccion_antes_de_sincronizar_20260825\` |
-| `.claude\worktrees\recursing-shamir-b9fab6\` | Worktree donde se desarrolla la línea 2.x | v2.3.2 |
+| `.claude\worktrees\recursing-shamir-b9fab6\` | Worktree donde se desarrolla la línea 2.x | v2.3.3 |
 | `.claude\worktrees\nervous-ptolemy-89ad8f\` | Investigación de las miniaturas perdidas | v2.0.9, cerrada. Contenido absorbido en master |
 | `.claude\worktrees\plate-search-freezing-3491f2\` | Rama de julio | v2.0.2. Su feature de cascada ya está portada (§6.1); la rama se puede retirar |
-| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.2** |
-| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **25 etiquetas** (v1.0.0 → v2.3.2) | Al día |
+| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.3** |
+| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **26 etiquetas** (v1.0.0 → v2.3.3) | Al día |
 
 **Tareas programadas en OFITEC-4**: `ALSI_Reindexar_Diario` (15:45) y
 `ALSI_Poblar_Props_Miniaturas` (16:30), con la ruta corta 8.3 `BSQUED~1` porque el Programador de
@@ -87,7 +87,7 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 
 ## 4. Terminado
 
-Toda la línea 2.x hasta la **v2.3.2** está en producción. Lo más reciente:
+Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 
 - **v2.1.4** — exclusiones `-palabra` con chips «Sin …» y un único analizador `parsear_termino`.
 - **v2.1.3** — la vista previa ya no machaca la miniatura buena con el icono genérico de Windows.
@@ -96,6 +96,16 @@ Toda la línea 2.x hasta la **v2.3.2** está en producción. Lo más reciente:
 - **v2.1.0** — la app abre siempre; diagnóstico; `crash.log`; instancia única.
 - **v2.0.7–v2.0.9** — búsqueda indexada, peso y superficie, `config.ini` robusto, arreglo del
   `taskkill 0xc0000142`, "Abrir carpeta" con re-detección de host.
+
+**v2.3.3 — desplegada el 03/09**:
+
+- **Dos instancias a la vez**, una por escritorio de Windows, con una búsqueda distinta en cada
+  una. La tercera se rechaza con un aviso que explica dónde están las otras dos.
+- **Dos y no más, por aritmética medida**: el servidor admite 100 conexiones y cada instancia
+  abre hasta 10; con diez personas, una por cabeza ya roza el techo.
+- El candado de la v2.1.0 existía porque entonces la app tardaba en abrir y se acumulaban
+  procesos invisibles. Esa causa desapareció en esa misma versión (ventana en 0,6 s).
+- **`max_conexiones` ajustable** en `config.ini` sin recompilar.
 
 **v2.3.2 — desplegada el 02/09**:
 
@@ -132,7 +142,7 @@ Toda la línea 2.x hasta la **v2.3.2** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 353 comprobaciones en verde** (19 fluidez + 30 cascada + 31 análisis + 16 credenciales + 47
+**Pruebas: 361 comprobaciones en verde** (19 fluidez + 30 cascada + 31 análisis + 16 credenciales + 47
 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos + 19 v2.1.2 +
 11 preview + 29 sobre el `.exe` empaquetado).
 

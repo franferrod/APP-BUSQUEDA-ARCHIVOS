@@ -208,6 +208,23 @@ def load_pg_config():
 # V1.0.8 - PostgreSQL compartido (credenciales en config.ini)
 PG_CONFIG = load_pg_config()
 
+# V2.3.3 - Tope de conexiones del pool, ajustable en config.ini.
+# Se lee aparte de PG_CONFIG porque no es un parametro de conexion: es
+# cuantas puede abrir esta instancia. Ver __init_pool_real.
+def _max_conexiones():
+    try:
+        cfg = configparser.ConfigParser()
+        for ruta in _candidatos_config():
+            if os.path.exists(ruta):
+                cfg.read(ruta, encoding='utf-8')
+                if 'database' in cfg:
+                    return _entero(cfg['database'].get('max_conexiones'), 10)
+    except Exception:
+        pass
+    return _entero(os.environ.get('ALSI_PG_MAX_CONEXIONES'), 10)
+
+MAX_CONEXIONES = _max_conexiones()
+
 # V2.0.8 - Filtro de cordura para las propiedades físicas.
 # Medido sobre 114 piezas reales: TODAS caen entre 1.000 y 8.000 kg/m3 (acero
 # e inox ~7.800-8.000, plásticos ~1.000-1.300). Fuera de este rango el dato es
@@ -336,9 +353,18 @@ class IndexManager:
             # V2.0.3: 10 conexiones — con la búsqueda asíncrona conviven varios
             # consumidores (search worker, miniaturas por lotes, preview, galería,
             # consultas del panel). Con 5 se agotaba en picos.
+            # V2.3.3: el tope es ajustable desde config.ini con
+            #   [database] max_conexiones = N
+            # La aritmetica importa y conviene tenerla escrita: el servidor
+            # admite 100 conexiones y las comparte con otras aplicaciones. Con
+            # diez personas a 10 conexiones cada una ya se roza el techo, y
+            # desde la V2.3.3 cada uno puede abrir DOS instancias. El tope
+            # es un maximo, no un consumo: medido en uso real, toda la oficina
+            # junta anda por las 21. Pero si algun dia aprieta, esto se baja
+            # en el config.ini de la carpeta de red sin recompilar nada.
             self._pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=1,
-                maxconn=10,
+                maxconn=MAX_CONEXIONES,
                 **PG_CONFIG
             )
             self.ultimo_error = None

@@ -1,5 +1,13 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [2.3.3] - 2026-09-03 (Dos buscadores a la vez)
+
+- **Ya puedes tener el Buscador abierto dos veces**, con una búsqueda distinta en cada uno. Pensado para llevarte cada ventana a un escritorio de Windows y comparar sin perder lo que tenías puesto.
+- **Dos, y no más.** No es un capricho: el servidor admite 100 conexiones y las comparte con otras aplicaciones, y cada instancia abre hasta 10. Con diez personas, una por cabeza ya roza el techo. Si intentas abrir una tercera, la app te lo dice y te recuerda que las otras dos están en la barra de tareas.
+- **Por qué estaba capado.** Lo puso la v2.1.0 al arreglar el «no me abre la app» de Pablo y Marcos: entonces, si la app tardaba, la gente volvía a pulsar y se acumulaban **procesos invisibles sin ventana**. Esa causa ya no existe —desde aquella versión la ventana sale en 0,6 s pase lo que pase—, así que el candado se puede relajar sin recuperar el problema.
+- **La válvula del candado huérfano sigue puesta**: si uno de los dos procesos muere de mala manera, su hueco se libera solo y no te deja fuera.
+- **El tope de conexiones es ajustable** desde `config.ini` con `max_conexiones = N`, por si algún día el servidor se queda corto. No hace falta recompilar nada.
+
 ## [2.3.2] - 2026-09-02 (Tus filtros son tuyos)
 
 - **Los filtros que la app recuerda ya son de cada equipo.** Origen, años, carpetas, tipos y el reparto de la ventana se guardaban en una tabla **compartida por toda la oficina**: dos columnas, una sola fila por cada cosa. Así que **los filtros del último que cerraba la app se los encontraba puestos el siguiente que la abría**, sin haber tocado nada.

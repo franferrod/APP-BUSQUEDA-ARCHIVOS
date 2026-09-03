@@ -117,7 +117,7 @@ La base de placas se actualiza cada tarde desde los Excel de **NÚMEROS DE SERIE
 *   **Aviso rojo "Sin conexión con la base de datos"**: la aplicación abre igual y reintenta sola. Puedes pulsar **Reintentar** o **Diagnóstico**.
 *   **Cualquier error** trae un botón **"Copiar para enviar"**: cópialo y pégalo en un mensaje. Lleva la versión, tu equipo, la hora y el registro; con eso se puede arreglar sin adivinar.
 *   **Diagnóstico** comprueba servidor, puerto, NAS, versión y disco, y lo deja listo para copiar.
-*   Si la aplicación **ya está abierta** y vuelves a pulsar el icono, te lo dice en vez de abrir otra ventana.
+*   Puedes tener el Buscador abierto **dos veces a la vez**, con una búsqueda distinta en cada uno — por ejemplo uno en cada escritorio de Windows. Si intentas abrir un tercero, te avisa y te recuerda que los otros dos están en la barra de tareas.
 *   Si **"Abrir carpeta"** falla, el aviso distingue si el archivo se movió, si no tienes permisos o si no se llega al servidor.
 
 ## 10. Recuperar vistas previas perdidas

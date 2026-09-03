@@ -183,20 +183,42 @@ def prueba_arranque_normal():
 
 
 def prueba_instancia_unica(pid_abierto):
-    """Doble clic con la app ya abierta: lo que hacia Pablo cuando 'no abria'."""
-    titulo("2. INSTANCIA UNICA (con la primera abierta)")
-    marca = tam_log()
+    """El cupo de instancias: DOS si, la tercera no.
+
+    V2.1.0 permitia una sola, para cortar los procesos invisibles que se
+    acumulaban cuando la app tardaba en abrir. Aquella causa ya no existe (la
+    ventana sale en 0,6 s pase lo que pase) y trabajar con dos busquedas a la
+    vez -una por escritorio de Windows- es util. Desde la V2.3.3 se permiten
+    dos, y no mas: el servidor admite 100 conexiones y cada instancia abre
+    hasta 10."""
+    titulo("2. CUPO DE INSTANCIAS (con la primera abierta)")
     segundo = lanzar()
     comprobar("el segundo lanzamiento arranca", segundo is not None,
               "PID %s" % segundo)
-    # El segundo NO abre la app: ensena un aviso. Ese aviso es una ventana
-    # modal, asi que el proceso sigue vivo hasta que alguien lo cierra: es el
-    # comportamiento correcto, no un proceso colgado.
-    seg = esperar_ventana(segundo, 30) if segundo else None
-    aviso = titulo_ventana(segundo) if segundo else ""
-    comprobar("avisa de que la app ya esta abierta",
-              "ya esta abierto" in aviso.lower() or "ya está abierto" in aviso.lower(),
+    esperar_ventana(segundo, 30) if segundo else None
+    titulo_seg = titulo_ventana(segundo) if segundo else ""
+    comprobar("la SEGUNDA instancia abre su ventana de verdad",
+              "Buscador de Piezas" in titulo_seg,
+              titulo_seg or "(sin ventana)")
+    comprobar("y la primera sigue viva con la suya",
+              bool(titulo_ventana(pid_abierto)),
+              titulo_ventana(pid_abierto) or "(sin ventana)")
+
+    # La TERCERA si se rechaza, con su explicacion.
+    marca = tam_log()
+    tercero = lanzar()
+    comprobar("el tercer lanzamiento arranca", tercero is not None,
+              "PID %s" % tercero)
+    # No abre la app: ensena un aviso. Ese aviso es una ventana modal, asi que
+    # el proceso sigue vivo hasta que alguien lo cierra: es el comportamiento
+    # correcto, no un proceso colgado.
+    esperar_ventana(tercero, 30) if tercero else None
+    aviso = titulo_ventana(tercero) if tercero else ""
+    comprobar("la TERCERA avisa de que ya hay dos abiertos",
+              "dos buscadores" in aviso.lower(),
               aviso or "(sin ventana)")
+    comprobar("y NO abre una tercera ventana de la aplicacion",
+              "Buscador de Piezas SolidWorks" not in aviso)
     time.sleep(1)
     try:
         with open(LOG, encoding="utf-8", errors="ignore") as f:
@@ -204,15 +226,13 @@ def prueba_instancia_unica(pid_abierto):
             texto = f.read()
     except Exception:
         texto = ""
-    comprobar("y el registro explica que ya estaba abierta",
-              "Ya hay otra instancia" in texto)
-    comprobar("NO se abre una segunda ventana de la aplicacion",
-              "Buscador de Piezas SolidWorks" not in aviso)
-    comprobar("la primera instancia sigue viva y con su ventana",
-              bool(titulo_ventana(pid_abierto)),
-              titulo_ventana(pid_abierto) or "(sin ventana)")
-    if segundo:
-        cerrar(segundo, forzar=True)
+    comprobar("y el registro lo explica",
+              "instancias abiertas" in texto, texto[-120:].strip() or "(vacio)")
+    comprobar("las dos primeras siguen vivas",
+              bool(titulo_ventana(pid_abierto)) and bool(titulo_ventana(segundo)))
+    for p in (tercero, segundo):
+        if p:
+            cerrar(p, forzar=True)
 
 
 def esperar_a_que_muera(pid, seg=25):

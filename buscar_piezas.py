@@ -369,7 +369,7 @@ def etiqueta_origen(texto):
     return ETIQUETAS_ORIGEN.get(texto, texto)
 
 # Versión de la app (fuente única: "Acerca de" y comprobación de updates)
-APP_VERSION = "2.3.2"
+APP_VERSION = "2.3.3"
 
 # Carpeta de despliegue de la app en el NAS (para auto-actualización / check_for_updates).
 # NAS nuevo (2026): migrado desde \\192.168.1.229\Volume_1\ALSI INTERCAMBIO\...
@@ -7906,35 +7906,56 @@ def _arrancar():
                        informe + "\n\nGuardado en:\n" + destino)
         return 0
 
-    # --- Instancia unica ----------------------------------------------------
-    # Sin esto, cuando la app tardaba en abrir el usuario volvia a pulsar y se
-    # acumulaban procesos invisibles peleandose por el mismo pool de conexiones.
-    # QLockFile detecta y limpia el candado huerfano de un proceso ya muerto.
+    # --- Cuantas instancias se permiten -------------------------------------
+    # V2.1.0 puso UNA sola: cuando la app tardaba en abrir, el usuario volvia a
+    # pulsar y se acumulaban procesos INVISIBLES peleandose por el mismo pool.
+    # Aquella causa ya no existe (la ventana sale en 0,6 s pase lo que pase),
+    # y trabajar con dos busquedas a la vez -una por escritorio de Windows- es
+    # util de verdad. Asi que se permiten DOS.
+    #
+    # Dos y no mas, por una razon medida: el servidor admite 100 conexiones y
+    # cada instancia abre hasta 10. Con diez personas, una instancia por cabeza
+    # ya roza el techo; sin tope, unos cuantos dobles clics nerviosos lo pasan.
+    # Un cupo pequeño conserva la proteccion original sin estorbar.
+    MAX_INSTANCIAS = 2
     bloqueo = None
     try:
         if os.environ.get("ALSI_SIN_CANDADO"):
             raise RuntimeError("candado desactivado a proposito (pruebas)")
-        bloqueo = QLockFile(os.path.join(LOG_DIR, "buscador.lock"))
-        bloqueo.setStaleLockTime(30000)
-        if not bloqueo.tryLock(200):
-            hay_info, pid, host, nombre = bloqueo.getLockInfo()
-            # Valvula de seguridad: si el proceso que puso el candado ya no
-            # existe, se retira. Un candado huerfano dejando a alguien sin
-            # poder abrir la app seria el mismo problema que vinimos a
-            # arreglar, solo que causado por el arreglo.
-            if hay_info and pid and not proceso_vivo(pid):
-                logger.warning("Candado huerfano del PID %s: se retira", pid)
-                bloqueo.removeStaleLockFile()
-                bloqueo.tryLock(200)
-        if bloqueo is not None and not bloqueo.isLocked():
-            hay_info, pid, host, nombre = bloqueo.getLockInfo()
-            logger.warning("Ya hay otra instancia (PID %s); no se abre otra", pid)
+        ocupados = []
+        for n in range(1, MAX_INSTANCIAS + 1):
+            nombre_lock = "buscador.lock" if n == 1 else "buscador%d.lock" % n
+            candidato = QLockFile(os.path.join(LOG_DIR, nombre_lock))
+            candidato.setStaleLockTime(30000)
+            if not candidato.tryLock(200):
+                hay_info, pid, host, _n = candidato.getLockInfo()
+                # Valvula de seguridad: si el proceso que puso el candado ya no
+                # existe, se retira. Un candado huerfano dejando a alguien sin
+                # poder abrir la app seria el mismo problema que vinimos a
+                # arreglar, solo que causado por el arreglo.
+                if hay_info and pid and not proceso_vivo(pid):
+                    logger.warning("Candado huerfano del PID %s: se retira", pid)
+                    candidato.removeStaleLockFile()
+                    candidato.tryLock(200)
+            if candidato.isLocked():
+                bloqueo = candidato
+                if n > 1:
+                    logger.info("Segunda instancia del Buscador (hueco %d)", n)
+                break
+            hay_info, pid, host, _n = candidato.getLockInfo()
+            ocupados.append(str(pid) if pid else "?")
+
+        if bloqueo is None:
+            logger.warning("Ya hay %d instancias abiertas (%s); no se abre otra",
+                           MAX_INSTANCIAS, ", ".join(ocupados))
             avisar_usuario(
-                "El Buscador ya esta abierto",
-                "Ya tienes el Buscador de Piezas abierto en este equipo "
-                "(proceso %s).\n\nBuscalo en la barra de tareas.\n\n"
-                "Si no aparece por ningun lado, cierralo desde el Administrador "
-                "de tareas (Ctrl+Mayus+Esc) y vuelve a abrirlo." % pid)
+                "Ya tienes dos Buscadores abiertos",
+                "Puedes tener el Buscador de Piezas abierto hasta %d veces a la "
+                "vez, y ya tienes %d (procesos %s).\n\nBuscalos en la barra de "
+                "tareas: puedes llevar cada uno a un escritorio distinto de "
+                "Windows.\n\nSi no aparecen por ningun lado, cierralos desde el "
+                "Administrador de tareas (Ctrl+Mayus+Esc) y vuelve a abrirlo."
+                % (MAX_INSTANCIAS, MAX_INSTANCIAS, ", ".join(ocupados)))
             return 0
     except Exception as e:
         logger.warning("No se ha podido crear el candado de instancia: %s", e)
