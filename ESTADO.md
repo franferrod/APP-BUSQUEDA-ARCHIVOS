@@ -62,6 +62,16 @@ Lo que la app hace hoy, en corto:
 `ALSI_Poblar_Props_Miniaturas` (16:30), con la ruta corta 8.3 `BSQUED~1` porque el Programador de
 tareas de Windows falla con la `Ú` (error `0x8007010B`).
 
+Tres cosas de esas tareas que no se ven desde el código (medidas el 18/09):
+
+- **El reindexado muere a las 2 horas** (`ExecutionTimeLimit PT2H`). Un pase normal dura 50-62 min;
+  la recuperación usa el hueco hasta los 100 min y para sola.
+- **Solo corren con la sesión de `OFITEC 4` iniciada** (`LogonType Interactive`). Con el equipo
+  apagado o la sesión cerrada, ese día no hay pase — y no queda rastro en ningún log.
+- **El pase escribe en `~\.alsi_busqueda\reindexacion.log`** (y también en `app.log`). Hasta el
+  18/09 solo escribía en `app.log`, que rota a los 3 MB: `models.py` configura el registro al
+  importarse y el `basicConfig` del pase no hacía nada.
+
 ---
 
 ## 3. Decisiones de arquitectura (y por qué)
@@ -88,6 +98,24 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 ## 4. Terminado
 
 Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
+
+**Pase nocturno, 18/09 — el índice se cura solo** (sin versión de app: el `.exe` no cambia):
+
+- **Faltaban 70.909 archivos de PROYECTOS** (11 % del NAS), medido recorriendo el NAS entero
+  contra el índice: 63.088 legibles que nunca entraron, 7.605 con ruta de 260+ caracteres y 216 de
+  los últimos días (esos los recoge el pase normal). BIBLIOTECA_3D y ALSI_ESTANDAR, completos.
+- **Causa**: PROYECTOS solo se reindexaba por fecha, últimos 7 días. Del 17 al 23/07 el pase se
+  lanzó pero el NAS no respondía (`NAS no responde` en `app.log.1`), y otros días ni se lanzó.
+  Lo tocado esos días no entró nunca. Detonante: el PDF de `26003.P270`.
+- **`recuperar_faltantes`**: en el mismo recorrido de cada noche se apunta lo que falta y se mete
+  al final, **solo insertando** (`ON CONFLICT DO NOTHING`, un `SAVEPOINT` por archivo), con tope
+  de 100 min de pase. Orden: PDF/DWG/STEP → SolidWorks del año más nuevo al más viejo → sin año.
+  A mano: `python reindexar_diario.py --recuperar --minutos N`.
+- **Rutas de 260+**: un único recorrido `recorrer_nas` con el prefijo `\\?\UNC\` para indexar,
+  recuperar y purgar. En la BD, siempre la ruta normal.
+- **Coste medido**: extraer propiedades cuesta 0,13 s por archivo (muestra de 40); los 39.603
+  SolidWorks legibles que faltaban son ~86 min. Con rutas largas el extractor falla en 0,03 s:
+  entran sin propiedades ni miniatura.
 
 - **v2.1.4** — exclusiones `-palabra` con chips «Sin …» y un único analizador `parsear_termino`.
 - **v2.1.3** — la vista previa ya no machaca la miniatura buena con el icono genérico de Windows.
@@ -142,9 +170,9 @@ Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 361 comprobaciones en verde** (19 fluidez + 30 cascada + 31 análisis + 16 credenciales + 47
-exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos + 19 v2.1.2 +
-11 preview + 29 sobre el `.exe` empaquetado).
+**Pruebas: 425 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
+16 credenciales + 47 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos +
+19 v2.1.2 + 11 preview + 32 sobre el `.exe` empaquetado + **64 del pase nocturno**).
 
 ---
 
@@ -208,6 +236,26 @@ cadena vacía y descuadraba el recuento en uno.
   que cambia y hoy descarta el dato. Marcarlo no cuesta ni una lectura extra y haría que el
   informe del punto 5 detecte roturas **el mismo día**.
 
+### 6.3 Salido de la investigación del 18/09 — propuesto, NO hecho
+
+- **Casilla «Sin año» en el filtro de años.** 53.712 archivos de carpetas sin número de proyecto
+  (48.997 bajo `ALSI\`: PALETIZADOR 11.926, AÑO 2015 8.771, HORNO 5.469…) entran en el índice pero
+  `anio IN (...)` los deja fuera de toda búsqueda. Ya había 273 así antes de la recuperación.
+  Es cambio de la app. De paso: `ALSI\AÑO 2015\…` podría leerse como año 2015.
+- **«Reindexar NAS» de la app borra antes de volver a indexar** (`IndexadorThread`: `DELETE ...
+  WHERE origen/anio` y luego recorre). Si se corta a mitad, se pierde lo borrado: es el mismo
+  fallo que tuvo el pase en agosto (mark & sweep lo arregló allí, no aquí). Y con años marcados
+  se salta todo lo «sin año». Hipótesis SIN MEDIR: podría explicar parte de los 63.088 perdidos.
+- **El pase lanza DDL al arrancar** (`CREATE INDEX IF NOT EXISTS` sobre `componentes`). Pide
+  bloqueo aunque no haga nada: la regla 2 de CLAUDE.md. Comprobar antes en el catálogo.
+- **Un error de base de datos en el bucle de cada noche** deja la transacción abortada y el
+  resto de la noche no indexa nada (antes, además, en silencio). La recuperación ya usa un
+  `SAVEPOINT` por archivo; el indexado diario y el completo, no.
+- **La purga no debería borrar lo de las carpetas que no pudo listar**: `recorrer_nas` ya las
+  apunta en `errores`, falta usarlo.
+- **Rutas largas en la app**: «Abrir carpeta»/«Abrir» fallan con 260+ y el aviso diría que el
+  archivo se movió. Y `poblar_propiedades` usa `os.path.exists` sin prefijo: no les saca miniatura.
+
 ---
 
 ## 7. Bugs conocidos y riesgos
@@ -252,3 +300,6 @@ pase nocturno lo recoge solo.
 - **Un `taskkill /F /IM python.exe` global** durante unas pruebas mató el pase nocturno a mitad y
   dejó BIBLIOTECA_3D a medias. Se mata por PID, nunca por nombre de imagen.
 - **Un cambio no pedido** en la regex de placa CE. De ahí: *"para la próxima me pides permiso"*.
+- **Una semana sin pase = archivos perdidos para siempre.** Del 17 al 23/07 el pase no llegó al
+  NAS; con la ventana de 7 días, lo modificado esos días no entró nunca. Se descubrió dos meses
+  después por un PDF que no salía. Desde el 18/09 el pase recupera lo que falte, sea de cuando sea.

@@ -1,5 +1,18 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [Pase nocturno] - 2026-09-18 (El índice se cura solo — la app no cambia)
+
+- **Empiezan a salir archivos que antes no aparecían.** Medido el 18/09: en el NAS había **70.909 archivos de PROYECTOS que no estaban en el índice**, el 11 % de lo que hay. Entre ellos, el PDF de la `26003.P270` que dio la voz de alarma.
+- **Por qué faltaban.** El pase de cada noche solo miraba lo modificado en los **últimos 7 días**. Si una tarde no se ejecutaba o no llegaba al NAS, lo que se había tocado esos días no entraba nunca: del 17 al 23 de julio el pase se lanzó pero el NAS no le respondía. Tampoco entraban nunca las **rutas de 260 caracteres o más** (7.605 archivos), que Windows no abre sin un prefijo especial.
+- **Ahora el índice se cura solo.** Cada noche se compara lo que hay en el NAS con lo que hay en el índice y entra lo que falte, sea de la fecha que sea. Si un día el pase falla, se recupera al siguiente.
+- **Solo añade.** Lo que ya estaba en el índice no se toca, y la recuperación no borra nada.
+- **Con tope, para no pasarse de hora.** La tarea programada corta el pase a las 2 horas, así que la recuperación solo trabaja mientras el pase lleve menos de 100 minutos, y lo que no quepa entra la noche siguiente. Primero lo barato (PDF, DWG, STEP) y después lo de SolidWorks, del proyecto más nuevo al más viejo.
+- **Las rutas largas se encuentran, pero puede que no se abran.** Windows y SolidWorks tienen el mismo límite de 260 caracteres, así que «Abrir» o «Abrir carpeta» pueden fallar con esos archivos, y entran sin propiedades ni miniatura porque el extractor tampoco llega a ellos. El arreglo de fondo es acortar esos nombres de carpeta.
+- **Lo de las carpetas sin número de proyecto entra, pero todavía no sale en las búsquedas.** Son 53.712 archivos, casi todos de `ALSI\` (PALETIZADOR, HORNO, APILADOR CAJAS, AÑO 2015…). El filtro de años no tiene casilla para «sin año» y los deja fuera. Queda pendiente de decidir.
+- **El pase vuelve a tener su propio registro** en `reindexacion.log`. Desde julio escribía, sin que nadie lo supiera, en el log de la app. Y los archivos que no puede leer ahora constan como aviso: antes no constaban en ningún sitio.
+- **La purga de los viernes ya no puede vaciar PROYECTOS.** Si un día el NAS solo respondiera por su otro nombre (`NASCENTRAL`), todas las rutas guardadas le habrían parecido borradas. Ahora ese día no purga.
+- **64 comprobaciones nuevas** (`pruebas_reindexado.py`), sobre un NAS de mentira con rutas de más de 260 caracteres y un origen sintético en la base real. Se comprobó además que la batería suspende si se rompe a propósito lo que vigila: que se machaquen filas existentes, que se lea sin el prefijo largo, que se ignore el tope o que el prefijo se cuele en la base.
+
 ## [2.3.3] - 2026-09-03 (Dos buscadores a la vez)
 
 - **Ya puedes tener el Buscador abierto dos veces**, con una búsqueda distinta en cada uno. Pensado para llevarte cada ventana a un escritorio de Windows y comparar sin perder lo que tenías puesto.

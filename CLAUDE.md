@@ -1,7 +1,7 @@
 # Buscador de Piezas ALSI — guía para cada sesión
 
 App PyQt5 de escritorio (Windows) que busca archivos SolidWorks del NAS contra un índice
-PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.1**.
+PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.3**.
 El estado completo del proyecto está en `ESTADO.md`; las decisiones de fondo, en `docs/ADR-002`.
 
 ## Dónde trabajar
@@ -93,11 +93,12 @@ python pruebas_exclusiones.py     # 47 · gramática de búsqueda y exclusiones
 python pruebas_robustez.py --todo # 90 · servidor OK (51) + servidor caído (39)
 python pruebas_datos.py           # 48 · consultas reales contra el servidor
 python pruebas_v212.py            # 19 · diálogos, filtro interno, Abrir PDF
-python pruebas_preview.py         #  7 · panel de vista previa e icono genérico
-python pruebas_ejecutable.py      # 29 · sobre el .exe empaquetado
+python pruebas_preview.py         # 11 · panel de vista previa e icono genérico
+python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
+python pruebas_reindexado.py      # 64 · pase nocturno: recuperación y rutas largas
 ```
 
-Total: **353**. Reglas del banco de pruebas:
+Total: **425**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - La carpeta de pruebas del `.exe` necesita su `config.ini`.
@@ -143,6 +144,14 @@ Total: **353**. Reglas del banco de pruebas:
   vivos y Windows mata el proceso (`0xC0000409`) *despues* de imprimir todo en verde. Y ojo:
   Git Bash enseña ese codigo como `127`. Pideselo a Python si algo no cuadra.
 - **Peso (21) y Sup. (22) van al final de la tabla** a propósito: no desplaces índices de columna.
+- **Rutas de 260+ caracteres (MAX_PATH).** Sin prefijo, `os.stat` falla y `os.walk` se salta la
+  carpeta **sin avisar**. Todo recorrido del NAS pasa por `recorrer_nas`; para el disco,
+  `ruta_larga()`; en la BD, **siempre la ruta normal** (si se cuela `\\?\`, el índice se duplica).
+- **El pase nocturno tiene límites que no están en el código**: la tarea lo mata a las **2 h**, y
+  solo corre con la sesión de `OFITEC 4` abierta. Su log es `reindexacion.log` (antes iba a
+  `app.log`, porque `models.py` hace `basicConfig` al importarse).
+- **Nunca `main()` del pase contra la BD real en una prueba**: su barrido borraría BIBLIOTECA_3D.
+  Se prueba con origen sintético y, el pase entero, con una BD falsa (`pruebas_reindexado.py`).
 
 ## Sintaxis de búsqueda (medida, no supuesta)
 
