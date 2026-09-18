@@ -257,6 +257,7 @@ def extraer_sw_props(filepath, preview=False, masa=True):
     """Intenta extraer propiedades SW via SwPropExtractor.exe.
     Con preview=True añade '__PREVIEW_PNG__' (base64) para la caché de
     miniaturas en BD (V2.0.3, equipos sin SolidWorks)."""
+    license_key = None
     try:
         # Intentar usar el extractor si está disponible
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -320,7 +321,16 @@ def extraer_sw_props(filepath, preview=False, masa=True):
             if "error" not in data:
                 return data
     except Exception as e:
-        logger.warning(f"extraer_sw_props falló en {os.path.basename(filepath)}: {e}")
+        # 2026-09-18: el mensaje de un TimeoutExpired lleva la línea de comandos
+        # ENTERA, con la clave de licencia de Document Manager en claro. Así
+        # acababa en app.log cada vez que un conjunto tardaba más de 20 s.
+        if type(e).__name__ == 'TimeoutExpired':
+            texto = f"no respondió en {getattr(e, 'timeout', 20):g} s"
+        else:
+            texto = str(e)
+        if license_key:
+            texto = texto.replace(license_key, '<clave>')
+        logger.warning(f"extraer_sw_props falló en {os.path.basename(filepath)}: {texto}")
     return {}
 
 

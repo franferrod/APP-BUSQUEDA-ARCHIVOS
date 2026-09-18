@@ -101,6 +101,7 @@ def extractor_falso(filepath, preview=False, masa=True):
     return props
 
 
+EXTRACTOR_REAL = rd.extraer_sw_props
 rd.extraer_sw_props = extractor_falso
 
 # --- El NAS de mentira ------------------------------------------------------
@@ -259,6 +260,38 @@ def probar_piezas_sueltas():
     nuevos = [m for n, m in CAPTURA[antes:] if n >= logging.WARNING]
     comprobar("log", "los ilegibles salen como AVISO (cabecera + 5)", len(nuevos) == 6,
               "%d avisos" % len(nuevos))
+
+    titulo("4b. LA CLAVE DE LICENCIA NO VA AL LOG")
+    # Un conjunto que tarda más de 20 s: el mensaje de subprocess trae la línea
+    # de comandos entera, clave de Document Manager incluida. Se simula el
+    # tiempo agotado; el extractor de verdad no se lanza. La clave no se imprime.
+    import subprocess
+    run_original = subprocess.run
+    vista = []
+
+    def run_que_tarda(cmd, **kw):
+        vista.append(cmd[1])
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 20))
+
+    def run_que_falla(cmd, **kw):
+        vista.append(cmd[1])
+        raise RuntimeError("fallo raro con %s dentro" % cmd[1])
+
+    for texto, falso, esperado in (("tiempo agotado", run_que_tarda, "no respondió en 20 s"),
+                                   ("cualquier otro fallo", run_que_falla, "<clave>")):
+        del vista[:]
+        antes = len(CAPTURA)
+        subprocess.run = falso
+        try:
+            EXTRACTOR_REAL(os.path.join(TMP, "conjunto que tarda.SLDASM"), preview=True)
+        finally:
+            subprocess.run = run_original
+        nuevos = [m for _n, m in CAPTURA[antes:]]
+        clave = vista[0] if vista else None
+        comprobar("clave", "%s: el aviso sale, sin la clave" % texto,
+                  clave and nuevos and not any(clave in m for m in nuevos)
+                  and any(esperado in m for m in nuevos),
+                  "" if clave else "sin config.ini con clave en este equipo: no se ha podido probar")
 
     titulo("5. ARGUMENTOS")
     a = rd._leer_argumentos(["--recuperar", "--minutos", "30"])

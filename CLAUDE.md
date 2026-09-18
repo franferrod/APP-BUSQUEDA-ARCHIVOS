@@ -95,10 +95,10 @@ python pruebas_datos.py           # 48 · consultas reales contra el servidor
 python pruebas_v212.py            # 19 · diálogos, filtro interno, Abrir PDF
 python pruebas_preview.py         # 11 · panel de vista previa e icono genérico
 python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
-python pruebas_reindexado.py      # 64 · pase nocturno: recuperación y rutas largas
+python pruebas_reindexado.py      # 66 · pase nocturno: recuperación, rutas largas, clave fuera del log
 ```
 
-Total: **425**. Reglas del banco de pruebas:
+Total: **427**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - La carpeta de pruebas del `.exe` necesita su `config.ini`.

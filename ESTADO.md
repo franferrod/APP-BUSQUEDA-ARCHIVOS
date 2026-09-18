@@ -170,9 +170,9 @@ Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 425 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
+**Pruebas: 427 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
 16 credenciales + 47 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos +
-19 v2.1.2 + 11 preview + 32 sobre el `.exe` empaquetado + **64 del pase nocturno**).
+19 v2.1.2 + 11 preview + 32 sobre el `.exe` empaquetado + **66 del pase nocturno**).
 
 ---
 

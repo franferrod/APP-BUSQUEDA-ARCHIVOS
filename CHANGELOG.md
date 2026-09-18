@@ -11,7 +11,8 @@
 - **Lo de las carpetas sin número de proyecto entra, pero todavía no sale en las búsquedas.** Son 53.712 archivos, casi todos de `ALSI\` (PALETIZADOR, HORNO, APILADOR CAJAS, AÑO 2015…). El filtro de años no tiene casilla para «sin año» y los deja fuera. Queda pendiente de decidir.
 - **El pase vuelve a tener su propio registro** en `reindexacion.log`. Desde julio escribía, sin que nadie lo supiera, en el log de la app. Y los archivos que no puede leer ahora constan como aviso: antes no constaban en ningún sitio.
 - **La purga de los viernes ya no puede vaciar PROYECTOS.** Si un día el NAS solo respondiera por su otro nombre (`NASCENTRAL`), todas las rutas guardadas le habrían parecido borradas. Ahora ese día no purga.
-- **64 comprobaciones nuevas** (`pruebas_reindexado.py`), sobre un NAS de mentira con rutas de más de 260 caracteres y un origen sintético en la base real. Se comprobó además que la batería suspende si se rompe a propósito lo que vigila: que se machaquen filas existentes, que se lea sin el prefijo largo, que se ignore el tope o que el prefijo se cuele en la base.
+- **La clave de licencia de SolidWorks ya no acaba en el log.** Cuando un conjunto tardaba más de 20 s en abrirse, el aviso copiaba la línea de comandos entera, clave de Document Manager incluida, en `app.log` de OFITEC-4. Ahora dice «no respondió en 20 s».
+- **66 comprobaciones nuevas** (`pruebas_reindexado.py`), sobre un NAS de mentira con rutas de más de 260 caracteres y un origen sintético en la base real. Se comprobó además que la batería suspende si se rompe a propósito lo que vigila: que se machaquen filas existentes, que se lea sin el prefijo largo, que se ignore el tope, que el prefijo se cuele en la base o que la clave vuelva al log.
 
 ## [2.3.3] - 2026-09-03 (Dos buscadores a la vez)
 
