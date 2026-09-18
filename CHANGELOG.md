@@ -3,6 +3,7 @@
 ## [Pase nocturno] - 2026-09-18 (El índice se cura solo — la app no cambia)
 
 - **Empiezan a salir archivos que antes no aparecían.** Medido el 18/09: en el NAS había **70.909 archivos de PROYECTOS que no estaban en el índice**, el 11 % de lo que hay. Entre ellos, el PDF de la `26003.P270` que dio la voz de alarma.
+- **Ya están todos dentro.** Esa misma tarde, fuera de horario y vigilado, entraron **70.693 archivos** (el resto lo había recogido el pase de las 15:45). Medido otra vez recorriendo el NAS entero: **no falta ninguno**. Buscar `26003.P270` devuelve ahora la pieza, el plano, el DWG y el PDF; antes, solo la pieza.
 - **Por qué faltaban.** El pase de cada noche solo miraba lo modificado en los **últimos 7 días**. Si una tarde no se ejecutaba o no llegaba al NAS, lo que se había tocado esos días no entraba nunca: del 17 al 23 de julio el pase se lanzó pero el NAS no le respondía. Tampoco entraban nunca las **rutas de 260 caracteres o más** (7.605 archivos), que Windows no abre sin un prefijo especial.
 - **Ahora el índice se cura solo.** Cada noche se compara lo que hay en el NAS con lo que hay en el índice y entra lo que falte, sea de la fecha que sea. Si un día el pase falla, se recupera al siguiente.
 - **Solo añade.** Lo que ya estaba en el índice no se toca, y la recuperación no borra nada.

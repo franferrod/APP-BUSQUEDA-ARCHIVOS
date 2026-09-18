@@ -129,6 +129,9 @@ Total: **427**. Reglas del banco de pruebas:
   El barrido del índice es por **conjunto de rutas**, sin relojes. Esto ya vació dos orígenes.
 - **`unaccent()` es `STABLE` y no se indexa.** Se usa `buscador.sin_tildes()` (`IMMUTABLE`), y
   `NOMBRE_NORM` debe coincidir **letra por letra** con la expresión del índice GIN.
+- **El término de búsqueda se normaliza en Python (NFKD) y el nombre con `unaccent`**: no casan en
+  12 caracteres y buscar con `Ø` o `º` devuelve **0** (medido 18/09, ESTADO §6.3, sin arreglar).
+  Cualquier normalización nueva se compara carácter a carácter con `buscador.sin_tildes`.
 - **`IN (subquery)` vs `EXISTS`**: el mismo filtro pasó de 20 s a 0,07 s.
 - **Filtros opcionales: acopla el SQL, no uses `(%s IS NULL OR col = %s)`.** Con el `OR` el
   planificador descarta el índice; una consulta pasó de 7 s a más de dos minutos.

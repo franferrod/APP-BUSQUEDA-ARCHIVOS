@@ -116,6 +116,14 @@ Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 - **Coste medido**: extraer propiedades cuesta 0,13 s por archivo (muestra de 40); los 39.603
   SolidWorks legibles que faltaban son ~86 min. Con rutas largas el extractor falla en 0,03 s:
   entran sin propiedades ni miniatura.
+- **Recuperado el 18/09 por la tarde, a mano y vigilado** (`--recuperar`, dos tandas: 25 y 80
+  min): **70.693 archivos**, 0 fallidos, 6 conjuntos que agotaron los 20 s del extractor (entran
+  sin propiedades). PROYECTOS 546.233 → 616.926. **Medido otra vez recorriendo el NAS entero:
+  faltan 0 en los tres orígenes**, 0 rutas repetidas, 0 prefijos colados. La búsqueda real de la
+  app para `26003.P270` pasa de 1 resultado (la pieza) a 4 (pieza, plano, DWG y PDF).
+- **Mañana a las 16:30** `poblar_propiedades` repasará las 70.693 filas nuevas (ids por encima
+  de su punto de control): redundante para lo de SolidWorks, útil para las miniaturas de los
+  19.351 PDF y 7.097 DWG. Unas 2-3 horas, fuera de horario.
 
 - **v2.1.4** — exclusiones `-palabra` con chips «Sin …» y un único analizador `parsear_termino`.
 - **v2.1.3** — la vista previa ya no machaca la miniatura buena con el icono genérico de Windows.
@@ -238,9 +246,21 @@ cadena vacía y descuadraba el recuento en uno.
 
 ### 6.3 Salido de la investigación del 18/09 — propuesto, NO hecho
 
+- **🔴 Buscar con «Ø» o «º» no encuentra NADA** (medido 18/09, fallo antiguo de la app, ajeno
+  a la recuperación). `rodillo Ø50` → 0 resultados, `rodillo o50` → 390; `curva 90º` → 0,
+  `curva 90` → 3.082. Los 9 nombres con Ø o º probados, buscados tal cual: 0 resultados todos.
+  **Causa**: el término se normaliza en Python (`normalizar_texto`, NFKD) y el nombre en la BD
+  con `unaccent`; no coinciden en 12 caracteres presentes en el índice: **Ø** (8.521 archivos:
+  la app la deja, la BD la hace O), **º** (2.300: la app la hace O, la BD la deja), **ª** (601),
+  ø, ¾, espacio duro, ´, ¡, ±, ×, ®, Ð. **Arreglo propuesto**: normalizar el término con la
+  misma función de la BD (`UPPER(buscador.sin_tildes(%s))`) — iguales por construcción, como
+  `NOMBRE_NORM` — midiendo antes que el índice GIN se sigue usando. Cambio de la app.
 - **Casilla «Sin año» en el filtro de años.** 53.712 archivos de carpetas sin número de proyecto
   (48.997 bajo `ALSI\`: PALETIZADOR 11.926, AÑO 2015 8.771, HORNO 5.469…) entran en el índice pero
-  `anio IN (...)` los deja fuera de toda búsqueda. Ya había 273 así antes de la recuperación.
+  `anio IN (...)` los deja fuera de la búsqueda: medido, 0 de 5 salen con los filtros de siempre y
+  5 de 5 sin filtro de años. Ya había 273 así antes de la recuperación. **Aun así valen ya**: el
+  despiece cruza por nombre sin filtro de años, y 1.795 componentes que hoy salen en gris (usados
+  5.953 veces; `CT.530.P724 … RODILLO SUJECCION LONA`, en 258 conjuntos) están en esas carpetas.
   Es cambio de la app. De paso: `ALSI\AÑO 2015\…` podría leerse como año 2015.
 - **«Reindexar NAS» de la app borra antes de volver a indexar** (`IndexadorThread`: `DELETE ...
   WHERE origen/anio` y luego recorre). Si se corta a mitad, se pierde lo borrado: es el mismo
@@ -273,6 +293,20 @@ cadena vacía y descuadraba el recuento en uno.
    Era código de febrero, la última pieza sin migrar a segundo plano. Ahora bloquea 0,000 s.
 6. **La consulta de conjuntos sin vista previa tarda ~7-9 s** y bloquea la interfaz con el cursor
    de espera, igual que "Piezas más reutilizadas". Si molesta, toca moverla a un worker.
+7. **🔴 Desde el 25/08 los pases nocturnos no calculan el PESO** (medido el 18/09, SIN ARREGLAR,
+   pendiente de permiso). El `SwPropExtractor.exe` de git es la compilación del **13/07**, sin
+   `--masa`; el bueno (18/08, md5 `d2af77cb`, 8.192 B) está en `releases\v2.0.8`…`v2.1.2` y en la
+   red. Al sincronizar la raíz con git el 25/08 se cambió el bueno por el viejo. El `.cs` de git es
+   idéntico al de `releases\v2.1.2`: lo que está mal es solo el binario. Las mismas 4 piezas: el
+   de la raíz no da peso a ninguna, el de `v2.1.2` a las 4 (1,85 · 3,64 · 0,009 · 1,43 kg), igual
+   de rápido. Piezas de 2020 en adelante sin peso y con material: **3.606**.
+   Arreglo propuesto: poner el bueno en la raíz **y subirlo a git** (si no, la próxima
+   sincronización lo vuelve a romper) y rellenar con `poblar_masa.py` fuera de horario.
+8. **La clave de licencia de Document Manager está en claro en `app.log` y `app.log.1` de
+   OFITEC-4**, de los avisos de tiempo agotado anteriores al 18/09 (el código ya no la escribe).
+   Propuesto: borrarla de esos dos ficheros. `reindexacion.log` está limpio (0 apariciones).
+9. **La carpeta `BACKUPS\produccion_antes_de_sincronizar_20260825\` que cita el punto 2 no
+   existe** (comprobado el 18/09): la copia de lo que había en producción antes del 25/08 no está.
 
 **Resueltos el 25/08:** el conteo de archivos de la guía (decía 590.000, son 563.742) · el desfase
 de versión de `INSTALAR_LOCAL.bat` · las etiquetas que faltaban · `ADR-001` obsoleto · el worktree
