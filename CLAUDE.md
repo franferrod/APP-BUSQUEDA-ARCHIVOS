@@ -1,7 +1,7 @@
 # Buscador de Piezas ALSI — guía para cada sesión
 
 App PyQt5 de escritorio (Windows) que busca archivos SolidWorks del NAS contra un índice
-PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.3**.
+PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.4**.
 El estado completo del proyecto está en `ESTADO.md`; las decisiones de fondo, en `docs/ADR-002`.
 
 ## Dónde trabajar

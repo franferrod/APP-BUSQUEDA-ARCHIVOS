@@ -15,17 +15,17 @@ guardados en el NAS Synology, sin navegar por carpetas.
 - **Backend**: PostgreSQL en `192.168.1.10:5433`, base `ALSI`, esquema `buscador`.
 - **Distribución**: un `.exe` de ~82 MB (PyInstaller *onefile*) que cada compañero instala desde
   la carpeta de red con `INSTALAR_LOCAL.bat`. La app avisa sola cuando hay versión nueva.
-- **En producción: v2.3.3**.
+- **En producción: v2.3.4** (desplegada el 21/09 a las 15:35).
 
-**Cifras reales del índice, medidas el 25/08/2026:**
+**Cifras reales del índice, medidas el 21/09/2026** (tras recuperar los 70.693 que faltaban):
 
 | | |
 |---|---|
-| Archivos indexados | **563.742** (PROYECTOS 542.551 · ALSI_ESTANDAR 13.256 · BIBLIOTECA_3D 7.935) |
-| Miniaturas guardadas | 531.466 |
-| Relaciones de componentes | 456.239 |
-| Placas CE | 7.914 |
-| Archivos con peso/volumen/área | 74.715 |
+| Archivos indexados | **638.252** (PROYECTOS 617.071 · ALSI_ESTANDAR 13.224 · BIBLIOTECA_3D 7.957) |
+| Miniaturas guardadas | 588.691 |
+| Relaciones de componentes | 501.616 |
+| Placas CE | 8.102 |
+| Archivos con peso/volumen/área | 76.372 |
 
 Lo que la app hace hoy, en corto:
 
@@ -55,8 +55,8 @@ Lo que la app hace hoy, en corto:
 | `.claude\worktrees\recursing-shamir-b9fab6\` | Worktree donde se desarrolla la línea 2.x | v2.3.3 |
 | `.claude\worktrees\nervous-ptolemy-89ad8f\` | Investigación de las miniaturas perdidas | v2.0.9, cerrada. Contenido absorbido en master |
 | `.claude\worktrees\plate-search-freezing-3491f2\` | Rama de julio | v2.0.2. Su feature de cascada ya está portada (§6.1); la rama se puede retirar |
-| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.3** |
-| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **26 etiquetas** (v1.0.0 → v2.3.3) | Al día |
+| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.4** (21/09) |
+| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **28 etiquetas** (v1.0.0 → v2.3.4) | Al día |
 
 **Tareas programadas en OFITEC-4**: `ALSI_Reindexar_Diario` (15:45) y
 `ALSI_Poblar_Props_Miniaturas` (16:30), con la ruta corta 8.3 `BSQUED~1` porque el Programador de
@@ -307,9 +307,12 @@ cadena vacía y descuadraba el recuento en uno.
    de espera, igual que "Piezas más reutilizadas". Si molesta, toca moverla a un worker.
 7. ✅ **Desde el 25/08 los pases nocturnos no calculaban el PESO — arreglado el 21/09**: el
    binario bueno está en la raíz y **subido a git** (commit `dd67de1`), y una prueba nueva
-   suspende si vuelve a aparecer uno sin `--masa`. **Queda pendiente rellenar** con
-   `poblar_masa.py` fuera de horario: 3.606 piezas de 2020 en adelante sin peso y con material
-   (~8 min); de antes de 2020 nunca se calculó, por diseño del propio pase.
+   suspende si vuelve a aparecer uno sin `--masa`. **Rellenado** esa misma tarde con
+   `poblar_masa.py` (17:00-18:06, 21.612 piezas miradas): 1.110 recuperan peso, 19.978 no
+   tienen material asignado —tornillería, normalmente— y 524 no eran accesibles; 0 errores.
+   Con lo que sacó el pase de las 15:45, el índice pasa de 74.627 a **76.372** con peso.
+   Quedan 2.860 de 2020 en adelante con material y sin peso creíble. De antes de 2020 no se
+   ha calculado nunca, por diseño del propio pase (serían ~5 h).
    Lo que se midió: el `SwPropExtractor.exe` de git era la compilación del **13/07**, sin
    `--masa`; el bueno (18/08, md5 `d2af77cb`, 8.192 B) está en `releases\v2.0.8`…`v2.1.2` y en la
    red. Al sincronizar la raíz con git el 25/08 se cambió el bueno por el viejo. El `.cs` de git es
