@@ -1,5 +1,14 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [Sin número todavía] - 2026-09-21 (Buscar con Ø y º, y el peso vuelve)
+
+- **Buscar `Ø50` o `90º` ya encuentra lo que tiene que encontrar.** Hasta ahora devolvía **cero resultados**: `rodillo Ø50` daba 0 y `rodillo o50`, 405; `curva 90º` daba 0 y `curva 90`, 3.182. Afectaba a **8.521 archivos con Ø** en el nombre y **2.300 con º**, justo los diámetros y los grados, que es como se nombran las piezas aquí.
+- **Por qué pasaba.** Lo que escribes y el nombre del archivo se preparaban de forma distinta: el nombre, en el servidor; lo que escribes, en la app, con otras reglas. No coincidían en 12 caracteres (Ø, º, ª, ø, ¾, ¡, ±, ×, ®, Ð, el acento suelto y el espacio duro). Ahora los prepara **el mismo sitio y de la misma manera**, así que no pueden discrepar.
+- **Sin perder velocidad**: la búsqueda sigue entrando por el mismo índice (medido: 17,5 ms frente a los 21,3 ms de antes), y la gramática de siempre (`;`, `,`, `-palabra`) no cambia.
+- **También lo arreglado en los diálogos**: el buscador interno de las listas (despiece, dónde se usa, comparar) ya casa igual que el servidor.
+- **El peso vuelve a calcularse cada noche.** Desde el 25/08, el equipo que reindexa tenía una versión antigua del extractor de SolidWorks que no calcula masa: ninguna pieza nueva traía peso desde esa fecha, y de las 30.537 recuperadas el 18/09, ninguna. Comprobado con cuatro piezas: la versión buena las calcula todas y tarda lo mismo.
+- **34 comprobaciones nuevas** (`pruebas_normalizacion.py`, 30, y 4 más en `pruebas_reindexado.py` que vigilan que el extractor de la máquina sepa calcular el peso). La batería nueva, pasada contra el código de antes del arreglo, suspende 18 de 30.
+
 ## [Pase nocturno] - 2026-09-18 (El índice se cura solo — la app no cambia)
 
 - **Empiezan a salir archivos que antes no aparecían.** Medido el 18/09: en el NAS había **70.909 archivos de PROYECTOS que no estaban en el índice**, el 11 % de lo que hay. Entre ellos, el PDF de la `26003.P270` que dio la voz de alarma.

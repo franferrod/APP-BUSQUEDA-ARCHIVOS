@@ -99,6 +99,19 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 
 Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 
+**21/09 — buscar con Ø y º, y el peso** (hecho y probado, SIN número de versión y SIN desplegar):
+
+- **`PATRON_NORM`**: el patrón del LIKE se normaliza en la base, con la misma función que la
+  columna (`UPPER(buscador.sin_tildes(%s))`), en los 7 sitios que lo armaban en Python. Medido:
+  `rodillo Ø50` pasa de 0 a **405** (los mismos que `rodillo o50`), `curva 90º` de 0 a **327**;
+  el plan sigue entrando por `idx_ba_nombre_norm_trgm` y baja de 21,3 ms a 17,5 ms.
+- **`normalizar_texto` imita a `unaccent`** para que el filtro local de los diálogos no discrepe
+  del servidor: 0 diferencias en los 47 caracteres no ASCII que hay en los nombres del índice.
+- **Extractor con `--masa` en la raíz y en git** (ver §7.7). El de antes queda en
+  `BACKUPS\extractor_raiz_sin_masa_20260921\`.
+- Baterías que tocan la búsqueda, todas en verde después del cambio: exclusiones 47, datos 48,
+  diálogos 19, normalización 30 (nueva), pase nocturno 70.
+
 **Pase nocturno, 18/09 — el índice se cura solo** (sin versión de app: el `.exe` no cambia):
 
 - **Faltaban 70.909 archivos de PROYECTOS** (11 % del NAS), medido recorriendo el NAS entero
@@ -178,9 +191,9 @@ Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 427 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
+**Pruebas: 461 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
 16 credenciales + 47 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos +
-19 v2.1.2 + 11 preview + 32 sobre el `.exe` empaquetado + **66 del pase nocturno**).
+19 v2.1.2 + 11 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización**).
 
 ---
 
@@ -246,15 +259,9 @@ cadena vacía y descuadraba el recuento en uno.
 
 ### 6.3 Salido de la investigación del 18/09 — propuesto, NO hecho
 
-- **🔴 Buscar con «Ø» o «º» no encuentra NADA** (medido 18/09, fallo antiguo de la app, ajeno
-  a la recuperación). `rodillo Ø50` → 0 resultados, `rodillo o50` → 390; `curva 90º` → 0,
-  `curva 90` → 3.082. Los 9 nombres con Ø o º probados, buscados tal cual: 0 resultados todos.
-  **Causa**: el término se normaliza en Python (`normalizar_texto`, NFKD) y el nombre en la BD
-  con `unaccent`; no coinciden en 12 caracteres presentes en el índice: **Ø** (8.521 archivos:
-  la app la deja, la BD la hace O), **º** (2.300: la app la hace O, la BD la deja), **ª** (601),
-  ø, ¾, espacio duro, ´, ¡, ±, ×, ®, Ð. **Arreglo propuesto**: normalizar el término con la
-  misma función de la BD (`UPPER(buscador.sin_tildes(%s))`) — iguales por construcción, como
-  `NOMBRE_NORM` — midiendo antes que el índice GIN se sigue usando. Cambio de la app.
+- ✅ **Buscar con «Ø» o «º»: ARREGLADO el 21/09** (ver §4). Queda sin desplegar: necesita número
+  de versión y compilar. Lo que se midió antes del arreglo: `rodillo Ø50` → 0 y `rodillo o50`
+  → 390; `curva 90º` → 0 y `curva 90` → 3.082; 8.521 archivos con Ø y 2.300 con º.
 - **Casilla «Sin año» en el filtro de años.** 53.712 archivos de carpetas sin número de proyecto
   (48.997 bajo `ALSI\`: PALETIZADOR 11.926, AÑO 2015 8.771, HORNO 5.469…) entran en el índice pero
   `anio IN (...)` los deja fuera de la búsqueda: medido, 0 de 5 salen con los filtros de siempre y
@@ -293,8 +300,12 @@ cadena vacía y descuadraba el recuento en uno.
    Era código de febrero, la última pieza sin migrar a segundo plano. Ahora bloquea 0,000 s.
 6. **La consulta de conjuntos sin vista previa tarda ~7-9 s** y bloquea la interfaz con el cursor
    de espera, igual que "Piezas más reutilizadas". Si molesta, toca moverla a un worker.
-7. **🔴 Desde el 25/08 los pases nocturnos no calculan el PESO** (medido el 18/09, SIN ARREGLAR,
-   pendiente de permiso). El `SwPropExtractor.exe` de git es la compilación del **13/07**, sin
+7. ✅ **Desde el 25/08 los pases nocturnos no calculaban el PESO — arreglado el 21/09**: el
+   binario bueno está en la raíz y **subido a git** (commit `dd67de1`), y una prueba nueva
+   suspende si vuelve a aparecer uno sin `--masa`. **Queda pendiente rellenar** con
+   `poblar_masa.py` fuera de horario: 3.606 piezas de 2020 en adelante sin peso y con material
+   (~8 min); de antes de 2020 nunca se calculó, por diseño del propio pase.
+   Lo que se midió: el `SwPropExtractor.exe` de git era la compilación del **13/07**, sin
    `--masa`; el bueno (18/08, md5 `d2af77cb`, 8.192 B) está en `releases\v2.0.8`…`v2.1.2` y en la
    red. Al sincronizar la raíz con git el 25/08 se cambió el bueno por el viejo. El `.cs` de git es
    idéntico al de `releases\v2.1.2`: lo que está mal es solo el binario. Las mismas 4 piezas: el

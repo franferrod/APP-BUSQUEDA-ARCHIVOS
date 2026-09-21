@@ -278,6 +278,15 @@ def fisicas_creibles(masa_kg, volumen_m3, area_m2):
 # (buscador.sin_tildes = unaccent declarado IMMUTABLE; ver crear_tablas)
 NOMBRE_NORM = "UPPER(buscador.sin_tildes(nombre_archivo))"
 
+# 21/09/2026 - El patrón del LIKE se normaliza EN LA BASE, con la MISMA función
+# que la columna. Hacerlo en Python (NFKD) no casaba en 12 caracteres que están
+# en los nombres de verdad —Ø en 8.521 archivos, º en 2.300, ª en 601...— y
+# buscar "rodillo Ø50" o "curva 90º" devolvía CERO resultados mientras que
+# "rodillo o50" devolvía 390 y "curva 90", 3.082. Así coinciden letra por letra
+# por construcción. `sin_tildes` es IMMUTABLE, así que el planificador resuelve
+# el patrón antes de ejecutar y el índice GIN se sigue usando (medido).
+PATRON_NORM = "('%%' || UPPER(buscador.sin_tildes(%s)) || '%%')"
+
 # Configuración de Logging
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -418,14 +427,30 @@ class IndexManager:
             return False, str(e)
         return True, ""
 
+    # 21/09/2026 - Los doce caracteres en los que NFKD (Python) y unaccent (la
+    # base) NO coincidían, medidos sobre los nombres del índice. El filtro local
+    # de los diálogos tiene que dar el mismo resultado que el servidor: lo dice
+    # el propio comentario de nombre_casa_con_termino desde la V2.1.4.
+    _COMO_LA_BASE = {'Ø': 'O', 'ø': 'o', 'Ð': 'D', 'ð': 'd', '¡': '!',
+                     '±': '+/-', '×': '*', '®': '(R)', '¾': ' 3/4'}
+    _QUE_NO_TOCA_LA_BASE = ('º', 'ª', '´', '\xa0')
+
     @staticmethod
     def normalizar_texto(texto):
-        """Convierte a mayúsculas y quita acentos/tildes"""
+        """Convierte a mayúsculas y quita acentos/tildes, con las mismas reglas
+        que `buscador.sin_tildes` (unaccent) en el servidor."""
         if texto is None:
             return ""
-        texto = unicodedata.normalize('NFKD', str(texto))
-        texto = "".join([c for c in texto if not unicodedata.combining(c)])
-        return texto.upper()
+        salida = []
+        for c in str(texto):
+            if c in IndexManager._COMO_LA_BASE:
+                salida.append(IndexManager._COMO_LA_BASE[c])      # unaccent sí, NFKD no
+            elif c in IndexManager._QUE_NO_TOCA_LA_BASE:
+                salida.append(c)                                   # NFKD sí, unaccent no
+            else:
+                d = unicodedata.normalize('NFKD', c)
+                salida.append("".join(x for x in d if not unicodedata.combining(x)))
+        return "".join(salida).upper()
 
     # ══════════════════════════════════════════════════════════════
     # SINTAXIS DEL BUSCADOR  (V2.1.4)
@@ -1237,16 +1262,16 @@ class IndexManager:
                 cond_kw.append(
                     "EXISTS (SELECT 1 FROM buscador.componentes c"
                     "  WHERE c.ensamblaje_ruta = a.ruta_completa"
-                    "    AND UPPER(unaccent(c.componente_nombre)) LIKE %s)")
-                params.append(f"%{self.normalizar_texto(kw)}%")
+                    f"    AND UPPER(unaccent(c.componente_nombre)) LIKE {PATRON_NORM})")
+                params.append(kw)
             where = [f"({(' AND ' if modo_and else ' OR ').join(cond_kw)})"]
             # V2.1.4: y fuera los que lleven un componente excluido
             for ex in excluidas:
                 where.append(
                     "NOT EXISTS (SELECT 1 FROM buscador.componentes c"
                     "  WHERE c.ensamblaje_ruta = a.ruta_completa"
-                    "    AND UPPER(unaccent(c.componente_nombre)) LIKE %s)")
-                params.append(f"%{self.normalizar_texto(ex)}%")
+                    f"    AND UPPER(unaccent(c.componente_nombre)) LIKE {PATRON_NORM})")
+                params.append(ex)
 
         if compañeros:
             where.append("a.origen IN (%s)" % ','.join(['%s'] * len(compañeros)))
@@ -1296,7 +1321,7 @@ class IndexManager:
         WITH RECURSIVE hallados AS (
             SELECT DISTINCT c.ensamblaje_ruta AS ruta
             FROM buscador.componentes c
-            WHERE UPPER(unaccent(c.componente_nombre)) LIKE %s
+            WHERE UPPER(unaccent(c.componente_nombre)) LIKE """ + PATRON_NORM + """
           UNION
             SELECT c2.ensamblaje_ruta
             FROM hallados h
@@ -1310,13 +1335,13 @@ class IndexManager:
     def _rutas_que_contienen(self, cursor, keyword, profundo):
         """Conjunto de rutas de ensamblajes que contienen la keyword.
         profundo=False: componentes directos. True: cualquier nivel."""
-        kw = f"%{self.normalizar_texto(keyword)}%"
+        kw = keyword                     # lo normaliza la base (PATRON_NORM)
         if profundo:
             cursor.execute(self._SQL_CONTIENE_PROFUNDO, (kw,))
         else:
             cursor.execute(
                 "SELECT DISTINCT ensamblaje_ruta FROM buscador.componentes "
-                "WHERE UPPER(unaccent(componente_nombre)) LIKE %s", (kw,))
+                f"WHERE UPPER(unaccent(componente_nombre)) LIKE {PATRON_NORM}", (kw,))
         return {r[0] for r in cursor.fetchall()}
 
     def filtrar_por_componente(self, rutas, termino, profundo=False):
@@ -1347,11 +1372,11 @@ class IndexManager:
                     # cualquier nivel: se calcula global y se intersecta
                     conjuntos.append(self._rutas_que_contienen(cursor, kw, True) & pedidas)
                 else:
-                    cursor.execute('''
+                    cursor.execute(f'''
                         SELECT DISTINCT ensamblaje_ruta FROM buscador.componentes
                         WHERE ensamblaje_ruta = ANY(%s)
-                          AND UPPER(unaccent(componente_nombre)) LIKE %s
-                    ''', (list(rutas), f'%{self.normalizar_texto(kw)}%'))
+                          AND UPPER(unaccent(componente_nombre)) LIKE {PATRON_NORM}
+                    ''', (list(rutas), kw))
                     conjuntos.append({r[0] for r in cursor.fetchall()})
             if not conjuntos:
                 return set()
@@ -1536,11 +1561,10 @@ class IndexManager:
             score_cases = []
             for i, kw in enumerate(keywords):
                 peso_posicion = len(keywords) - i
-                kw_norm = self.normalizar_texto(kw)
                 score_cases.append(
-                    f"CASE WHEN {NOMBRE_NORM} LIKE %s THEN {peso_posicion * 100} ELSE 0 END"
+                    f"CASE WHEN {NOMBRE_NORM} LIKE {PATRON_NORM} THEN {peso_posicion * 100} ELSE 0 END"
                 )
-                params.append(f"%{kw_norm}%")
+                params.append(kw)
 
             # Los planos que vienen de un nº de placa puntúan por encima de todo
             for plano in planos_de_placas:
@@ -1550,9 +1574,9 @@ class IndexManager:
             score_sql = " + ".join(score_cases)
             logic_op = " AND " if is_and_search else " OR "
             where_clause = logic_op.join(
-                [f"{NOMBRE_NORM} LIKE %s" for _ in keywords]
+                [f"{NOMBRE_NORM} LIKE {PATRON_NORM}" for _ in keywords]
             )
-            params.extend([f"%{self.normalizar_texto(k)}%" for k in keywords])
+            params.extend(keywords)
 
             # La coincidencia por placa siempre entra en OR (aunque la búsqueda sea AND)
             if planos_de_placas:
@@ -1566,8 +1590,8 @@ class IndexManager:
         # V2.1.4: '-palabra' -> fuera todo nombre que la contenga. Va siempre
         # en Y, aunque la busqueda sea de tipo O: quitar es quitar.
         for fuera in excluidas:
-            base_where += f" AND {NOMBRE_NORM} NOT LIKE %s"
-            params.append(f"%{self.normalizar_texto(fuera)}%")
+            base_where += f" AND {NOMBRE_NORM} NOT LIKE {PATRON_NORM}"
+            params.append(fuera)
 
         # V2.1.0 - Filtro "Solo máquinas con placa CE": el prefijo del nombre de
         # archivo (ej. "26047.E107") debe existir como num_plano en placas_ce

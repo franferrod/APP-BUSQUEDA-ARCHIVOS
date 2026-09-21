@@ -301,6 +301,41 @@ def probar_piezas_sueltas():
               and a.minutos == rd.MINUTOS_MAX_PASE)
 
 
+def probar_extractor(cn, cu):
+    """El 25/08 la raíz se quedó con una compilación del extractor anterior a
+    --masa y hasta el 18/09 los pases no calcularon el peso de nada nuevo, sin
+    que saltara ningún aviso. Esto lo caza."""
+    titulo("4c. EL EXTRACTOR DE LA RAÍZ SABE CALCULAR EL PESO")
+    exe = os.path.join(RAIZ, "SwPropExtractor.exe")
+    binario = open(exe, "rb").read() if os.path.exists(exe) else b""
+    fuente = ""
+    if os.path.exists(os.path.join(RAIZ, "SwPropExtractor.cs")):
+        fuente = open(os.path.join(RAIZ, "SwPropExtractor.cs"), encoding="utf-8",
+                      errors="replace").read()
+    comprobar("extractor", "el .exe lleva la opción --masa",
+              "--masa".encode("utf-16-le") in binario, "%d bytes" % len(binario))
+    comprobar("extractor", "y el .cs también (binario y fuente de acuerdo)", "--masa" in fuente)
+    comprobar("extractor", "sigue llevando --preview (miniaturas)",
+              "--preview".encode("utf-16-le") in binario)
+
+    cu.execute("""SELECT ruta_completa, sw_masa_kg FROM buscador.archivos
+                  WHERE origen = 'PROYECTOS' AND extension = '.sldprt'
+                    AND sw_masa_kg IS NOT NULL AND length(ruta_completa) < 260
+                  ORDER BY id DESC LIMIT 20""")
+    for ruta, masa_bd in cu.fetchall():
+        if not os.path.exists(ruta):
+            continue
+        props = EXTRACTOR_REAL(ruta, preview=False, masa=True)
+        from models import fisicas_creibles
+        masa = fisicas_creibles(props.get("__MASA_KG__"), props.get("__VOLUMEN_M3__"),
+                                props.get("__AREA_M2__"))[0]
+        comprobar("extractor", "una pieza real del índice vuelve a dar peso", masa is not None,
+                  "%s → %s kg (en la BD %s)" % (os.path.basename(ruta)[:28], masa, masa_bd))
+        return
+    comprobar("extractor", "una pieza real del índice vuelve a dar peso", False,
+              "ninguna de las 20 piezas con peso del índice es accesible ahora mismo")
+
+
 def probar_recuperacion(cn, cu):
     titulo("6. EL PASE DE CADA NOCHE APUNTA LO QUE FALTA")
     meter_a_mano(cu, A)
@@ -644,6 +679,7 @@ def main():
     try:
         limpiar(cu, cn)
         probar_piezas_sueltas()
+        probar_extractor(cn, cu)
         probar_recuperacion(cn, cu)
         probar_pase_entero()
     except Exception:

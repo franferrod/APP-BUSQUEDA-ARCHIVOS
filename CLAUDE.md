@@ -95,10 +95,11 @@ python pruebas_datos.py           # 48 · consultas reales contra el servidor
 python pruebas_v212.py            # 19 · diálogos, filtro interno, Abrir PDF
 python pruebas_preview.py         # 11 · panel de vista previa e icono genérico
 python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
-python pruebas_reindexado.py      # 66 · pase nocturno: recuperación, rutas largas, clave fuera del log
+python pruebas_reindexado.py      # 70 · pase nocturno: recuperación, rutas largas, clave y peso
+python pruebas_normalizacion.py   # 30 · que Ø, º y ª se busquen como se escriben
 ```
 
-Total: **427**. Reglas del banco de pruebas:
+Total: **461**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - La carpeta de pruebas del `.exe` necesita su `config.ini`.
@@ -129,9 +130,10 @@ Total: **427**. Reglas del banco de pruebas:
   El barrido del índice es por **conjunto de rutas**, sin relojes. Esto ya vació dos orígenes.
 - **`unaccent()` es `STABLE` y no se indexa.** Se usa `buscador.sin_tildes()` (`IMMUTABLE`), y
   `NOMBRE_NORM` debe coincidir **letra por letra** con la expresión del índice GIN.
-- **El término de búsqueda se normaliza en Python (NFKD) y el nombre con `unaccent`**: no casan en
-  12 caracteres y buscar con `Ø` o `º` devuelve **0** (medido 18/09, ESTADO §6.3, sin arreglar).
-  Cualquier normalización nueva se compara carácter a carácter con `buscador.sin_tildes`.
+- **El patrón del LIKE lo normaliza la BASE** (`PATRON_NORM`), con la misma función que la
+  columna. Normalizarlo en Python (NFKD) no casaba en 12 caracteres y buscar `Ø50` o `90º` daba
+  **0** (arreglado el 21/09). `normalizar_texto` imita a `unaccent` para el filtro local; si se
+  toca, se compara carácter a carácter contra la BD (`pruebas_normalizacion.py`).
 - **`IN (subquery)` vs `EXISTS`**: el mismo filtro pasó de 20 s a 0,07 s.
 - **Filtros opcionales: acopla el SQL, no uses `(%s IS NULL OR col = %s)`.** Con el `OR` el
   planificador descarta el índice; una consulta pasó de 7 s a más de dos minutos.
