@@ -99,7 +99,7 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 
 Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 
-**21/09 — buscar con Ø y º, y el peso** (hecho y probado, SIN número de versión y SIN desplegar):
+**v2.3.4 — buscar con Ø y º, y el peso** (compilada y probada el 21/09; pendiente de desplegar):
 
 - **`PATRON_NORM`**: el patrón del LIKE se normaliza en la base, con la misma función que la
   columna (`UPPER(buscador.sin_tildes(%s))`), en los 7 sitios que lo armaban en Python. Medido:

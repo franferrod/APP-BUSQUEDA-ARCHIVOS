@@ -1,6 +1,6 @@
 # Changelog - Buscador de Piezas ALSI
 
-## [Sin número todavía] - 2026-09-21 (Buscar con Ø y º, y el peso vuelve)
+## [2.3.4] - 2026-09-21 (Buscar con Ø y º, y el peso vuelve)
 
 - **Buscar `Ø50` o `90º` ya encuentra lo que tiene que encontrar.** Hasta ahora devolvía **cero resultados**: `rodillo Ø50` daba 0 y `rodillo o50`, 405; `curva 90º` daba 0 y `curva 90`, 3.182. Afectaba a **8.521 archivos con Ø** en el nombre y **2.300 con º**, justo los diámetros y los grados, que es como se nombran las piezas aquí.
 - **Por qué pasaba.** Lo que escribes y el nombre del archivo se preparaban de forma distinta: el nombre, en el servidor; lo que escribes, en la app, con otras reglas. No coincidían en 12 caracteres (Ø, º, ª, ø, ¾, ¡, ±, ×, ®, Ð, el acento suelto y el espacio duro). Ahora los prepara **el mismo sitio y de la misma manera**, así que no pueden discrepar.
