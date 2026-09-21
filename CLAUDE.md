@@ -93,15 +93,18 @@ python pruebas_exclusiones.py     # 47 · gramática de búsqueda y exclusiones
 python pruebas_robustez.py --todo # 90 · servidor OK (51) + servidor caído (39)
 python pruebas_datos.py           # 48 · consultas reales contra el servidor
 python pruebas_v212.py            # 19 · diálogos, filtro interno, Abrir PDF
-python pruebas_preview.py         # 11 · panel de vista previa e icono genérico
+python pruebas_preview.py         #  7 · panel de vista previa e icono genérico
 python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
 python pruebas_reindexado.py      # 70 · pase nocturno: recuperación, rutas largas, clave y peso
 python pruebas_normalizacion.py   # 30 · que Ø, º y ª se busquen como se escriben
 ```
 
-Total: **461**. Reglas del banco de pruebas:
+Total: **457**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
+- **Todas las baterías que abren la ventana salen por `arnes_pruebas.salir()`**, también
+  `pruebas_robustez.py` desde la v2.3.4: era la última que volvía a `runpy` y el escenario
+  de servidor caído moría al desmontar, con sus 39 comprobaciones ya en verde.
 - La carpeta de pruebas del `.exe` necesita su `config.ini`.
 - Patrón del arnés: `runpy.run_path(..., run_name="__main__")` con `QApplication.exec_` parcheado,
   `QT_QPA_PLATFORM=offscreen`, y los flags `ALSI_SIN_DIALOGOS`, `ALSI_SIN_CANDADO`,

@@ -109,8 +109,13 @@ Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
   del servidor: 0 diferencias en los 47 caracteres no ASCII que hay en los nombres del índice.
 - **Extractor con `--masa` en la raíz y en git** (ver §7.7). El de antes queda en
   `BACKUPS\extractor_raiz_sin_masa_20260921\`.
-- Baterías que tocan la búsqueda, todas en verde después del cambio: exclusiones 47, datos 48,
-  diálogos 19, normalización 30 (nueva), pase nocturno 70.
+- Baterías repasadas tras el cambio, todas en verde: preferencias 18, fluidez 19, cascada 30,
+  credenciales 16, análisis 31, exclusiones 47, robustez 90, datos 48, diálogos 19,
+  preview 7, normalización 30 (nueva), pase nocturno 70. Falta `pruebas_ejecutable` (32),
+  que exige la app cerrada.
+- **`pruebas_robustez.py` ya sale por el arnés**: era la única que volvía a `runpy`, y el
+  escenario de servidor caído tumbaba el proceso al desmontar (Git Bash: 127/139) después
+  de imprimir sus 39 comprobaciones en verde. Sus dos escenarios salen ahora con 0.
 
 **Pase nocturno, 18/09 — el índice se cura solo** (sin versión de app: el `.exe` no cambia):
 
@@ -191,9 +196,9 @@ Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 461 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
+**Pruebas: 457 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
 16 credenciales + 47 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos +
-19 v2.1.2 + 11 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización**).
+19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización**).
 
 ---
 

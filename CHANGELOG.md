@@ -7,6 +7,7 @@
 - **Sin perder velocidad**: la búsqueda sigue entrando por el mismo índice (medido: 17,5 ms frente a los 21,3 ms de antes), y la gramática de siempre (`;`, `,`, `-palabra`) no cambia.
 - **También lo arreglado en los diálogos**: el buscador interno de las listas (despiece, dónde se usa, comparar) ya casa igual que el servidor.
 - **El peso vuelve a calcularse cada noche.** Desde el 25/08, el equipo que reindexa tenía una versión antigua del extractor de SolidWorks que no calcula masa: ninguna pieza nueva traía peso desde esa fecha, y de las 30.537 recuperadas el 18/09, ninguna. Comprobado con cuatro piezas: la versión buena las calcula todas y tarda lo mismo.
+- **El banco de pruebas vuelve a ser fiable del todo**: `pruebas_robustez.py` era la última batería que moría al cerrarse, después de imprimir sus comprobaciones en verde, y su código de salida no valía para nada. No cambia nada de lo que ves en la app.
 - **34 comprobaciones nuevas** (`pruebas_normalizacion.py`, 30, y 4 más en `pruebas_reindexado.py` que vigilan que el extractor de la máquina sepa calcular el peso). La batería nueva, pasada contra el código de antes del arreglo, suspende 18 de 30.
 
 ## [Pase nocturno] - 2026-09-18 (El índice se cura solo — la app no cambia)

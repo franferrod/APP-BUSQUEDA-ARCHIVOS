@@ -434,4 +434,10 @@ if __name__ == "__main__":
             res = subprocess.run([sys.executable, os.path.abspath(__file__)] + extra)
             codigo = codigo or res.returncode
         sys.exit(codigo)
-    sys.exit(main())
+    # V2.3.4: salida determinista, como el resto de baterías desde la V2.3.2.
+    # Era la única que volvía a runpy: el escenario de servidor caído tumbaba
+    # el proceso al desmontar la app con los hilos de fondo vivos (0xC0000409,
+    # que Git Bash enseña como 127 o 139) DESPUÉS de imprimir sus 39
+    # comprobaciones en verde, y el código de salida dejaba de valer de nada.
+    import arnes_pruebas
+    arnes_pruebas.salir(main(), getattr(TEE, "f", None))
