@@ -23,3 +23,7 @@ releases/
 sonda_*.py
 sonda_*.txt
 *.bak_*
+
+# Entorno virtual de Python 3.8 de la epoca de SQLite: no lo usa nada del
+# proyecto (se compila con Python 3.11) y ocupaba 241 MB en cada copia.
+python38_env/
