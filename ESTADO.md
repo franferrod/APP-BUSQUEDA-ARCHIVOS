@@ -97,9 +97,33 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 
 ## 4. Terminado
 
-Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
+Toda la línea 2.x hasta la **v2.3.4** está en producción. Lo más reciente:
 
-**v2.3.4 — buscar con Ø y º, y el peso** (compilada y probada el 21/09; pendiente de desplegar):
+**23/10 — el material, se escriba como se escriba** (pases nocturnos ya activos; la parte de la
+app va con la próxima versión, que el usuario quiere juntar con más mejoras):
+
+- **Causa medida**: las propiedades se leían por nombre exacto (`MATERIAL`/`material`) y una pieza
+  con `Material` quedaba sin material. El extractor sí lo devolvía, ya evaluado: `'Material' =
+  'GALVANIZADO'` en 26046.P261. Muestra de 80 piezas con plantilla ALSI y sin material: 14 así (18 %).
+- **De las 148.679 piezas y conjuntos sin material, la mayoría no lo tiene de verdad**: en una
+  muestra de 120, 82 sin la propiedad y 38 con ella vacía (sobre todo conjuntos y piezas antiguas).
+- **`models.valores_sw` / `valor_propiedad`**: una sola traducción para el pase de cada noche, el de
+  propiedades y el «Reindexar NAS» de la app; el nombre se compara sin mayúsculas, tildes ni
+  espacios; vacíos y expresiones sin evaluar (`"SW-Material@..."`, `fromparent+"SW-Material@..."`,
+  124 guardadas como material) cuentan como nada.
+- **Document Manager no tiene método para el material ASIGNADO** (459 tipos revisados en la DLL
+  27.5): solo evalúa la propiedad vinculada. Leerlo sin propiedad exigiría la API completa de
+  SolidWorks, abriendo cada pieza.
+- **`poblar_material.py`**: relee lo que no tiene material y rellena SOLO huecos (la condición va
+  también en el UPDATE); piezas y luego conjuntos; reanudable; parado en horario de oficina.
+- **«Material <sin especificar>» = sin material** (decidido por el usuario): la traducción lo da por
+  vacío (también `fromparent+...` y `Material <not specified>`), y los 9.633 que había se vaciaron con
+  la misma regla. Copia en `BACKUPS\material_sin_especificar_20261023.csv`. Con material: 100.937 →
+  91.304.
+- **Hueco conocido hasta la próxima versión**: el «Reindexar NAS» de la v2.3.4 desplegada sigue con la
+  traducción vieja (casi no se usa, y los pases nocturnos lo corrigen).
+
+**v2.3.4 — buscar con Ø y º, y el peso** (desplegada el 21/09 a las 15:35):
 
 - **`PATRON_NORM`**: el patrón del LIKE se normaliza en la base, con la misma función que la
   columna (`UPPER(buscador.sin_tildes(%s))`), en los 7 sitios que lo armaban en Python. Medido:
@@ -196,9 +220,9 @@ Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 501 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
+**Pruebas: 508 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
 16 credenciales + 47 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos +
-19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización** + **44 de propiedades**).
+19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización** + **51 de propiedades**).
 
 ---
 
@@ -285,9 +309,9 @@ cadena vacía y descuadraba el recuento en uno.
   `SAVEPOINT` por archivo; el indexado diario y el completo, no.
 - **La purga no debería borrar lo de las carpetas que no pudo listar**: `recorrer_nas` ya las
   apunta en `errores`, falta usarlo.
-- **`Material <sin especificar>` (9.628 archivos) y `--` (8.856) salen como materiales** en el
-  filtro. Son lo que pone SolidWorks o la plantilla cuando NO hay material. Propuesto: tratarlos
-  como «sin material». No hecho: cambia lo que se ve en el filtro.
+- **`--` como material (8.856 archivos)**: casi todo piezas de 2016-2017 y de la biblioteca ALSI, sin
+  ninguna otra propiedad; parece el valor por defecto de una plantilla antigua. Pendiente de que el
+  usuario diga si es «sin material» (`Material <sin especificar>` ya está hecho, ver §4).
 - **Rutas largas en la app**: «Abrir carpeta»/«Abrir» fallan con 260+ y el aviso diría que el
   archivo se movió. Y `poblar_propiedades` usa `os.path.exists` sin prefijo: no les saca miniatura.
 
