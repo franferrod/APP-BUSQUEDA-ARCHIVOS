@@ -21,6 +21,7 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
 from models import PG_CONFIG
+from models import valores_sw as valores_sw_models
 import psycopg2
 import reindexar_diario as rd
 
@@ -50,23 +51,12 @@ def en_horario_laboral():
 
 
 def valores_sw(p):
-    """Mapea el dict de propiedades a la tupla de columnas sw_* (mismo orden y
-    mismas claves que reindexar_diario.upsert_archivo)."""
+    """Mapea el dict de propiedades a la tupla de columnas sw_*. 23/10/2026: la
+    traducción es la de models.valores_sw, la MISMA que usan el pase de cada
+    noche y el «Reindexar NAS» de la app (antes cada uno tenía la suya, y las
+    tres buscaban 'MATERIAL' por su nombre exacto)."""
     return (
-        p.get('MATERIAL') or p.get('material') or None,
-        p.get('TRATAMIENTO') or None,
-        p.get('ESPESOR') or p.get('espesor') or None,
-        p.get('LÁSER') or p.get('LASER') or None,
-        p.get('TORNO') or None,
-        p.get('FRESA') or None,
-        p.get('SOLDADURA') or None,
-        p.get('PINTURA') or None,
-        p.get('MONTAJE') or None,
-        p.get('TIPO DE CIERRE') or None,
-        p.get('FILO GUIADO') or None,
-        p.get('ONDA') or None,
-        p.get('CANGILÓN') or p.get('CANGILON') or None,
-        p.get('RUNER') or None,
+        *valores_sw_models(p),
         # V2.0.8: masa/volumen/superficie con filtro de densidad creíble
         *fisicas(p),
     )

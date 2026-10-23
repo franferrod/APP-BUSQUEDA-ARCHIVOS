@@ -272,6 +272,60 @@ def fisicas_creibles(masa_kg, volumen_m3, area_m2):
     return (m, v, a)
 
 
+# 23/10/2026 - Las propiedades de SolidWorks se leían por su nombre EXACTO
+# ('MATERIAL' o 'material'), y una pieza con la propiedad escrita 'Material' se
+# indexaba sin material aunque lo tuviera: 26046.P261 Soporte inductivo M18 es
+# GALVANIZADO y salía vacía. Ahora el nombre se compara sin mirar mayúsculas,
+# tildes ni espacios, y lo hacen IGUAL los tres sitios que traducen propiedades:
+# el pase de cada noche, el de propiedades y el «Reindexar NAS» de la app.
+# Columna de la BD -> nombre de la propiedad, en el orden de las columnas.
+PROPIEDADES_SW = (
+    ('sw_material', 'MATERIAL'), ('sw_tratamiento', 'TRATAMIENTO'),
+    ('sw_espesor', 'ESPESOR'), ('sw_laser', 'LÁSER'), ('sw_torno', 'TORNO'),
+    ('sw_fresa', 'FRESA'), ('sw_soldadura', 'SOLDADURA'), ('sw_pintura', 'PINTURA'),
+    ('sw_montaje', 'MONTAJE'), ('sw_tipo_cierre', 'TIPO DE CIERRE'),
+    ('sw_filo_guiado', 'FILO GUIADO'), ('sw_onda', 'ONDA'),
+    ('sw_cangilon', 'CANGILÓN'), ('sw_runer', 'RUNER'),
+)
+
+
+def _clave_propiedad(nombre):
+    t = unicodedata.normalize('NFKD', str(nombre))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    return " ".join(t.upper().split())
+
+
+def es_expresion_sw(valor):
+    """Un vínculo de SolidWorks sin evaluar (`"SW-Material@pieza.SLDPRT"`,
+    `fromparent+"SW-Material@..."`): no es el valor, es la receta para sacarlo.
+    Se habían colado 124 como material."""
+    t = str(valor)
+    return '@' in t and 'SW-' in t.upper()
+
+
+def valor_propiedad(props, nombre):
+    """El valor de una propiedad de SolidWorks sin depender de cómo esté escrito
+    su nombre: primero el nombre exacto y, si no, cualquiera que se escriba
+    igual sin mirar mayúsculas, tildes ni espacios. Vacío o expresión -> None.
+    El valor se devuelve tal cual (sin recortar), como hasta ahora."""
+    if not props:
+        return None
+    candidatos = [props[nombre]] if nombre in props else []
+    clave = _clave_propiedad(nombre)
+    for k, v in props.items():
+        if k != nombre and not str(k).startswith('__') and _clave_propiedad(k) == clave:
+            candidatos.append(v)
+    for v in candidatos:
+        if v is not None and str(v).strip() and not es_expresion_sw(v):
+            return v
+    return None
+
+
+def valores_sw(props):
+    """Las 14 columnas sw_* de una pieza, en el orden de PROPIEDADES_SW."""
+    return tuple(valor_propiedad(props, nombre) for _col, nombre in PROPIEDADES_SW)
+
+
 # V2.0.7 - Expresión normalizada del nombre de archivo usada en la búsqueda.
 # Tiene que coincidir LETRA POR LETRA con la del índice idx_ba_nombre_norm_trgm
 # o PostgreSQL no lo usará y volveremos al escaneo completo de la tabla.

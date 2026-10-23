@@ -1,5 +1,15 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [Pase nocturno + app, sin número todavía] - 2026-10-23 (El material, se escriba como se escriba)
+
+- **Las piezas con la propiedad escrita `Material` ya tienen su material.** Se buscaba solo `MATERIAL` (o `material`), así que una pieza con `Material` se indexaba sin material aunque lo tuviera: el `26046.P261 Soporte inductivo M18` es GALVANIZADO y salía en blanco. Medido: le pasaba a **18 de cada 100 piezas** con plantilla ALSI y sin material.
+- **Ahora el nombre de cada propiedad da igual cómo esté escrito**: mayúsculas, minúsculas, tildes o espacios de más. Vale para todas (`Láser`, `Tratamiento`, `Cangilón`…), no solo para el material.
+- **Los tres sitios que leen propiedades lo hacen igual**: el pase de cada noche, el de propiedades y el botón «Reindexar NAS» de la app. Antes cada uno tenía su propia lista, y los tres fallaban igual.
+- **Fuera las expresiones sin evaluar.** 124 piezas tenían como material el texto `"SW-Material@…"`, que es la receta para sacar el material, no el material. Ya no se guardan, y las que había se arreglan.
+- **Sobre leer el material «por Document Manager»**: ya se hace. Cuando la propiedad está vinculada al material de la pieza (`"SW-Material@…"`), Document Manager la devuelve evaluada; así salió GALVANIZADO. Lo que **no** tiene Document Manager es una forma de leer el material asignado si la pieza no tiene esa propiedad: comprobado en su API, no existe. Para eso haría falta abrir cada pieza con SolidWorks.
+- **Las piezas que ya están en el índice se rellenan solas** con un pase aparte (`poblar_material.py`) que vuelve a leer las que no tienen material, **solo rellena huecos** —nunca cambia un valor que ya estaba— y se para en horario de oficina.
+- **44 comprobaciones nuevas** (`pruebas_propiedades.py`). Suspenden si se vuelven a comparar los nombres tal cual, si las expresiones cuentan como material o si el relleno pisa un valor bueno.
+
 ## [2.3.4] - 2026-09-21 (Buscar con Ø y º, y el peso vuelve)
 
 - **Buscar `Ø50` o `90º` ya encuentra lo que tiene que encontrar.** Hasta ahora devolvía **cero resultados**: `rodillo Ø50` daba 0 y `rodillo o50`, 405; `curva 90º` daba 0 y `curva 90`, 3.182. Afectaba a **8.521 archivos con Ø** en el nombre y **2.300 con º**, justo los diámetros y los grados, que es como se nombran las piezas aquí.

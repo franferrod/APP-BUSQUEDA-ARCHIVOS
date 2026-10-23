@@ -25,7 +25,7 @@ import datetime
 import psycopg2
 from pathlib import Path
 
-from models import PG_CONFIG
+from models import PG_CONFIG, valores_sw
 
 RUTAS_NAS = {
     'PROYECTOS':     r'\\192.168.1.10\Oficina Tecnica\ALSI PROYECTOS APROBADOS',
@@ -441,20 +441,8 @@ def upsert_archivo(cursor, file, origen, metadata, full_path, stats, sw_props,
         int(stats.st_mtime), stats.st_size,
         metadata['codigo_proyecto'], metadata['nombre_proyecto'],
         metadata['codigo_orden'], metadata['nombre_orden'],
-        sw_props.get('MATERIAL') or sw_props.get('material') or None,
-        sw_props.get('TRATAMIENTO') or None,
-        sw_props.get('ESPESOR') or None,
-        sw_props.get('LÁSER') or sw_props.get('LASER') or None,
-        sw_props.get('TORNO') or None,
-        sw_props.get('FRESA') or None,
-        sw_props.get('SOLDADURA') or None,
-        sw_props.get('PINTURA') or None,
-        sw_props.get('MONTAJE') or None,
-        sw_props.get('TIPO DE CIERRE') or None,
-        sw_props.get('FILO GUIADO') or None,
-        sw_props.get('ONDA') or None,
-        sw_props.get('CANGILÓN') or sw_props.get('CANGILON') or None,
-        sw_props.get('RUNER') or None,
+        # 23/10/2026: sin depender de cómo esté escrito el nombre ('Material')
+        *valores_sw(sw_props),
         # V2.0.8: propiedades físicas, pasadas por el filtro de densidad
         *fisicas_de_props(sw_props),
     ))

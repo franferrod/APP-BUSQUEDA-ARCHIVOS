@@ -97,9 +97,10 @@ python pruebas_preview.py         #  7 · panel de vista previa e icono genéric
 python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
 python pruebas_reindexado.py      # 70 · pase nocturno: recuperación, rutas largas, clave y peso
 python pruebas_normalizacion.py   # 30 · que Ø, º y ª se busquen como se escriben
+python pruebas_propiedades.py     # 44 · 'Material' es 'MATERIAL'; el relleno solo rellena huecos
 ```
 
-Total: **457**. Reglas del banco de pruebas:
+Total: **501**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - **Todas las baterías que abren la ventana salen por `arnes_pruebas.salir()`**, también
@@ -137,6 +138,13 @@ Total: **457**. Reglas del banco de pruebas:
   columna. Normalizarlo en Python (NFKD) no casaba en 12 caracteres y buscar `Ø50` o `90º` daba
   **0** (arreglado el 21/09). `normalizar_texto` imita a `unaccent` para el filtro local; si se
   toca, se compara carácter a carácter contra la BD (`pruebas_normalizacion.py`).
+- **Las propiedades de SolidWorks se leen SIEMPRE con `models.valores_sw`**, nunca con
+  `props.get('MATERIAL')`: el nombre viene como lo escribió quien hizo la plantilla
+  (`Material`, `Láser`...) y por nombre exacto 18 de cada 100 piezas perdían el material.
+  Los tres sitios (pase, propiedades, «Reindexar NAS») escriben las columnas en el orden de
+  `PROPIEDADES_SW`; `pruebas_propiedades.py` lo vigila.
+- **Document Manager no sabe leer el material ASIGNADO** (su API no tiene método; revisado el
+  23/10 en la DLL 27.5). Solo evalúa la propiedad vinculada `"SW-Material@..."`.
 - **`IN (subquery)` vs `EXISTS`**: el mismo filtro pasó de 20 s a 0,07 s.
 - **Filtros opcionales: acopla el SQL, no uses `(%s IS NULL OR col = %s)`.** Con el `OR` el
   planificador descarta el índice; una consulta pasó de 7 s a más de dos minutos.

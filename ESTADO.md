@@ -196,9 +196,9 @@ Toda la línea 2.x hasta la **v2.3.3** está en producción. Lo más reciente:
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 457 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
+**Pruebas: 501 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
 16 credenciales + 47 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos +
-19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización**).
+19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización** + **44 de propiedades**).
 
 ---
 
@@ -285,6 +285,9 @@ cadena vacía y descuadraba el recuento en uno.
   `SAVEPOINT` por archivo; el indexado diario y el completo, no.
 - **La purga no debería borrar lo de las carpetas que no pudo listar**: `recorrer_nas` ya las
   apunta en `errores`, falta usarlo.
+- **`Material <sin especificar>` (9.628 archivos) y `--` (8.856) salen como materiales** en el
+  filtro. Son lo que pone SolidWorks o la plantilla cuando NO hay material. Propuesto: tratarlos
+  como «sin material». No hecho: cambia lo que se ve en el filtro.
 - **Rutas largas en la app**: «Abrir carpeta»/«Abrir» fallan con 260+ y el aviso diría que el
   archivo se movió. Y `poblar_propiedades` usa `os.path.exists` sin prefijo: no les saca miniatura.
 

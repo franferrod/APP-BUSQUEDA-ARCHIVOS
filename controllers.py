@@ -4,7 +4,7 @@ import datetime
 import threading
 from pathlib import Path
 from PyQt5.QtCore import QThread, pyqtSignal
-from models import IndexManager, logger
+from models import IndexManager, logger, valores_sw
 from sw_properties import extractor
 import xml.etree.ElementTree as ET
 
@@ -267,20 +267,9 @@ class IndexadorThread(QThread):
                                         int(stats.st_mtime), stats.st_size,
                                         metadata['codigo_proyecto'], metadata['nombre_proyecto'],
                                         metadata['codigo_orden'], metadata['nombre_orden'],
-                                        sw_props.get('MATERIAL') or sw_props.get('material') or None,
-                                        sw_props.get('TRATAMIENTO') or None,
-                                        sw_props.get('ESPESOR') or None,
-                                        sw_props.get('LÁSER') or sw_props.get('LASER') or None,
-                                        sw_props.get('TORNO') or None,
-                                        sw_props.get('FRESA') or None,
-                                        sw_props.get('SOLDADURA') or None,
-                                        sw_props.get('PINTURA') or None,
-                                        sw_props.get('MONTAJE') or None,
-                                        sw_props.get('TIPO DE CIERRE') or None,
-                                        sw_props.get('FILO GUIADO') or None,
-                                        sw_props.get('ONDA') or None,
-                                        sw_props.get('CANGILÓN') or sw_props.get('CANGILON') or None,
-                                        sw_props.get('RUNER') or None,
+                                        # 23/10/2026: la misma traducción que los
+                                        # pases nocturnos ('Material' = 'MATERIAL')
+                                        *valores_sw(sw_props),
                                     ))
                                     # V2.0.2: guardar componentes del ensamblaje
                                     # (para "¿en qué ensamblajes se usa esta pieza?")
