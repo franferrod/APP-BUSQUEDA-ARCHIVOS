@@ -75,6 +75,18 @@ def probar_traduccion():
                   valor_propiedad({'Material': expr}, 'MATERIAL') is None and es_expresion_sw(expr),
                   expr[:34])
     comprobar("vacío", "un material normal no es una expresión", not es_expresion_sw('AISI 304'))
+    for texto in ('Material <sin especificar>', 'MATERIAL <SIN ESPECIFICAR>',
+                  'fromparent+Material <sin especificar>', 'Material <not specified>'):
+        comprobar("vacío", "%r es «sin material»" % texto,
+                  valor_propiedad({'Material': texto}, 'MATERIAL') is None)
+    comprobar("vacío", "y un material que lleva 'sin' sigue siendo material",
+              valor_propiedad({'MATERIAL': 'AISI 304 SIN PULIR'}, 'MATERIAL') == 'AISI 304 SIN PULIR')
+    comprobar("vacío", "la regla es solo del material, no de otras propiedades",
+              valor_propiedad({'TRATAMIENTO': 'Material <sin especificar>'}, 'TRATAMIENTO')
+              == 'Material <sin especificar>')
+    comprobar("vacío", "si 'MATERIAL' dice «sin especificar», vale 'Material' con valor",
+              valor_propiedad({'MATERIAL': 'Material <sin especificar>', 'Material': 'ST-37'},
+                              'MATERIAL') == 'ST-37')
     comprobar("vacío", "sin propiedades → nada", valor_propiedad(None, 'MATERIAL') is None
               and valor_propiedad({}, 'MATERIAL') is None)
     comprobar("vacío", "las claves internas (__...) no cuentan",

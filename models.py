@@ -295,6 +295,20 @@ def _clave_propiedad(nombre):
     return " ".join(t.upper().split())
 
 
+# 23/10/2026 - Lo que SolidWorks escribe como material cuando la pieza NO tiene
+# material asignado. No es un material (decidido por el usuario: "es que no
+# tiene material asignado, o sea sin material"); salía en el filtro con 9.628
+# archivos. También en inglés, y con el prefijo de las piezas derivadas.
+SIN_MATERIAL = ('MATERIAL <SIN ESPECIFICAR>', 'MATERIAL <NOT SPECIFIED>')
+
+
+def es_sin_material(valor):
+    t = _clave_propiedad(valor)
+    if t.startswith('FROMPARENT+'):
+        t = t[len('FROMPARENT+'):].strip()
+    return t in SIN_MATERIAL
+
+
 def es_expresion_sw(valor):
     """Un vínculo de SolidWorks sin evaluar (`"SW-Material@pieza.SLDPRT"`,
     `fromparent+"SW-Material@..."`): no es el valor, es la receta para sacarlo.
@@ -316,8 +330,11 @@ def valor_propiedad(props, nombre):
         if k != nombre and not str(k).startswith('__') and _clave_propiedad(k) == clave:
             candidatos.append(v)
     for v in candidatos:
-        if v is not None and str(v).strip() and not es_expresion_sw(v):
-            return v
+        if v is None or not str(v).strip() or es_expresion_sw(v):
+            continue
+        if clave == 'MATERIAL' and es_sin_material(v):
+            continue
+        return v
     return None
 
 
