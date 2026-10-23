@@ -97,10 +97,10 @@ python pruebas_preview.py         #  7 · panel de vista previa e icono genéric
 python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
 python pruebas_reindexado.py      # 70 · pase nocturno: recuperación, rutas largas, clave y peso
 python pruebas_normalizacion.py   # 30 · que Ø, º y ª se busquen como se escriben
-python pruebas_propiedades.py     # 44 · 'Material' es 'MATERIAL'; el relleno solo rellena huecos
+python pruebas_propiedades.py     # 51 · 'Material' es 'MATERIAL'; el relleno solo rellena huecos
 ```
 
-Total: **501**. Reglas del banco de pruebas:
+Total: **508**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - **Todas las baterías que abren la ventana salen por `arnes_pruebas.salir()`**, también

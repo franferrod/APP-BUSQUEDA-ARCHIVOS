@@ -8,7 +8,8 @@
 - **Fuera las expresiones sin evaluar.** 124 piezas tenían como material el texto `"SW-Material@…"`, que es la receta para sacar el material, no el material. Ya no se guardan, y las que había se arreglan.
 - **Sobre leer el material «por Document Manager»**: ya se hace. Cuando la propiedad está vinculada al material de la pieza (`"SW-Material@…"`), Document Manager la devuelve evaluada; así salió GALVANIZADO. Lo que **no** tiene Document Manager es una forma de leer el material asignado si la pieza no tiene esa propiedad: comprobado en su API, no existe. Para eso haría falta abrir cada pieza con SolidWorks.
 - **Las piezas que ya están en el índice se rellenan solas** con un pase aparte (`poblar_material.py`) que vuelve a leer las que no tienen material, **solo rellena huecos** —nunca cambia un valor que ya estaba— y se para en horario de oficina.
-- **44 comprobaciones nuevas** (`pruebas_propiedades.py`). Suspenden si se vuelven a comparar los nombres tal cual, si las expresiones cuentan como material o si el relleno pisa un valor bueno.
+- **«Material <sin especificar>» ya no sale como un material más.** Es lo que pone SolidWorks cuando la pieza no tiene material asignado, así que ahora cuenta como «sin material»: desaparece de la lista del filtro, donde aparecía con 9.633 archivos.
+- **51 comprobaciones nuevas** (`pruebas_propiedades.py`). Suspenden si se vuelven a comparar los nombres tal cual, si las expresiones cuentan como material o si el relleno pisa un valor bueno.
 
 ## [2.3.4] - 2026-09-21 (Buscar con Ø y º, y el peso vuelve)
 
