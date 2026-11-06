@@ -383,3 +383,12 @@ pase nocturno lo recoge solo.
 - **Una semana sin pase = archivos perdidos para siempre.** Del 17 al 23/07 el pase no llegó al
   NAS; con la ventana de 7 días, lo modificado esos días no entró nunca. Se descubrió dos meses
   después por un PDF que no salía. Desde el 18/09 el pase recupera lo que falte, sea de cuando sea.
+- **El botón «Reindexar NAS» vació PROYECTOS (04-05/11/2026).** Entre el 04/11 a las 16:37 (pase:
+  625.193 archivos) y el pase del 05/11 desaparecieron **todas las filas de 2013 a 2027**;
+  sobrevivieron solo las sin año (53.988), 2002 y 2003, y no se insertó nada después. Es la firma
+  de `IndexadorThread`: `DELETE ... WHERE origen='PROYECTOS' AND anio IN (años marcados)` y luego,
+  si se cancela o ese equipo no llega al NAS («Ruta no disponible»), nada más. Fue en OTRO equipo
+  (en el `app.log` de OFITEC-4 no hay ninguna indexación manual). Se notó el 06/11: buscar «banda»
+  en piezas de 2018-2021 daba 6. La recuperación del 05/11 metió 240.640 (lo barato primero: PDF y
+  DWG, por eso faltaban justo las piezas) y quedaban 326.258; el 06/11 por la noche se lanzó una
+  recuperación a mano de hasta 15 h. **Pendiente: quitar el borrado previo del botón** (propuesto).
