@@ -343,6 +343,35 @@ def valores_sw(props):
     return tuple(valor_propiedad(props, nombre) for _col, nombre in PROPIEDADES_SW)
 
 
+# Rutas de 260 caracteres o más (18/09/2026; aquí desde el 06/11 para que el pase
+# nocturno y el «Reindexar NAS» de la app lean EL MISMO NAS). Windows no abre
+# rutas tan largas y os.walk se salta sus carpetas sin avisar; con el prefijo
+# \\?\UNC\ se salta el límite. El prefijo es SOLO para hablar con el disco: en la
+# BD va siempre la ruta normal, o el índice se duplicaría entero.
+_PREFIJO_LARGO = '\\\\?\\'
+_PREFIJO_LARGO_UNC = '\\\\?\\UNC\\'
+
+
+def ruta_larga(ruta):
+    """La ruta con el prefijo que se salta el límite de 260 caracteres."""
+    if ruta.startswith(_PREFIJO_LARGO):
+        return ruta
+    if ruta.startswith('\\\\'):
+        return _PREFIJO_LARGO_UNC + ruta[2:]
+    if os.path.isabs(ruta):
+        return _PREFIJO_LARGO + ruta
+    return ruta
+
+
+def ruta_normal(ruta):
+    """La inversa de ruta_larga: la ruta tal como se guarda en la BD."""
+    if ruta.startswith(_PREFIJO_LARGO_UNC):
+        return '\\\\' + ruta[len(_PREFIJO_LARGO_UNC):]
+    if ruta.startswith(_PREFIJO_LARGO):
+        return ruta[len(_PREFIJO_LARGO):]
+    return ruta
+
+
 # V2.0.7 - Expresión normalizada del nombre de archivo usada en la búsqueda.
 # Tiene que coincidir LETRA POR LETRA con la del índice idx_ba_nombre_norm_trgm
 # o PostgreSQL no lo usará y volveremos al escaneo completo de la tabla.

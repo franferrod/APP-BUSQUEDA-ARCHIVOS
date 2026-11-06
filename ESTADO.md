@@ -99,6 +99,12 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 
 Toda la línea 2.x hasta la **v2.3.4** está en producción. Lo más reciente:
 
+**v2.3.5 — «Reindexar NAS» ya no puede vaciar el índice** (06/11, compilada; despliegue pendiente
+del «despliega» del usuario): sin borrado previo; lectura completa → actualizar → barrer lo que no
+está, con tope de la mitad y solo bajo las carpetas leídas; mismo recorrido que el pase (rutas
+largas); sello de «al día» solo si la lectura fue completa; trae al botón la traducción común de
+propiedades del 23/10. `ruta_larga`/`ruta_normal` pasan a `models.py`.
+
 **23/10 — el material, se escriba como se escriba** (pases nocturnos ya activos; la parte de la
 app va con la próxima versión, que el usuario quiere juntar con más mejoras):
 
@@ -220,9 +226,10 @@ app va con la próxima versión, que el usuario quiere juntar con más mejoras):
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 508 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
+**Pruebas: 530 comprobaciones** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
 16 credenciales + 47 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos +
-19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización** + **51 de propiedades**).
+19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización** + **51 de propiedades** + **22 del «Reindexar NAS»**). Tres de ellas dependen de que el índice
+esté completo y fallan mientras dure la recuperación del 06/11 (ver §8).
 
 ---
 
@@ -391,4 +398,6 @@ pase nocturno lo recoge solo.
   (en el `app.log` de OFITEC-4 no hay ninguna indexación manual). Se notó el 06/11: buscar «banda»
   en piezas de 2018-2021 daba 6. La recuperación del 05/11 metió 240.640 (lo barato primero: PDF y
   DWG, por eso faltaban justo las piezas) y quedaban 326.258; el 06/11 por la noche se lanzó una
-  recuperación a mano de hasta 15 h. **Pendiente: quitar el borrado previo del botón** (propuesto).
+  recuperación a mano de hasta 15 h. **Arreglado en la v2.3.5**: el botón lee primero, actualiza
+  y barre al final con las reglas del pase (lectura completa, tope de la mitad, solo rutas bajo lo
+  leído). Al probarlo salió que las conexiones del pool pueden venir en autocommit.

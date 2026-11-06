@@ -136,6 +136,8 @@ El NAS **se reindexa solo cada noche**, así que normalmente no hay que hacer na
 
 Si acabas de guardar un archivo y lo necesitas ya, pulsa **Reindexar NAS** abajo a la izquierda. En la esquina inferior derecha se ve cuándo se actualizó el índice por última vez.
 
+> **Reindexar NAS no borra nada mientras lee.** Primero recorre el NAS entero y actualiza lo que encuentra; solo al final, y solo si la lectura ha sido completa, quita lo que ya no existe. Si lo cancelas, se corta la red o tu equipo no llega al NAS, el índice se queda como estaba.
+
 Cuando haya una versión nueva saldrá un aviso naranja arriba con el botón **Actualizar ahora**.
 
 ## 12. Atajos

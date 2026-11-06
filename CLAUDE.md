@@ -1,7 +1,7 @@
 # Buscador de Piezas ALSI — guía para cada sesión
 
 App PyQt5 de escritorio (Windows) que busca archivos SolidWorks del NAS contra un índice
-PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.4**.
+PostgreSQL. La usan ~10 técnicos de oficina. En producción: **v2.3.4** (v2.3.5 compilada, sin desplegar).
 El estado completo del proyecto está en `ESTADO.md`; las decisiones de fondo, en `docs/ADR-002`.
 
 ## Dónde trabajar
@@ -98,9 +98,10 @@ python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
 python pruebas_reindexado.py      # 70 · pase nocturno: recuperación, rutas largas, clave y peso
 python pruebas_normalizacion.py   # 30 · que Ø, º y ª se busquen como se escriben
 python pruebas_propiedades.py     # 51 · 'Material' es 'MATERIAL'; el relleno solo rellena huecos
+python pruebas_indexador.py       # 22 · «Reindexar NAS»: lee primero, quita solo lo que no está
 ```
 
-Total: **508**. Reglas del banco de pruebas:
+Total: **530**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - **Todas las baterías que abren la ventana salen por `arnes_pruebas.salir()`**, también
@@ -166,6 +167,13 @@ Total: **508**. Reglas del banco de pruebas:
 - **El pase nocturno tiene límites que no están en el código**: la tarea lo mata a las **2 h**, y
   solo corre con la sesión de `OFITEC 4` abierta. Su log es `reindexacion.log` (antes iba a
   `app.log`, porque `models.py` hace `basicConfig` al importarse).
+- **Nada borra el índice antes de haber leído el NAS entero.** El «Reindexar NAS» de la app
+  borraba primero y recorría después: el 04-05/11/2026 se canceló (o no llegó al NAS) y dejó
+  PROYECTOS sin nada de 2013 a 2027. Desde la v2.3.5 lee, actualiza y barre al final con las
+  reglas del pase (lectura completa, tope de la mitad, solo rutas bajo lo leído).
+- **Las conexiones del pool pueden venir en autocommit** (`init_db` las deja así si el esquema
+  ya está completo) y ahí un `SAVEPOINT` falla siempre. Quien necesite un modo, lo fija y lo
+  restaura al salir.
 - **Nunca `main()` del pase contra la BD real en una prueba**: su barrido borraría BIBLIOTECA_3D.
   Se prueba con origen sintético y, el pase entero, con una BD falsa (`pruebas_reindexado.py`).
 

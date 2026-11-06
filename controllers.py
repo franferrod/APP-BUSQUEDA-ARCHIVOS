@@ -4,7 +4,7 @@ import datetime
 import threading
 from pathlib import Path
 from PyQt5.QtCore import QThread, pyqtSignal
-from models import IndexManager, logger, valores_sw
+from models import IndexManager, logger, valores_sw, ruta_larga, ruta_normal
 from sw_properties import extractor
 import xml.etree.ElementTree as ET
 
@@ -139,10 +139,21 @@ class IndexadorThread(QThread):
                               if self.compañeros_sel is None or k in self.compañeros_sel}
             
             wrapper = self.db.get_connection()
+            modo_previo = None
             try:
                 conn = wrapper._conn
+                # V2.3.5: el modo de las conexiones del pool depende de por dónde
+                # hayan pasado (init_db las deja en autocommit cuando el esquema ya
+                # está completo). Aquí se fija: AUTOCOMMIT, cada sentencia la suya.
+                # Así un archivo que falla no deja la transacción abortada para los
+                # miles siguientes, y no queda ninguna transacción larga abierta que
+                # pueda bloquear a nadie. Al salir se deja como estaba.
+                modo_previo = conn.autocommit
+                if not modo_previo:
+                    conn.rollback()
+                    conn.autocommit = True
                 cursor = conn.cursor()
-                
+
                 for comp, ruta_val in rutas_a_indexar.items():
                     if self._cancelar:
                         self.status.emit("⏹ Indexación cancelada")
@@ -150,34 +161,48 @@ class IndexadorThread(QThread):
                     
                     # Normalizar ruta_val a lista (soporte para múltiples rutas V1.0.0)
                     rutas_lista = ruta_val if isinstance(ruta_val, list) else [ruta_val]
-                    
-                    # Limpiar datos previos antes de empezar con todas las rutas de este origen
-                    if self.años_sel:
-                        placeholders = ','.join(['%s' for _ in self.años_sel])
-                        query_del = f"DELETE FROM buscador.archivos WHERE origen = %s AND anio IN ({placeholders})"
-                        cursor.execute(query_del, [comp] + self.años_sel)
-                    else:
-                        cursor.execute("DELETE FROM buscador.archivos WHERE origen = %s", (comp,))
-                    conn.commit()
-                    
+
+                    # V2.3.5 - YA NO SE BORRA NADA ANTES DE LEER. Esto hacía
+                    # "DELETE ... WHERE origen/anio" y DESPUÉS recorría el NAS: si
+                    # se cancelaba o el equipo no llegaba al NAS, lo borrado se
+                    # quedaba borrado. El 04-05/11/2026 dejó PROYECTOS sin nada de
+                    # 2013 a 2027 (567.000 archivos). Ahora es como el pase de cada
+                    # noche: se lee entero, se actualiza lo que se ve, y SOLO al
+                    # final, si la lectura fue completa, se quita lo que ya no está
+                    # en el disco (ver _barrer_lo_que_no_esta).
+                    vistos = set()         # TODO lo que hay en el disco, de cualquier año
+                    bases_leidas = []
+                    errores_listado = []
+                    lectura_completa = True
                     count_comp = 0
                     is_commercial = comp in ('BIBLIOTECA_3D', 'ALSI_ESTANDAR')
 
                     for ruta_base in rutas_lista:
-                        if self._cancelar: break
-                        
-                        if not os.path.exists(ruta_base):
+                        if self._cancelar:
+                            lectura_completa = False
+                            break
+
+                        if not os.path.exists(ruta_larga(ruta_base)):
                             logger.warning(f"Ruta no disponible para {comp}: {ruta_base}")
                             self.status.emit(f"⚠️ Ruta no disponible: {comp}")
+                            lectura_completa = False
                             continue
-                        
+
                         logger.info(f"Escaneando {comp} en {ruta_base}")
                         self.status.emit(f"Escaneando {comp}...")
-                        
-                        # Traversal optimizado (V1.0.0)
-                        for root, dirs, files in os.walk(ruta_base):
-                            if self._cancelar: break
-                            
+                        bases_leidas.append(ruta_base)
+
+                        # V2.3.5: el MISMO recorrido que el pase nocturno: con el
+                        # prefijo largo (entra en carpetas de 260+ caracteres) y
+                        # apuntando lo que no se puede listar. Si no viera lo mismo,
+                        # el barrido final borraría lo que el pase sí indexa.
+                        for root_largo, dirs, files in os.walk(ruta_larga(ruta_base),
+                                                               onerror=errores_listado.append):
+                            if self._cancelar:
+                                lectura_completa = False
+                                break
+                            root = ruta_normal(root_largo)
+
                             # v1.0.7 - Excluir carpetas de migración y temporales
                             dirs[:] = [d for d in dirs if d.upper() not in {x.upper() for x in CARPETAS_EXCLUIDAS} and not d.startswith('~')]
 
@@ -187,7 +212,11 @@ class IndexadorThread(QThread):
                                     continue
                                     
                                 full_path = os.path.join(root, file)
-                                
+                                # "Visto" = está en el disco. Antes del filtro de año y
+                                # del guardado: ni un año calculado distinto ni un fallo
+                                # de la base pueden hacer que se borre algo que existe.
+                                vistos.add(full_path)
+
                                 if is_commercial:
                                     # Metadatos simplificados para comerciales
                                     tipo_map = {'BIBLIOTECA_3D': 'BIBLIOTECA', 'ALSI_ESTANDAR': 'ESTANDAR'}
@@ -208,8 +237,8 @@ class IndexadorThread(QThread):
                                         continue
 
                                 try:
-                                    stats = os.stat(full_path)
-                                    
+                                    stats = os.stat(ruta_larga(full_path))
+
                                     # V1.0.6 - Extraer propiedades SolidWorks si es .sldprt o .sldasm
                                     sw_props = None
                                     is_sw_file = file.lower().endswith(('.sldprt', '.sldasm'))
@@ -281,31 +310,50 @@ class IndexadorThread(QThread):
                                             logger.debug(f"Error guardando componentes de {file}: {ex_c}")
                                     count_comp += 1
                                     total_indexados += 1
-                                    
+
                                     if total_indexados % 500 == 0:
                                         self.progress.emit(total_indexados)
                                         self.status.emit(f"Escaneando {comp}... {count_comp} archivos")
-                                    
+
                                     if total_indexados % 2000 == 0:
                                         conn.commit()
                                 except Exception as ex:
                                     logger.debug(f"Error accediendo a archivo {full_path}: {ex}")
                                     continue
-                                
-                    cursor.execute('''
-                        INSERT INTO buscador.estado_indexacion 
-                        (origen, ruta_base, ultima_indexacion, archivos_indexados)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (origen) DO UPDATE SET
-                            ruta_base = EXCLUDED.ruta_base,
-                            ultima_indexacion = EXCLUDED.ultima_indexacion,
-                            archivos_indexados = EXCLUDED.archivos_indexados
-                    ''', (comp, ruta_base, int(datetime.datetime.now().timestamp()), count_comp))
                     conn.commit()
+
+                    # V2.3.5: el barrido, SOLO tras una lectura completa
+                    if errores_listado:
+                        lectura_completa = False
+                        logger.warning(f"{comp}: {len(errores_listado)} carpetas no se han podido "
+                                       f"leer (la primera: {errores_listado[0]}) — no se quita nada.")
+                    borrados = self._barrer_lo_que_no_esta(
+                        conn, cursor, comp, bases_leidas, vistos, lectura_completa)
+
+                    # El sello de "última indexación" solo si de verdad se leyó entero:
+                    # si no, el pie de la ventana diría que el índice está al día.
+                    if lectura_completa:
+                        cursor.execute('''
+                            INSERT INTO buscador.estado_indexacion
+                            (origen, ruta_base, ultima_indexacion, archivos_indexados)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT (origen) DO UPDATE SET
+                                ruta_base = EXCLUDED.ruta_base,
+                                ultima_indexacion = EXCLUDED.ultima_indexacion,
+                                archivos_indexados = EXCLUDED.archivos_indexados
+                        ''', (comp, ruta_base, int(datetime.datetime.now().timestamp()), count_comp))
+                        conn.commit()
+                    logger.info(f"{comp}: {count_comp} archivos actualizados, {borrados} quitados "
+                                f"(lectura {'completa' if lectura_completa else 'INCOMPLETA: no se quita nada'})")
                     self.comp_finished.emit(comp, count_comp)
             finally:
+                if modo_previo is False:
+                    try:
+                        wrapper._conn.autocommit = False
+                    except Exception:
+                        pass
                 wrapper.close()
-            
+
             # V2.1.0 - Paso final: indexar placas CE desde NÚMEROS DE SERIE
             # (no bloquea la indexación de archivos si falla)
             if not self._cancelar:
@@ -325,6 +373,45 @@ class IndexadorThread(QThread):
         except Exception as e:
             logger.exception("Error crítico durante la indexación")
             self.error.emit(str(e))
+
+    def _barrer_lo_que_no_esta(self, conn, cursor, comp, bases_leidas, vistos, lectura_completa):
+        """V2.3.5 - Quita del índice lo que ya no está en el NAS, y solo cuando se
+        sabe. Las mismas reglas que el pase nocturno, que no ha vaciado nada desde
+        agosto:
+          - nada si la lectura no fue completa (cancelada, NAS no accesible o
+            alguna carpeta que no se pudo listar);
+          - nada si no se vio ni un archivo;
+          - solo filas que cuelgan de las carpetas leídas: si este equipo llega
+            al NAS por otro nombre, lo guardado con el nombre de siempre no se toca;
+          - si tocaría más de la mitad de lo que hay, NO se hace: eso no es que
+            se hayan borrado archivos, es que algo ha ido mal.
+        Devuelve cuántas filas quitó."""
+        if not lectura_completa:
+            return 0
+        if not vistos or not bases_leidas:
+            logger.warning(f"{comp}: no se ha visto ningún archivo — no se quita nada.")
+            return 0
+        sql = "SELECT ruta_completa FROM buscador.archivos WHERE origen = %s"
+        params = [comp]
+        if self.años_sel:
+            sql += " AND anio IN (%s)" % ",".join(["%s"] * len(self.años_sel))
+            params += list(self.años_sel)
+        cursor.execute(sql, params)
+        prefijos = tuple(b.rstrip('\\') + '\\' for b in bases_leidas)
+        en_bd = {r[0] for r in cursor.fetchall() if r[0].startswith(prefijos)}
+        huerfanas = list(en_bd - vistos)
+        if not huerfanas:
+            return 0
+        if len(huerfanas) > len(en_bd) * 0.5:
+            logger.warning(f"{comp}: se quitarían {len(huerfanas)} de {len(en_bd)} filas — "
+                           f"demasiado para ser real; no se quita nada.")
+            self.status.emit(f"⚠️ {comp}: no se ha quitado nada (la lectura no cuadra)")
+            return 0
+        for i in range(0, len(huerfanas), 500):
+            cursor.execute("DELETE FROM buscador.archivos WHERE ruta_completa = ANY(%s)",
+                           (huerfanas[i:i + 500],))
+        conn.commit()
+        return len(huerfanas)
 
     def extraer_metadata(self, nombre_archivo, ruta_carpeta, origen=None, ruta_base=None):
         """

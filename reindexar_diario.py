@@ -138,28 +138,9 @@ def _avisar_ilegibles(origen, ilegibles, muestra=5):
 # El prefijo es SOLO para hablar con el disco: en la BD se guarda siempre la
 # ruta normal, la de siempre. Si se colara, todas las rutas serían "nuevas" y
 # el índice se duplicaría entero.
-_PREFIJO_LARGO = '\\\\?\\'
-_PREFIJO_LARGO_UNC = '\\\\?\\UNC\\'
-
-
-def ruta_larga(ruta):
-    """La ruta con el prefijo que se salta el límite de 260 caracteres."""
-    if ruta.startswith(_PREFIJO_LARGO):
-        return ruta
-    if ruta.startswith('\\\\'):
-        return _PREFIJO_LARGO_UNC + ruta[2:]
-    if os.path.isabs(ruta):
-        return _PREFIJO_LARGO + ruta
-    return ruta
-
-
-def ruta_normal(ruta):
-    """La inversa de ruta_larga: la ruta tal como se guarda en la BD."""
-    if ruta.startswith(_PREFIJO_LARGO_UNC):
-        return '\\\\' + ruta[len(_PREFIJO_LARGO_UNC):]
-    if ruta.startswith(_PREFIJO_LARGO):
-        return ruta[len(_PREFIJO_LARGO):]
-    return ruta
+# 06/11/2026: ruta_larga/ruta_normal viven en models.py, porque el «Reindexar
+# NAS» de la app tiene que leer EXACTAMENTE el mismo NAS que este pase.
+from models import ruta_larga, ruta_normal, _PREFIJO_LARGO   # noqa: E402,F401
 
 
 def recorrer_nas(ruta_base, errores=None):

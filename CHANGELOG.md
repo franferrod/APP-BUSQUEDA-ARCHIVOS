@@ -1,6 +1,16 @@
 # Changelog - Buscador de Piezas ALSI
 
-## [Pase nocturno + app, sin número todavía] - 2026-10-23 (El material, se escriba como se escriba)
+## [2.3.5] - 2026-11-06 (Reindexar NAS ya no puede vaciar el índice)
+
+- **El botón «Reindexar NAS» ya no puede borrar el índice.** Hasta ahora borraba primero todo lo del origen y los años marcados, y luego recorría el NAS. Si se cancelaba, se cortaba la red o el equipo no llegaba al NAS, lo borrado se quedaba borrado. **Pasó el 04-05/11**: PROYECTOS se quedó sin nada de 2013 a 2027, más de 560.000 archivos, y por eso buscar «banda» en piezas de 2018-2021 daba 6.
+- **Ahora lee primero y borra solo al final.** Actualiza lo que encuentra y, únicamente si la lectura ha sido completa, quita lo que de verdad ya no está en el disco. Cancelar, quedarse sin NAS o que alguna carpeta no se pueda leer deja el índice como estaba.
+- **Y aun así, con redes de seguridad**: nunca quita más de la mitad de lo que hay (eso no son archivos borrados, es que algo va mal); nunca toca rutas guardadas con otro nombre del NAS; y un archivo que existe no se quita nunca, aunque falle al guardarse o su año no cuadre.
+- **Ve el mismo NAS que el pase nocturno**, incluidas las carpetas de más de 260 caracteres. Si no, cada vez que se pulsara se llevaría por delante los 7.605 archivos de rutas largas que el pase sí indexa.
+- **El sello de «índice al día» solo se pone si la lectura ha sido completa**, para que el pie de la ventana no diga que está al día cuando no lo está.
+- **Trae también lo del material del 23/10** al botón: «Material», «Láser»… se leen se escriban como se escriban, y «Material <sin especificar>» cuenta como sin material.
+- **22 comprobaciones nuevas** (`pruebas_indexador.py`), que prueban el botón de verdad: cancelar a mitad, NAS inaccesible, lectura completa, años marcados y redes de seguridad. Suspenden si se vuelve a barrer con la lectura cortada, sin el tope de la mitad o sin rutas largas. Al escribirlas cazaron un fallo del propio arreglo antes de salir: las conexiones de la app iban en autocommit y la primera versión no guardaba ningún archivo.
+
+## [Pase nocturno] - 2026-10-23 (El material, se escriba como se escriba) — la parte de la app, en la 2.3.5
 
 - **Las piezas con la propiedad escrita `Material` ya tienen su material.** Se buscaba solo `MATERIAL` (o `material`), así que una pieza con `Material` se indexaba sin material aunque lo tuviera: el `26046.P261 Soporte inductivo M18` es GALVANIZADO y salía en blanco. Medido: le pasaba a **18 de cada 100 piezas** con plantilla ALSI y sin material.
 - **Ahora el nombre de cada propiedad da igual cómo esté escrito**: mayúsculas, minúsculas, tildes o espacios de más. Vale para todas (`Láser`, `Tratamiento`, `Cangilón`…), no solo para el material.
