@@ -415,6 +415,12 @@ def main():
         except Exception:
             pass
         salida["codigo"] = resumen()
+        # V2.3.5: la salida va AQUÍ, dentro del arnés, como en el resto de
+        # baterías. En la v2.3.4 se llamaba al volver de runpy, y para entonces
+        # runpy ya desmontaba la app con los hilos de reconexión vivos: con el
+        # servidor caído, fallo de segmentación en cada ejecución (139/127).
+        import arnes_pruebas
+        arnes_pruebas.salir(salida["codigo"], getattr(TEE, "f", None))
         return 0
 
     QApplication.exec_ = _exec

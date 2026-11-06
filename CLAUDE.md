@@ -104,9 +104,10 @@ python pruebas_indexador.py       # 22 · «Reindexar NAS»: lee primero, quita 
 Total: **530**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
-- **Todas las baterías que abren la ventana salen por `arnes_pruebas.salir()`**, también
-  `pruebas_robustez.py` desde la v2.3.4: era la última que volvía a `runpy` y el escenario
-  de servidor caído moría al desmontar, con sus 39 comprobaciones ya en verde.
+- **Todas las baterías que abren la ventana salen por `arnes_pruebas.salir()` DESDE DENTRO
+  de `_exec`**, no al volver de `runpy`: al volver, `runpy` ya está desmontando la app con los
+  hilos vivos. `pruebas_robustez.py` lo hacía al volver (v2.3.4) y el escenario de servidor
+  caído daba fallo de segmentación en cada ejecución; corregido en la v2.3.5.
 - La carpeta de pruebas del `.exe` necesita su `config.ini`.
 - Patrón del arnés: `runpy.run_path(..., run_name="__main__")` con `QApplication.exec_` parcheado,
   `QT_QPA_PLATFORM=offscreen`, y los flags `ALSI_SIN_DIALOGOS`, `ALSI_SIN_CANDADO`,
