@@ -229,10 +229,9 @@ app va con la próxima versión, que el usuario quiere juntar con más mejoras):
 - `INSTALAR_LOCAL.bat` anunciaba la **2.1.2** con la app en 2.1.4: corregido.
 - Etiquetas retroactivas de la v2.0.0 a la v2.1.2.
 
-**Pruebas: 530 comprobaciones** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
+**Pruebas: 530 comprobaciones en verde** (18 preferencias + 19 fluidez + 30 cascada + 31 análisis +
 16 credenciales + 47 exclusiones + 51 robustez servidor OK + 39 robustez servidor caído + 48 datos +
-19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización** + **51 de propiedades** + **22 del «Reindexar NAS»**). Tres de ellas dependen de que el índice
-esté completo y fallan mientras dure la recuperación del 06/11 (ver §8).
+19 v2.1.2 + 7 preview + 32 sobre el `.exe` empaquetado + **70 del pase nocturno** + **30 de normalización** + **51 de propiedades** + **22 del «Reindexar NAS»**).
 
 ---
 
@@ -404,3 +403,7 @@ pase nocturno lo recoge solo.
   recuperación a mano de hasta 15 h. **Arreglado en la v2.3.5**: el botón lee primero, actualiza
   y barre al final con las reglas del pase (lectura completa, tope de la mitad, solo rutas bajo lo
   leído). Al probarlo salió que las conexiones del pool pueden venir en autocommit.
+  **Recuperado entero el 07/11 a las 06:50**: 240.640 (05/11) + 10.611 (pase del 06/11) + 315.478
+  (a mano, 13 h 20 min) = 566.729. Medido después recorriendo el NAS: faltan 0 y sobran 0 en los
+  tres orígenes. «banda» en piezas 2018-2021: de 6 a 2.443. Las piezas recuperadas volvieron con
+  peso (extractor bueno) y con la lectura de propiedades del 23/10.
