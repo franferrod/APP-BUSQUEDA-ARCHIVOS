@@ -140,7 +140,7 @@ def _avisar_ilegibles(origen, ilegibles, muestra=5):
 # el índice se duplicaría entero.
 # 06/11/2026: ruta_larga/ruta_normal viven en models.py, porque el «Reindexar
 # NAS» de la app tiene que leer EXACTAMENTE el mismo NAS que este pase.
-from models import ruta_larga, ruta_normal, _PREFIJO_LARGO   # noqa: E402,F401
+from models import ruta_larga, ruta_normal, ruta_legible, _PREFIJO_LARGO   # noqa: E402,F401
 
 
 def recorrer_nas(ruta_base, errores=None):
@@ -273,19 +273,22 @@ def extraer_sw_props(filepath, preview=False, masa=True):
         # Decodificar como utf-8 REVIENTA con esos bytes (UnicodeDecodeError) y,
         # al tragarse el error, dejaba TODAS las propiedades a NULL. cp850 mapea
         # los 256 bytes, así que nunca falla y reconstruye los acentos bien.
-        cmd = [exe_path, license_key, filepath]
-        if preview:
-            cmd.append('--preview')
-        # V2.0.8: masa/volumen/superficie. Medido sobre 65 archivos reales:
-        # +0,2 s de mediana por archivo, así que se pide siempre para piezas y
-        # ensamblajes (en planos no aplica y el extractor lo omite solo).
-        if masa:
-            cmd.append('--masa')
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            startupinfo=startupinfo, timeout=20  # V2.0.0: 20s (antes 5)
-        )
+        # 18/11/2026: con ruta de 260+ el extractor no encuentra el archivo; se
+        # le da una copia local (models.ruta_legible) y se borra al terminar.
+        with ruta_legible(filepath) as legible:
+            cmd = [exe_path, license_key, legible]
+            if preview:
+                cmd.append('--preview')
+            # V2.0.8: masa/volumen/superficie. Medido sobre 65 archivos reales:
+            # +0,2 s de mediana por archivo, así que se pide siempre para piezas y
+            # ensamblajes (en planos no aplica y el extractor lo omite solo).
+            if masa:
+                cmd.append('--masa')
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                startupinfo=startupinfo, timeout=20  # V2.0.0: 20s (antes 5)
+            )
 
         if result.stdout:
             raw = result.stdout
@@ -757,6 +760,45 @@ def actualizar_placas_ce(conn, cursor):
         return 0
 
 
+def limpiar_satelites(conn, cursor, pendientes):
+    """Borra las miniaturas y los componentes cuya ruta ya no está en archivos
+    (p. ej. lo purgado de BIBLIOTECA/ESTANDAR, que se recrean a diario).
+
+    18/11/2026: SOLO si no queda nada por recuperar. El viernes 06/11 corrió con
+    ~315.000 archivos aún fuera del índice y se llevó 293.478 miniaturas y 421.975
+    componentes que el pase tuvo que rehacer en día y medio. Un archivo que está en
+    el NAS pero falta en el índice NO es huérfano: solo está por recuperar.
+    `pendientes`: lo que quedó sin recuperar (None = no se sabe). Devuelve True si
+    limpió."""
+    if pendientes is None:
+        logger.info("  Limpieza satélite aplazada: hoy no se ha podido comprobar "
+                    "qué falta en el índice.")
+        return False
+    if pendientes:
+        logger.info(f"  Limpieza satélite aplazada: quedan {pendientes:,} archivos por "
+                    f"recuperar y sus miniaturas y componentes no son huérfanos.")
+        return False
+    try:
+        cursor.execute('''DELETE FROM buscador.miniaturas m
+                          WHERE NOT EXISTS (SELECT 1 FROM buscador.archivos a
+                                            WHERE a.ruta_completa = m.ruta_completa)''')
+        n_m = cursor.rowcount
+        cursor.execute('''DELETE FROM buscador.componentes c
+                          WHERE NOT EXISTS (SELECT 1 FROM buscador.archivos a
+                                            WHERE a.ruta_completa = c.ensamblaje_ruta)''')
+        n_c = cursor.rowcount
+        conn.commit()
+        logger.info(f"  Limpieza satélite: {n_m} miniaturas y {n_c} componentes huérfanos.")
+        return True
+    except Exception as ex:
+        logger.warning(f"  Limpieza satélite falló: {ex}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+
 def main():
     _log_propio(LOG_FILE)
     logger.info("=" * 60)
@@ -798,6 +840,8 @@ def main():
     recuperar = False
     ruta_proyectos = None
     recuperados = 0
+    pendientes = None    # None = no se sabe qué falta (no se recorrió PROYECTOS)
+    limpiar_hoy = False  # viernes: limpieza satélite al final
     try:
         # 1. BIBLIOTECA_3D (completa)
         ruta = resolver_ruta_nas(RUTAS_NAS.get('BIBLIOTECA_3D'))
@@ -833,22 +877,9 @@ def main():
             # así que sin esto los archivos eliminados del NAS quedan de fantasmas
             if datetime.datetime.now().weekday() == 4:
                 purgar_rutas_huerfanas(conn, cursor, 'PROYECTOS', ruta)
-                # Y limpieza global de tablas satélite: miniaturas/componentes de
-                # rutas que ya no existen en archivos (p.ej. purgadas del origen
-                # BIBLIOTECA/ESTANDAR, que se recrea a diario)
-                try:
-                    cursor.execute('''DELETE FROM buscador.miniaturas m
-                                      WHERE NOT EXISTS (SELECT 1 FROM buscador.archivos a
-                                                        WHERE a.ruta_completa = m.ruta_completa)''')
-                    n_m = cursor.rowcount
-                    cursor.execute('''DELETE FROM buscador.componentes c
-                                      WHERE NOT EXISTS (SELECT 1 FROM buscador.archivos a
-                                                        WHERE a.ruta_completa = c.ensamblaje_ruta)''')
-                    n_c = cursor.rowcount
-                    conn.commit()
-                    logger.info(f"  Limpieza satélite: {n_m} miniaturas y {n_c} componentes huérfanos.")
-                except Exception as ex:
-                    logger.warning(f"  Limpieza satélite falló: {ex}")
+                # La limpieza de miniaturas/componentes va AL FINAL, después de la
+                # recuperación (paso 7): ver limpiar_satelites.
+                limpiar_hoy = True
         else:
             logger.warning(f"Ruta PROYECTOS no accesible: {RUTAS_NAS.get('PROYECTOS')}")
 
@@ -899,9 +930,14 @@ def main():
         # que le quede al pase antes de que la tarea programada lo corte. Va lo
         # último: si algo se tuerce aquí, lo de todos los días ya está hecho.
         if recuperar:
-            recuperados, _pendientes = recuperar_faltantes(
+            recuperados, pendientes = recuperar_faltantes(
                 conn, cursor, 'PROYECTOS', ruta_proyectos, faltan,
                 hasta=t_inicio + MINUTOS_MAX_PASE * 60)
+
+        # 7. LIMPIEZA SATÉLITE de los viernes (miniaturas y componentes de rutas
+        # que ya no están en archivos). Después de la recuperación, nunca antes.
+        if limpiar_hoy:
+            limpiar_satelites(conn, cursor, pendientes)
 
     except Exception as e:
         logger.exception(f"Error durante la reindexación: {e}")

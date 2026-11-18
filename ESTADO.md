@@ -322,7 +322,22 @@ cadena vacía y descuadraba el recuento en uno.
   ninguna otra propiedad; parece el valor por defecto de una plantilla antigua. Pendiente de que el
   usuario diga si es «sin material» (`Material <sin especificar>` ya está hecho, ver §4).
 - **Rutas largas en la app**: «Abrir carpeta»/«Abrir» fallan con 260+ y el aviso diría que el
-  archivo se movió. Y `poblar_propiedades` usa `os.path.exists` sin prefijo: no les saca miniatura.
+  archivo se movió. (Lo de `poblar_propiedades` sin prefijo: ✅ arreglado el 18/11, ver abajo.)
+
+### 6.4 18/11 — las miniaturas que faltan (medido el 10/11)
+
+- **El incidente del 04-05/11 no se llevó ninguna para siempre**: la limpieza del viernes 06/11
+  borró 293.478 miniaturas y 421.975 componentes de lo que aún no estaba recuperado, y el pase del
+  07-08/11 las rehízo (596.922 antes → 595.100 el 10/11 → 596.680 el 18/11).
+- **Rutas de 260+: el 100 % sin miniatura** (4.407 SolidWorks, 2.196 PDF, 864 DWG), y sin material
+  ni peso. ✅ Arreglado el 18/11 en el pase (`models.ruta_legible`: copia local temporal) y fase
+  `FASE2b rutas largas` de `poblar_propiedades` para releer las viejas una vez.
+- **~40.500 SolidWorks de ruta normal sin miniatura: el archivo no la lleva.** Diagnóstico con
+  Document Manager (herramienta aparte, solo lectura): 148 de 150 al azar abren bien y dan
+  `NoPreview` en PNG y en BMP; los de control del mismo año sí la dan. Sobre todo guardados en 2015
+  o antes (20.244). La única forma de tenerla sería abrirlas con SolidWorks y exportar la imagen;
+  pendiente de medir cuánto cuesta (necesita SolidWorks en marcha, fuera de horario).
+- ✅ **La limpieza satélite** va ahora después de la recuperación y se aplaza si queda algo.
 
 ---
 

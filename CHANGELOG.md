@@ -1,5 +1,14 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [Pase nocturno] - 2026-11-18 (Miniaturas de las rutas largas — la app no cambia)
+
+- **Las piezas, planos, PDF y DWG con ruta muy larga empiezan a tener miniatura.** Con 260 caracteres o más no tenía miniatura **ninguno**: 4.407 de SolidWorks, 2.196 PDF y 864 DWG. Las piezas y conjuntos de ese grupo tampoco tenían **material ni peso**. Desde el 18/09 ya estaban en el índice; lo que fallaba era leerlos.
+- **Cómo se arregla.** El lector de SolidWorks no sabe abrir rutas tan largas, ni siquiera con el truco que usa el recorrido del NAS (probado: 3 de 5 seguían fallando). Ahora el pase copia ese archivo a una carpeta temporal del equipo que indexa, lo lee allí y borra la copia. El original del NAS solo se lee, nunca se escribe. Probado con 15 archivos reales: 12 sacan miniatura; los otros 3 no la llevan dentro.
+- **Las que ya estaban se releen una vez**, en una fase nueva del pase de las 16:30, después de las de siempre. Son unas 4.400 y el pase se para en horario de oficina como siempre.
+- **El resto de las que faltan no tiene arreglo por esta vía**: unas 40.500 piezas, sobre todo guardadas en 2015 o antes, **no llevan imagen dentro del archivo** (medido con 150 al azar: 148 así). El lector las abre bien, pero no hay imagen que leer. Al volver a guardarlas en SolidWorks la recuperan.
+- **La limpieza de los viernes ya no puede llevarse miniaturas buenas.** El viernes 06/11 borró 293.478 miniaturas y 421.975 listas de componentes porque esa tarde aún faltaban por recuperar unos 315.000 archivos del incidente; el pase las rehízo en día y medio, y ese tiempo hubo huecos en la galería y en el modo Conjuntos. Ahora va al final, después de la recuperación, y si queda algo por recuperar **se aplaza** y lo deja escrito en el log.
+- **46 comprobaciones nuevas**: `pruebas_rutas_largas.py` (35) y 11 más en `pruebas_reindexado.py` sobre los viernes. Sin el arreglo, suspenden.
+
 ## [2.3.5] - 2026-11-06 (Reindexar NAS ya no puede vaciar el índice)
 
 - **El botón «Reindexar NAS» ya no puede borrar el índice.** Hasta ahora borraba primero todo lo del origen y los años marcados, y luego recorría el NAS. Si se cancelaba, se cortaba la red o el equipo no llegaba al NAS, lo borrado se quedaba borrado. **Pasó el 04-05/11**: PROYECTOS se quedó sin nada de 2013 a 2027, más de 560.000 archivos, y por eso buscar «banda» en piezas de 2018-2021 daba 6.

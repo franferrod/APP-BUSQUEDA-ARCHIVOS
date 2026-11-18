@@ -3,6 +3,9 @@ import time
 import logging
 import unicodedata
 import re
+import shutil
+import tempfile
+import contextlib
 import threading
 import psycopg2
 import psycopg2.pool
@@ -370,6 +373,36 @@ def ruta_normal(ruta):
     if ruta.startswith(_PREFIJO_LARGO):
         return ruta[len(_PREFIJO_LARGO):]
     return ruta
+
+
+# 18/11/2026: los LECTORES tampoco saben de rutas largas. SwPropExtractor (.NET 4)
+# dice "File not found" y Document Manager falla aunque se le dé el prefijo (medido:
+# 3 de 5 siguen fallando). Resultado: las 4.407 piezas, conjuntos y planos con ruta
+# de 260+ no tenían miniatura NI material NI peso (el 100 %), y lo mismo 2.196 PDF
+# y 864 DWG. Lo que sí funciona (15 de 15 leídos, 12 con miniatura): copiar el
+# archivo a una carpeta temporal LOCAL, leer la copia y borrarla. El original solo
+# se lee; la copia conserva el nombre por si alguna propiedad lo cita.
+LARGO_MAX = 260
+_PREFIJO_TEMPORAL = 'alsi_rutalarga_'
+
+
+@contextlib.contextmanager
+def ruta_legible(ruta):
+    """La ruta tal cual si es corta; si no, una copia local temporal que se borra
+    al salir. Para pasársela a lectores que no entienden el prefijo \\\\?\\."""
+    if len(ruta) < LARGO_MAX:
+        yield ruta
+        return
+    carpeta = tempfile.mkdtemp(prefix=_PREFIJO_TEMPORAL)
+    try:
+        nombre = os.path.basename(ruta_normal(ruta))
+        destino = os.path.join(carpeta, nombre)
+        if len(destino) >= LARGO_MAX:
+            destino = os.path.join(carpeta, 'archivo' + os.path.splitext(nombre)[1])
+        shutil.copyfile(ruta_larga(ruta), destino)
+        yield destino
+    finally:
+        shutil.rmtree(carpeta, ignore_errors=True)
 
 
 # V2.0.7 - Expresión normalizada del nombre de archivo usada en la búsqueda.

@@ -20,7 +20,7 @@ import os, sys, ntpath, logging, time, datetime
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
 
-from models import PG_CONFIG
+from models import PG_CONFIG, ruta_larga, ruta_legible, LARGO_MAX
 from models import valores_sw as valores_sw_models
 import psycopg2
 import reindexar_diario as rd
@@ -98,12 +98,15 @@ def guardar_checkpoint(nombre, last_id):
         pass
 
 
-def procesar_fase(conn, cur, nombre_fase, extensiones, checkpoint_file, con_props=True):
+def procesar_fase(conn, cur, nombre_fase, extensiones, checkpoint_file, con_props=True,
+                  solo_largas=False):
     """Recorre los archivos pendientes de la fase extrayendo propiedades +
-    miniatura. Devuelve True si terminó, False si paró por horario."""
+    miniatura. Devuelve True si terminó, False si paró por horario.
+    solo_largas: solo rutas de 260+ (la fase que relee las que se saltaron)."""
     last_id = leer_checkpoint(checkpoint_file)
+    filtro = f" AND length(ruta_completa) >= {int(LARGO_MAX)}" if solo_largas else ""
     cur.execute(f"""SELECT count(*) FROM buscador.archivos
-                    WHERE extension IN %s AND id > %s""", (extensiones, last_id))
+                    WHERE extension IN %s AND id > %s{filtro}""", (extensiones, last_id))
     total = cur.fetchone()[0]
     log.info(f"[{nombre_fase}] pendientes: {total} (desde id > {last_id})")
     if not total:
@@ -111,7 +114,7 @@ def procesar_fase(conn, cur, nombre_fase, extensiones, checkpoint_file, con_prop
 
     cur.execute(f"""SELECT id, ruta_completa, ultima_modificacion
                     FROM buscador.archivos
-                    WHERE extension IN %s AND id > %s
+                    WHERE extension IN %s AND id > %s{filtro}
                     ORDER BY id""", (extensiones, last_id))
     filas = cur.fetchall()
 
@@ -124,7 +127,9 @@ def procesar_fase(conn, cur, nombre_fase, extensiones, checkpoint_file, con_prop
             return False
         procesados += 1
         try:
-            if os.path.exists(ruta):
+            # 18/11/2026: con ruta de 260+ os.path.exists daba False y la pieza se
+            # saltaba entera: ni miniatura, ni material, ni peso.
+            if os.path.exists(ruta_larga(ruta)):
                 props = rd.extraer_sw_props(ruta, preview=True)
                 if props:
                     if con_props:
@@ -253,8 +258,9 @@ def procesar_minis(conn, cur, nombre_fase, extensiones, fn_render, cada_pausa=50
             return False
         procesados += 1
         try:
-            if os.path.exists(ruta):
-                jpeg = fn_render(ruta)
+            if os.path.exists(ruta_larga(ruta)):
+                with ruta_legible(ruta) as legible:   # 18/11: copia local si es larga
+                    jpeg = fn_render(legible)
                 if jpeg:
                     cur.execute('''
                         INSERT INTO buscador.miniaturas (ruta_completa, imagen, mtime, actualizado)
@@ -389,9 +395,19 @@ def main():
         ok2 = procesar_fase(conn, cur, "FASE2 slddrw", ('.slddrw',),
                             "poblar_fase2.checkpoint", con_props=True)
 
+    # FASE 2b (18/11/2026): las rutas de 260+ que las fases 1 y 2 se saltaron
+    # (os.path.exists sin prefijo y extractor sin copia local): 4.407 piezas,
+    # conjuntos y planos sin miniatura, material ni peso. Su propio checkpoint
+    # empieza en 0, así que las relee una vez; después solo mira las nuevas.
+    ok2b = False
+    if ok1 and ok2:
+        ok2b = procesar_fase(conn, cur, "FASE2b rutas largas",
+                             ('.sldprt', '.sldasm', '.slddrw'),
+                             "poblar_largas.checkpoint", con_props=True, solo_largas=True)
+
     # FASE 3: DWG (miniatura embebida en cabecera; muy rápido)
     ok3 = False
-    if ok1 and ok2:
+    if ok1 and ok2 and ok2b:
         ok3 = procesar_minis(conn, cur, "FASE3 dwg", ('.dwg',), jpeg_de_dwg, cada_pausa=200)
 
     # FASE 4: PDF (primera página con PyMuPDF)
@@ -411,6 +427,7 @@ def main():
     conn.close()
     log.info(f"ESTADO GLOBAL: fase1(prt/asm) {'OK' if ok1 else 'parcial'} · "
              f"fase2(drw) {'OK' if ok2 else 'pendiente'} · "
+             f"fase2b(largas) {'OK' if ok2b else 'pendiente'} · "
              f"fase3(dwg) {'OK' if ok3 else 'pendiente'} · "
              f"fase4(pdf) {'OK' if ok4 else 'pendiente'} · "
              f"miniaturas en BD: {total_minis}")

@@ -95,13 +95,14 @@ python pruebas_datos.py           # 48 · consultas reales contra el servidor
 python pruebas_v212.py            # 19 · diálogos, filtro interno, Abrir PDF
 python pruebas_preview.py         #  7 · panel de vista previa e icono genérico
 python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
-python pruebas_reindexado.py      # 70 · pase nocturno: recuperación, rutas largas, clave y peso
+python pruebas_reindexado.py      # 81 · pase nocturno: recuperación, rutas largas, clave, peso, viernes
+python pruebas_rutas_largas.py    # 35 · los lectores con rutas de 260+ (copia local); sin BD ni NAS
 python pruebas_normalizacion.py   # 30 · que Ø, º y ª se busquen como se escriben
 python pruebas_propiedades.py     # 51 · 'Material' es 'MATERIAL'; el relleno solo rellena huecos
 python pruebas_indexador.py       # 22 · «Reindexar NAS»: lee primero, quita solo lo que no está
 ```
 
-Total: **530**. Reglas del banco de pruebas:
+Total: **576**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - **Todas las baterías que abren la ventana salen por `arnes_pruebas.salir()` DESDE DENTRO
@@ -165,6 +166,11 @@ Total: **530**. Reglas del banco de pruebas:
 - **Rutas de 260+ caracteres (MAX_PATH).** Sin prefijo, `os.stat` falla y `os.walk` se salta la
   carpeta **sin avisar**. Todo recorrido del NAS pasa por `recorrer_nas`; para el disco,
   `ruta_larga()`; en la BD, **siempre la ruta normal** (si se cuela `\\?\`, el índice se duplica).
+  **Los lectores no entienden el prefijo** (SwPropExtractor, Document Manager, PyMuPDF…): a
+  ellos se les da `with ruta_legible(ruta)`, una copia local temporal. Sin eso, las 7.467 rutas
+  largas se quedaron sin miniatura, material ni peso hasta el 18/11.
+- **La limpieza satélite de los viernes va DESPUÉS de la recuperación** y se aplaza si queda algo
+  por recuperar. El 06/11 corrió antes, con 315.000 archivos fuera, y se llevó 293.478 miniaturas.
 - **El pase nocturno tiene límites que no están en el código**: la tarea lo mata a las **2 h**, y
   solo corre con la sesión de `OFITEC 4` abierta. Su log es `reindexacion.log` (antes iba a
   `app.log`, porque `models.py` hace `basicConfig` al importarse).

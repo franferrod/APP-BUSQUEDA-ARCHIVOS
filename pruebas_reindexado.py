@@ -597,31 +597,35 @@ def probar_pase_entero():
     honda = poner("PROYECTOS", r"CLI\26001 UNO\001 A" + "\\" + HONDA + r"\26001.P003.SLDPRT")
 
     guardado = dict(rd.RUTAS_NAS), rd.psycopg2.connect, rd.actualizar_placas_ce, \
-        rd.MINUTOS_MAX_PASE, rd.LOG_FILE
+        rd.MINUTOS_MAX_PASE, rd.LOG_FILE, rd.datetime
     resultados = {}
     try:
         rd.RUTAS_NAS.clear()
         rd.RUTAS_NAS.update(rutas)
         rd.actualizar_placas_ce = lambda conn, cur: 0
         rd.LOG_FILE = os.path.join(TMP, "reindexacion_pase.log")
-        for minutos in (0, 100):
+        # (minutos, día): un martes como siempre, y un viernes (purga y limpieza
+        # satélite) con y sin tiempo para recuperar.
+        for minutos, dia in ((0, 1), (100, 1), (0, 4), (100, 4)):
             bd = BDFalsa()
             bd.rutas["PROYECTOS"] = {ya}
             rd.psycopg2.connect = lambda **kw: ConexionFalsa(bd)
             rd.MINUTOS_MAX_PASE = minutos
+            rd.datetime = _datetime_en_dia(dia)
             del CAPTURA[:]
             rd.main()
-            resultados[minutos] = (bd, list(CAPTURA))
+            resultados[(minutos, dia)] = (bd, list(CAPTURA))
     finally:
         rd.RUTAS_NAS.clear()
         rd.RUTAS_NAS.update(guardado[0])
-        rd.psycopg2.connect, rd.actualizar_placas_ce, rd.MINUTOS_MAX_PASE, rd.LOG_FILE = guardado[1:]
+        (rd.psycopg2.connect, rd.actualizar_placas_ce, rd.MINUTOS_MAX_PASE, rd.LOG_FILE,
+         rd.datetime) = guardado[1:]
         for h in list(logging.getLogger().handlers):
             if getattr(h, "baseFilename", "").startswith(TMP):
                 logging.getLogger().removeHandler(h)
                 h.close()
 
-    bd, log = resultados[100]
+    bd, log = resultados[(100, 1)]
     sent = bd.sentencias
     i_estado = max(i for i, s in enumerate(sent) if "estado_indexacion" in s)
     i_recup = [i for i, s in enumerate(sent) if s.startswith("INSERT INTO buscador.archivos")
@@ -636,13 +640,81 @@ def probar_pase_entero():
               len(bd.rutas.get("BIBLIOTECA_3D", ())) == 1 and len(bd.rutas.get("ALSI_ESTANDAR", ())) == 1)
     comprobar("pase", "el resumen final cuenta los recuperados",
               any("REINDEXACIÓN COMPLETADA" in m and "2 recuperados" in m for _n, m in log))
-    bd0, log0 = resultados[0]
+    bd0, log0 = resultados[(0, 1)]
     i_recup0 = [s for s in bd0.sentencias if "DO NOTHING" in s]
     comprobar("pase", "sin tiempo: no recupera nada y lo deja dicho",
               not i_recup0 and any("quedan 2 para la próxima noche" in m for _n, m in log0))
     comprobar("pase", "pero el resto del pase se hace entero",
               any("estado_indexacion" in s for s in bd0.sentencias)
               and reciente in bd0.rutas["PROYECTOS"])
+    comprobar("pase", "un martes no hay limpieza satélite",
+              not any(s.startswith("DELETE FROM buscador.miniaturas") for s in sent + bd0.sentencias))
+
+    # 18/11/2026: el viernes 06/11 la limpieza corrió con ~315.000 archivos aún por
+    # recuperar y se llevó 293.478 miniaturas y 421.975 componentes.
+    titulo("14b. VIERNES: la limpieza satélite espera a que no falte nada")
+    bdv, logv = resultados[(100, 4)]
+    sv = bdv.sentencias
+    i_min = [i for i, s in enumerate(sv) if s.startswith("DELETE FROM buscador.miniaturas")]
+    i_comp = [i for i, s in enumerate(sv) if s.startswith("DELETE FROM buscador.componentes")]
+    i_rec = [i for i, s in enumerate(sv) if s.startswith("INSERT INTO buscador.archivos")
+             and "DO NOTHING" in s]
+    comprobar("satelite", "viernes con todo recuperado: limpia miniaturas y componentes",
+              len(i_min) == 1 and len(i_comp) == 1)
+    comprobar("satelite", "y lo hace DESPUÉS de recuperar, no antes",
+              bool(i_rec and i_min and min(i_min) > max(i_rec)),
+              "recuperación en %s, limpieza en %s" % (i_rec, i_min))
+    comprobar("satelite", "la purga del viernes sigue haciéndose",
+              any("PURGA" in m for _n, m in logv))
+    bdv0, logv0 = resultados[(0, 4)]
+    comprobar("satelite", "viernes con 2 por recuperar: NO borra ninguna miniatura",
+              not any(s.startswith("DELETE FROM buscador.miniaturas") for s in bdv0.sentencias))
+    comprobar("satelite", "ni componentes",
+              not any(s.startswith("DELETE FROM buscador.componentes") for s in bdv0.sentencias))
+    comprobar("satelite", "y deja dicho en el log por qué la aplaza",
+              any("Limpieza satélite aplazada" in m and "quedan 2" in m for _n, m in logv0))
+
+    titulo("14c. limpiar_satelites, suelta")
+    for pend, debe, texto in ((None, False, "sin saber qué falta: no limpia"),
+                              (7, False, "con 7 pendientes: no limpia"),
+                              (0, True, "sin pendientes: limpia")):
+        bdx = BDFalsa()
+        cx = ConexionFalsa(bdx)
+        hizo = rd.limpiar_satelites(cx, cx.cursor(), pend)
+        borra = any(s.startswith("DELETE") for s in bdx.sentencias)
+        comprobar("satelite", texto, hizo == debe and borra == debe)
+
+    class CursorQueFalla(CursorFalso):
+        def execute(self, sql, params=None):
+            raise psycopg2.OperationalError("servidor caído a mitad")
+
+    class ConexionQueApunta(ConexionFalsa):
+        deshecho = False
+
+        def rollback(self):
+            self.deshecho = True
+    cq = ConexionQueApunta(BDFalsa())
+    hizo = rd.limpiar_satelites(cq, CursorQueFalla(cq.bd), 0)
+    comprobar("satelite", "si la base falla a mitad: no revienta y deshace",
+              hizo is False and cq.deshecho)
+
+
+def _datetime_en_dia(dia):
+    """Un módulo datetime cuyo now() cae en el día de la semana pedido (0 = lunes)."""
+    import datetime as _dt
+    import types
+
+    class _Ahora(_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            r = _dt.datetime.now(tz)
+            r = r + _dt.timedelta(days=(dia - r.weekday()) % 7)
+            return cls(r.year, r.month, r.day, r.hour, r.minute, r.second, r.microsecond, r.tzinfo)
+
+    falso = types.ModuleType("datetime")
+    falso.__dict__.update({k: v for k, v in _dt.__dict__.items() if not k.startswith("__")})
+    falso.datetime = _Ahora
+    return falso
 
 
 def resumen():
