@@ -1,5 +1,15 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [Próxima versión] - sin publicar (Explorador de conjuntos)
+
+- **«Ver componentes» y «¿En qué ensamblajes se usa?» son ahora una sola ventana que se navega.** Doble clic en un subconjunto para entrar, doble clic en una pieza para ver dónde se usa, y atrás/adelante (flechas, Alt + Izquierda o el botón del ratón) con el camino recorrido arriba. Antes, cada paso abría un diálogo encima del anterior.
+- **Los nombres salen como están escritos.** Se enseñaba la clave interna del cruce, que va en mayúsculas: `21050.800.P119 TRAMO RECTO TOBOGÁN A420.SLDPRT`. Ahora sale `21050.800.P119 Tramo recto tobogán A420.SLDPRT`.
+- **Miniaturas grandes, en lista o en galería**, de 40 a 256 px (antes, 48 fijos), con los mismos S/M/L/XL que la ventana principal. Recuerda lo que elijas.
+- **Ficha a la derecha** con la vista previa grande y los datos del componente seleccionado: material, espesor, tratamiento, peso y superficie. Sus botones dicen cuántos componentes tiene y en cuántos conjuntos se usa antes de pulsar.
+- **Columna de material** en el despiece. La de cliente pasa a la ficha: dentro de un conjunto es casi siempre el mismo y le quitaba sitio al nombre.
+- **Ya no se congela con las piezas muy usadas.** «Dónde se usa» del `UCPA 205` son 5.221 conjuntos: el diálogo de antes dejaba la ventana parada unos 3 s y descomprimía 5.000 miniaturas a la vez (1,3 GB de memoria). Ahora se abre en 0,01 s, la peor parada es de 0,27 s (medido) y solo se preparan las miniaturas que se ven.
+- **55 comprobaciones nuevas** (`pruebas_explorador.py`), contra el servidor y solo de lectura. Con los nombres en mayúsculas o descomprimiendo todas las miniaturas, suspenden.
+
 ## [Pase nocturno] - 2026-11-18 (Miniaturas de las rutas largas — la app no cambia)
 
 - **Las piezas, planos, PDF y DWG con ruta muy larga empiezan a tener miniatura.** Con 260 caracteres o más no tenía miniatura **ninguno**: 4.407 de SolidWorks, 2.196 PDF y 864 DWG. Las piezas y conjuntos de ese grupo tampoco tenían **material ni peso**. Desde el 18/09 ya estaban en el índice; lo que fallaba era leerlos.

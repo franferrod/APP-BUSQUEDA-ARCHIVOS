@@ -1110,10 +1110,14 @@ class IndexManager:
         mejor casa: primero los de la propia carpeta del ensamblaje (pieza del
         proyecto), después el más reciente (piezas de biblioteca compartidas).
         Filas: (componente_nombre, nombre_archivo, origen, anio, cliente,
-                proyecto, ruta_completa, sw_masa_kg, sw_area_m2). nombre_archivo
-        es NULL si el componente no está en el índice (referencia rota o carpeta
-        excluida). V2.0.8: masa y superficie para poder sumar el peso total del
-        conjunto y los m2 a pintar."""
+                proyecto, ruta_completa, sw_masa_kg, sw_area_m2, sw_material).
+        nombre_archivo es NULL si el componente no está en el índice (referencia
+        rota o carpeta excluida). V2.0.8: masa y superficie para poder sumar el
+        peso total del conjunto y los m2 a pintar. 18/11/2026: el material, AL
+        FINAL para no mover los índices que ya usan los demás.
+
+        OJO: componente_nombre va en MAYÚSCULAS (es la clave del cruce); para
+        enseñarlo se usa nombre_archivo, que es el nombre real del archivo."""
         import ntpath
         carpeta = ntpath.dirname(ensamblaje_ruta)
         wrapper = self.get_connection()
@@ -1123,11 +1127,11 @@ class IndexManager:
             cursor.execute('''
                 SELECT c.componente_nombre, a.nombre_archivo, a.origen, a.anio,
                        a.cliente, a.proyecto, a.ruta_completa,
-                       a.sw_masa_kg, a.sw_area_m2
+                       a.sw_masa_kg, a.sw_area_m2, a.sw_material
                 FROM buscador.componentes c
                 LEFT JOIN LATERAL (
                     SELECT nombre_archivo, origen, anio, cliente, proyecto, ruta_completa,
-                           sw_masa_kg, sw_area_m2
+                           sw_masa_kg, sw_area_m2, sw_material
                     FROM buscador.archivos
                     WHERE UPPER(nombre_archivo) = c.componente_nombre
                     ORDER BY (strpos(ruta_completa, %s) = 1) DESC,
@@ -1141,6 +1145,38 @@ class IndexManager:
         except Exception as e:
             logger.error(f"Error obteniendo componentes de {ensamblaje_ruta}: {e}")
             return []
+        finally:
+            wrapper.close()
+
+    def ficha_archivo(self, ruta):
+        """Lo que el explorador de conjuntos enseña del archivo seleccionado
+        (18/11/2026): sus datos del índice y cuántos componentes tiene y en
+        cuántos conjuntos se usa, para que los botones digan el número antes
+        de pulsarlos. Tres consultas por índice (ruta única, ensamblaje_ruta y
+        componente_nombre). Devuelve un dict; vacío si no está en el índice."""
+        wrapper = self.get_connection()
+        try:
+            cursor = wrapper._conn.cursor()
+            cursor.execute('''
+                SELECT nombre_archivo, extension, origen, anio, cliente, proyecto,
+                       sw_material, sw_espesor, sw_tratamiento, sw_masa_kg, sw_area_m2
+                FROM buscador.archivos WHERE ruta_completa = %s''', (ruta,))
+            fila = cursor.fetchone()
+            ficha = {}
+            if fila:
+                claves = ('nombre', 'extension', 'origen', 'anio', 'cliente', 'proyecto',
+                          'material', 'espesor', 'tratamiento', 'masa', 'area')
+                ficha = dict(zip(claves, fila))
+            cursor.execute('SELECT count(*) FROM buscador.componentes WHERE ensamblaje_ruta = %s',
+                           (ruta,))
+            ficha['n_componentes'] = cursor.fetchone()[0]
+            cursor.execute('''SELECT count(DISTINCT ensamblaje_ruta) FROM buscador.componentes
+                              WHERE componente_nombre = %s''', (self._nombre_de_ruta(ruta),))
+            ficha['n_donde'] = cursor.fetchone()[0]
+            return ficha
+        except Exception as e:
+            logger.error(f"Error leyendo la ficha de {ruta}: {e}")
+            return {}
         finally:
             wrapper.close()
 

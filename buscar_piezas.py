@@ -2044,6 +2044,1193 @@ class Fase:
         return False
 
 
+# -----------------------------------------------------------------------------
+# EXPLORADOR DE CONJUNTOS (18/11/2026)
+# -----------------------------------------------------------------------------
+# Sustituye a los dos diálogos sueltos de «Ver componentes» y «¿En qué
+# ensamblajes se usa?». Quejas que lo motivan: los nombres salían en
+# MAYÚSCULAS (se enseñaba la clave del cruce, no el nombre del archivo), las
+# miniaturas eran de 48 px, y para bajar a un subconjunto se abría un diálogo
+# encima de otro. Ahora es una sola ventana que se navega como el Explorador:
+# doble clic para entrar, atrás/adelante y ruta de migas, lista o galería con el
+# tamaño de miniatura que se quiera y una ficha con la vista previa grande.
+# «Dónde se usa» de una pieza común son 5.221 conjuntos (0,6 s la consulta y
+# 2,1 s las miniaturas, medido): todo se carga en segundo plano.
+from PyQt5.QtWidgets import QToolButton, QShortcut   # noqa: E402
+from PyQt5.QtGui import QKeySequence                 # noqa: E402
+
+ROL_FILA = Qt.UserRole + 1      # índice de la fila en ExploradorConjunto.filas
+ROL_ICONO = Qt.UserRole + 2     # lado de la miniatura que ya tiene puesta
+
+
+class TareaBD(QThread):
+    """Una consulta a la base en segundo plano. Lleva su número de generación
+    para que el que la recibe tire las respuestas que ya no vienen a cuento
+    (se ha navegado a otro sitio mientras tanto)."""
+    hecho = pyqtSignal(int, object)
+
+    def __init__(self, generacion, funcion, parent=None):
+        super().__init__(parent)
+        self.generacion = generacion
+        self.funcion = funcion
+        self.parar = False
+
+    def run(self):
+        try:
+            res = self.funcion()
+        except Exception as e:
+            logger.warning("Consulta en segundo plano falló: %s", e)
+            res = None
+        if not self.parar:
+            self.hecho.emit(self.generacion, res)
+
+
+class MiniaturasLoteWorker(QThread):
+    """Miniaturas de la caché de la base, por tramos, sin congelar la ventana.
+    Trae el JPEG tal cual (~10 KB): descomprimido, cada una ocupa 256 KB, y
+    «dónde se usa» de una pieza común son 5.000 (1,3 GB, medido). Se
+    descomprimen solo las que se ven (ExploradorConjunto._iconos_visibles)."""
+    lote = pyqtSignal(int, dict)    # generacion, {ruta: bytes}
+    TRAMO = 200
+
+    def __init__(self, generacion, db, rutas, parent=None):
+        super().__init__(parent)
+        self.generacion = generacion
+        self.db = db
+        self.rutas = list(rutas)
+        self.parar = False
+
+    def run(self):
+        for i in range(0, len(self.rutas), self.TRAMO):
+            if self.parar:
+                return
+            try:
+                datos = self.db.obtener_miniaturas_lote(self.rutas[i:i + self.TRAMO]) or {}
+            except Exception as e:
+                logger.debug("Lote de miniaturas del explorador falló: %s", e)
+                continue
+            datos = {r: b for r, b in datos.items() if b}
+            if datos and not self.parar:
+                self.lote.emit(self.generacion, datos)
+
+
+def _num_es(valor, decimales):
+    """1337.5 -> '1.337,500' (como se escribe aquí)."""
+    try:
+        t = f"{float(valor):,.{decimales}f}"
+    except (TypeError, ValueError):
+        return ""
+    return t.replace(",", "§").replace(".", ",").replace("§", ".")
+
+
+class ExploradorConjunto(QDialog):
+    """Navegar por conjuntos: qué lleva cada uno y dónde se usa cada pieza."""
+
+    COMP, DONDE = 'componentes', 'donde'
+    PRESETS = (("S", 48), ("M", 96), ("L", 160), ("XL", 240))
+    ICONO_MIN, ICONO_MAX = 40, 256      # 256 = lado de la miniatura guardada
+    COLS = {
+        # Sin «Cliente»: dentro de un conjunto es casi siempre el mismo, y
+        # robaba el ancho al nombre (va en la ficha de la derecha)
+        'componentes': ["Vista", "Componente", "Material", "Peso (kg)", "Sup. (m²)",
+                        "Proyecto", "Año", "Origen"],
+        'donde': ["Vista", "Conjunto", "Cliente", "Proyecto", "Año", "Origen"],
+    }
+
+    def __init__(self, ventana, ruta, modo):
+        super().__init__(ventana)
+        self.v = ventana
+        self.db = ventana.db
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMaximizeButtonHint)
+        self.resize(1320, 820)
+        self.hist = []              # [{'ruta', 'modo', 'sel'}]
+        self.pos = -1
+        self.filas = []             # filas del nodo actual (dicts)
+        self._textos = []           # texto normalizado de cada fila (filtro)
+        self.cargado = False        # para las pruebas: la carga ha terminado
+        self._gen = 0
+        self._leido = -1            # generación cuyas filas ya han llegado
+        self._gen_ficha = 0
+        self._tareas = []
+        self._jpeg = {}             # ruta -> JPEG de la base (se conserva al navegar)
+        self._iconos = {}           # (ruta, lado) -> QIcon, solo de lo que se ha visto
+        self._badges = {}
+        self._items_tabla = {}
+        self._items_gal = {}
+        self._construida = {'tabla': -1, 'galeria': -1}
+        self._sel_ruta = None
+        self._sel_fila = None
+        self._ficha = {}
+
+        vista = "lista"
+        icono = 96
+        try:
+            vista = ventana.qsettings.value("explorador/vista", "lista") or "lista"
+            icono = int(ventana.qsettings.value("explorador/icono", 96) or 96)
+        except Exception:
+            pass
+        self._icono = max(self.ICONO_MIN, min(icono, self.ICONO_MAX))
+
+        self._timer_ficha = QTimer(self)
+        self._timer_ficha.setSingleShot(True)
+        self._timer_ficha.setInterval(120)
+        self._timer_ficha.timeout.connect(self._pedir_ficha)
+        self._timer_iconos = QTimer(self)
+        self._timer_iconos.setSingleShot(True)
+        self._timer_iconos.setInterval(40)
+        self._timer_iconos.timeout.connect(self._iconos_visibles)
+
+        self._montar()
+        for w in (self.tabla, self.galeria):
+            w.verticalScrollBar().valueChanged.connect(lambda _v: self._pedir_iconos())
+        self._poner_vista(vista, guardar=False)
+        self._poner_icono(self._icono, guardar=False)
+
+        QShortcut(QKeySequence("Alt+Left"), self, self.atras)
+        QShortcut(QKeySequence("Alt+Right"), self, self.adelante)
+
+        self.ir_a(ruta, modo)
+
+    # ------------------------------------------------------------- interfaz
+    def _montar(self):
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 12, 16, 12)
+        lay.setSpacing(8)
+
+        # Fila 1: atrás / adelante · migas · modo
+        nav = QHBoxLayout()
+        nav.setSpacing(6)
+        # Flechas con icono: la fuente de la app no trae los glifos ← →
+        from PyQt5.QtGui import QTransform
+        chevron = svg_pixmap("chevron-abajo", "#DFDFDF", 16)
+        self.btn_atras = QToolButton()
+        self.btn_atras.setIcon(QIcon(chevron.transformed(QTransform().rotate(90))))
+        self.btn_atras.setToolTip("Volver (Alt + Izquierda, o el botón «atrás» del ratón)")
+        self.btn_atras.clicked.connect(lambda _c=False: self.atras())
+        self.btn_adelante = QToolButton()
+        self.btn_adelante.setIcon(QIcon(chevron.transformed(QTransform().rotate(-90))))
+        self.btn_adelante.setToolTip("Adelante (Alt + Derecha)")
+        self.btn_adelante.clicked.connect(lambda _c=False: self.adelante())
+        for b in (self.btn_atras, self.btn_adelante):
+            b.setCursor(Qt.PointingHandCursor)
+            b.setFixedSize(34, 30)
+            b.setStyleSheet(
+                "QToolButton { background: #2E2E2E; border: 1px solid #4A4A4A; border-radius: 7px;"
+                " color: #DFDFDF; font-size: 15px; font-weight: 800; }"
+                "QToolButton:hover { border-color: #E66C32; }"
+                "QToolButton:disabled { color: #4A4A4A; border-color: #333333; }")
+            nav.addWidget(b)
+        self.migas = QWidget()
+        self.lay_migas = QHBoxLayout(self.migas)
+        self.lay_migas.setContentsMargins(6, 0, 0, 0)
+        self.lay_migas.setSpacing(2)
+        nav.addWidget(self.migas, stretch=1)
+        self.btn_modo_comp = QPushButton("Componentes")
+        self.btn_modo_comp.setIcon(svg_icon("ensamblaje-cubo", size=14))
+        self.btn_modo_donde = QPushButton("Dónde se usa")
+        self.btn_modo_donde.setIcon(svg_icon("proyectos-maletin", size=14))
+        for b, m in ((self.btn_modo_comp, self.COMP), (self.btn_modo_donde, self.DONDE)):
+            b.setObjectName("Chip")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _c=False, mm=m: self.cambiar_modo(mm))
+            nav.addWidget(b)
+        lay.addLayout(nav)
+
+        # Fila 2: el nodo actual, con su miniatura
+        cab = QHBoxLayout()
+        cab.setSpacing(12)
+        self.img_nodo = QLabel()
+        self.img_nodo.setFixedSize(64, 64)
+        self.img_nodo.setAlignment(Qt.AlignCenter)
+        self.img_nodo.setStyleSheet("background: #FFFFFF; border-radius: 6px;")
+        cab.addWidget(self.img_nodo)
+        textos = QVBoxLayout()
+        textos.setSpacing(2)
+        self.lbl_titulo = QLabel()
+        self.lbl_titulo.setTextFormat(Qt.RichText)
+        self.lbl_titulo.setWordWrap(True)
+        self.lbl_titulo.setStyleSheet(
+            f'font-family: "{FUENTES["h2"]}"; font-size: 16px; font-weight: 800; '
+            f'color: #F5F5F5; background: transparent;')
+        self.lbl_sub = QLabel()
+        self.lbl_sub.setObjectName("StatusDim")
+        self.lbl_sub.setWordWrap(True)
+        textos.addWidget(self.lbl_titulo)
+        textos.addWidget(self.lbl_sub)
+        cab.addLayout(textos, stretch=1)
+        lay.addLayout(cab)
+
+        self.lbl_total = QLabel()
+        self.lbl_total.setTextFormat(Qt.RichText)
+        self.lbl_total.setWordWrap(True)
+        self.lbl_total.setStyleSheet(
+            "background: #33291F; border: 1px solid #E66C32; border-radius: 8px; "
+            "padding: 7px 12px; color: #F5F5F5; font-size: 13px;")
+        lay.addWidget(self.lbl_total)
+
+        # Fila 3: buscar dentro · vista · tamaño
+        barra = QHBoxLayout()
+        barra.setSpacing(8)
+        self.caja = QLineEdit()
+        self.caja.setPlaceholderText(
+            "Buscar dentro de esta lista…  (varias palabras: deben aparecer todas)")
+        self.caja.setClearButtonEnabled(True)
+        self.caja.textChanged.connect(self._filtrar)
+        barra.addWidget(self.caja, stretch=1)
+        self.lbl_cuenta = QLabel()
+        self.lbl_cuenta.setObjectName("StatusDim")
+        barra.addWidget(self.lbl_cuenta)
+        self.btn_lista = QPushButton()
+        self.btn_lista.setIcon(svg_icon("vista-lista", size=15))
+        self.btn_lista.setToolTip("Lista")
+        self.btn_galeria = QPushButton()
+        self.btn_galeria.setIcon(svg_icon("vista-galeria", size=15))
+        self.btn_galeria.setToolTip("Galería")
+        for b, nombre in ((self.btn_lista, "lista"), (self.btn_galeria, "galeria")):
+            b.setObjectName("Chip")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _c=False, n=nombre: self._poner_vista(n))
+            barra.addWidget(b)
+        self.btns_tam = []
+        for etiqueta, px in self.PRESETS:
+            b = QPushButton(etiqueta)
+            b.setObjectName("Chip")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolTip(f"Miniaturas de {px} px")
+            b.clicked.connect(lambda _c=False, p=px: self._poner_icono(p))
+            self.btns_tam.append((b, px))
+            barra.addWidget(b)
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(self.ICONO_MIN, self.ICONO_MAX)
+        self.slider.setFixedWidth(120)
+        self.slider.setToolTip("Tamaño de las miniaturas (también Ctrl + rueda en la galería)")
+        self.slider.valueChanged.connect(lambda v: self._poner_icono(v, desde_slider=True))
+        barra.addWidget(self.slider)
+        lay.addLayout(barra)
+
+        # Centro: lista/galería | ficha
+        self.splitter = QSplitter(Qt.Horizontal)
+        izq = QWidget()
+        lay_izq = QVBoxLayout(izq)
+        lay_izq.setContentsMargins(0, 0, 0, 0)
+        self.stack = QStackedWidget()
+        self.tabla = TablaDialogoArrastrable()
+        self.tabla.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabla.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.tabla.verticalHeader().setVisible(False)
+        self.tabla.setWordWrap(True)
+        self.tabla.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tabla.customContextMenuRequested.connect(
+            lambda p: self._menu(self.tabla, self.tabla.viewport().mapToGlobal(p)))
+        self.tabla.activated.connect(lambda idx: self._activar_indice(self.tabla, idx))
+        self.tabla.itemSelectionChanged.connect(self._seleccion_cambiada)
+        self.galeria = GaleriaArrastrable()
+        self.galeria.zoom_callback = lambda d: self._poner_icono(
+            self._icono + (16 if d > 0 else -16))
+        pal = self.galeria.palette()
+        for g in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
+            pal.setColor(g, QPalette.Highlight, QColor("#3A2C21"))
+            pal.setColor(g, QPalette.HighlightedText, QColor("#F5F5F5"))
+        self.galeria.setPalette(pal)
+        self.galeria.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.galeria.customContextMenuRequested.connect(
+            lambda p: self._menu(self.galeria, self.galeria.viewport().mapToGlobal(p)))
+        self.galeria.activated.connect(lambda idx: self._activar_indice(self.galeria, idx))
+        self.galeria.itemSelectionChanged.connect(self._seleccion_cambiada)
+        for w in (self.tabla, self.galeria):
+            w.viewport().installEventFilter(self)   # botones atrás/adelante del ratón
+        self._hover_t = self.v._hover_tabla(self.tabla)
+        self._hover_g = self.v._hover_lista(self.galeria)
+        self.stack.addWidget(self.tabla)
+        self.stack.addWidget(self.galeria)
+        lay_izq.addWidget(self.stack)
+        self.lbl_vacio = QLabel()
+        self.lbl_vacio.setWordWrap(True)
+        self.lbl_vacio.setAlignment(Qt.AlignCenter)
+        self.lbl_vacio.setStyleSheet("color: #999999; font-size: 13px; padding: 24px;")
+        lay_izq.addWidget(self.lbl_vacio)
+        self.splitter.addWidget(izq)
+        self.splitter.addWidget(self._montar_ficha())
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self.splitter.setSizes([960, 330])
+        lay.addWidget(self.splitter, stretch=1)
+
+        # Pie
+        pie = QHBoxLayout()
+        btn_csv = QPushButton("Exportar CSV")
+        btn_csv.setIcon(svg_icon("exportar-descargar", size=15))
+        btn_csv.setCursor(Qt.PointingHandCursor)
+        btn_csv.clicked.connect(lambda _c=False: self._exportar())
+        pie.addWidget(btn_csv)
+        ayuda = QLabel("Doble clic: entrar en el conjunto (en una pieza, ver dónde se usa) · "
+                       "Alt + Izquierda: volver · arrastra a SolidWorks para insertar · "
+                       "botón derecho: más")
+        ayuda.setObjectName("StatusDim")
+        ayuda.setWordWrap(True)
+        pie.addWidget(ayuda, stretch=1)
+        btn_cerrar = QPushButton("Cerrar")
+        btn_cerrar.setCursor(Qt.PointingHandCursor)
+        btn_cerrar.clicked.connect(lambda _c=False: self.accept())
+        pie.addWidget(btn_cerrar)
+        lay.addLayout(pie)
+
+    def _montar_ficha(self):
+        panel = QFrame()
+        panel.setObjectName("Panel")
+        panel.setMinimumWidth(260)
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setSpacing(8)
+        marco = QFrame()
+        marco.setStyleSheet("background: #FFFFFF; border-radius: 8px;")
+        lm = QVBoxLayout(marco)
+        lm.setContentsMargins(6, 6, 6, 6)
+        self.img_ficha = PreviewImagenLabel()
+        self.img_ficha.setMinimumHeight(240)
+        lm.addWidget(self.img_ficha)
+        lay.addWidget(marco, stretch=3)
+        self.lbl_nombre = QLabel()
+        self.lbl_nombre.setObjectName("FileName")
+        self.lbl_nombre.setWordWrap(True)
+        self.lbl_nombre.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        lay.addWidget(self.lbl_nombre)
+        self.lbl_datos = QLabel()
+        self.lbl_datos.setTextFormat(Qt.RichText)
+        self.lbl_datos.setWordWrap(True)
+        self.lbl_datos.setStyleSheet("color: #DFDFDF; font-size: 12px; background: transparent;")
+        lay.addWidget(self.lbl_datos)
+        self.btn_f_comp = QPushButton("Ver sus componentes")
+        self.btn_f_comp.setIcon(svg_icon("ensamblaje-cubo", size=15))
+        self.btn_f_comp.setObjectName("Primary")
+        self.btn_f_comp.clicked.connect(lambda _c=False: self._ir_desde_ficha(self.COMP))
+        self.btn_f_donde = QPushButton("¿En qué conjuntos se usa?")
+        self.btn_f_donde.setIcon(svg_icon("proyectos-maletin", size=15))
+        self.btn_f_donde.clicked.connect(lambda _c=False: self._ir_desde_ficha(self.DONDE))
+        self.btn_f_sw = QPushButton("Abrir en SolidWorks")
+        self.btn_f_sw.setIcon(svg_icon("arrastrar-solidworks", size=15))
+        self.btn_f_sw.clicked.connect(lambda _c=False: self.v._abrir_en_solidworks(self._rutas_sel()))
+        fila = QHBoxLayout()
+        self.btn_f_pdf = QPushButton("Abrir PDF")
+        self.btn_f_pdf.clicked.connect(
+            lambda _c=False: self._sel_ruta and self.v.abrir_pdf_de(self._sel_ruta))
+        self.btn_f_carpeta = QPushButton("Carpeta")
+        self.btn_f_carpeta.setIcon(svg_icon("carpeta", size=15))
+        self.btn_f_carpeta.clicked.connect(
+            lambda _c=False: self._sel_ruta and self.v._abrir_carpeta_de(self._sel_ruta))
+        fila.addWidget(self.btn_f_pdf)
+        fila.addWidget(self.btn_f_carpeta)
+        for b in (self.btn_f_comp, self.btn_f_donde, self.btn_f_sw,
+                  self.btn_f_pdf, self.btn_f_carpeta):
+            b.setCursor(Qt.PointingHandCursor)
+        lay.addWidget(self.btn_f_comp)
+        lay.addWidget(self.btn_f_donde)
+        lay.addWidget(self.btn_f_sw)
+        lay.addLayout(fila)
+        lay.addStretch(1)
+        return panel
+
+    # ---------------------------------------------------------- navegación
+    def nodo(self):
+        return self.hist[self.pos] if 0 <= self.pos < len(self.hist) else None
+
+    def ir_a(self, ruta, modo):
+        if not ruta:
+            return
+        actual = self.nodo()
+        if actual:
+            if actual['ruta'] == ruta and actual['modo'] == modo:
+                return
+            actual['sel'] = self._sel_ruta
+        del self.hist[self.pos + 1:]
+        self.hist.append({'ruta': ruta, 'modo': modo, 'sel': None})
+        self.pos = len(self.hist) - 1
+        self._cargar_nodo()
+
+    def ir_a_posicion(self, i):
+        if 0 <= i < len(self.hist) and i != self.pos:
+            if self.nodo():
+                self.nodo()['sel'] = self._sel_ruta
+            self.pos = i
+            self._cargar_nodo()
+
+    def atras(self):
+        self.ir_a_posicion(self.pos - 1)
+
+    def adelante(self):
+        self.ir_a_posicion(self.pos + 1)
+
+    def cambiar_modo(self, modo):
+        n = self.nodo()
+        if n:
+            self.ir_a(n['ruta'], modo)
+        self._pintar_modo()
+
+    def _ir_desde_ficha(self, modo):
+        if self._sel_ruta:
+            self.ir_a(self._sel_ruta, modo)
+
+    def _navegar_menu(self, ruta, modo):
+        """Para el menú del botón derecho: navegar aquí, no abrir otra ventana."""
+        self.ir_a(ruta, self.COMP if modo == 'componentes' else self.DONDE)
+
+    def _activar_indice(self, vista, idx):
+        if not idx.isValid():
+            return
+        if vista is self.tabla:
+            it = self.tabla.item(idx.row(), 0)
+            i = it.data(ROL_FILA) if it else None
+        else:
+            it = self.galeria.item(idx.row())
+            i = it.data(ROL_FILA) if it else None
+        if i is None or not (0 <= i < len(self.filas)):
+            return
+        d = self.filas[i]
+        if not d['ruta']:
+            self.v.toast.show_message("Ese componente no está en el índice")
+            return
+        if d['ext'] == '.sldasm':
+            self.ir_a(d['ruta'], self.COMP)
+        elif d['ext'] == '.sldprt':
+            self.ir_a(d['ruta'], self.DONDE)
+        else:
+            self.v._abrir_carpeta_de(d['ruta'])
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.MouseButtonPress:
+            if ev.button() == Qt.BackButton:
+                self.atras()
+                return True
+            if ev.button() == Qt.ForwardButton:
+                self.adelante()
+                return True
+        elif ev.type() in (QEvent.Resize, QEvent.Show):
+            self._pedir_iconos()      # caben más filas: hay que ponerles miniatura
+        return super().eventFilter(obj, ev)
+
+    # -------------------------------------------------------------- carga
+    def _cargar_nodo(self):
+        n = self.nodo()
+        self._gen += 1
+        gen = self._gen
+        self.cargado = False
+        self._parar_tareas(miniaturas=True)
+        self.filas = []
+        self._textos = []
+        self._items_tabla = {}
+        self._items_gal = {}
+        self._construida = {'tabla': -1, 'galeria': -1}
+        self.tabla.setRowCount(0)
+        self.galeria.clear()
+        self.caja.blockSignals(True)
+        self.caja.clear()
+        self.caja.blockSignals(False)
+        self._pintar_cabecera(cargando=True)
+        self._pintar_modo()
+        self._pintar_migas()
+        ruta, modo = n['ruta'], n['modo']
+        self.setWindowTitle("Componentes del ensamblaje" if modo == self.COMP
+                            else "¿En qué ensamblajes se usa?")
+        self._lanzar(TareaBD(gen, lambda: self._leer(ruta, modo)), self._nodo_leido)
+
+    def _leer(self, ruta, modo):
+        """En el hilo de fondo: las filas del nodo, ya traducidas a dicts."""
+        filas = []
+        if modo == self.COMP:
+            for f in self.db.obtener_componentes_de(ruta) or []:
+                comp, nom_a, origen, anio, cliente, proyecto, ruta_c, masa, area = f[:9]
+                nombre = nom_a or comp
+                filas.append({
+                    'ruta': ruta_c or "", 'nombre': nombre, 'indexado': bool(nom_a),
+                    'ext': os.path.splitext(nombre)[1].lower(), 'origen': origen,
+                    'anio': anio, 'cliente': cliente, 'proyecto': proyecto,
+                    'masa': masa, 'area': area, 'material': f[9] if len(f) > 9 else None})
+        else:
+            for nom, origen, anio, cliente, proyecto, ruta_e in self.db.buscar_ensamblajes_de(ruta) or []:
+                nombre = nom or os.path.basename(ruta_e or "")
+                filas.append({
+                    'ruta': ruta_e or "", 'nombre': nombre, 'indexado': bool(nom),
+                    'ext': os.path.splitext(nombre)[1].lower() or '.sldasm',
+                    'origen': origen, 'anio': anio, 'cliente': cliente,
+                    'proyecto': proyecto, 'masa': None, 'area': None, 'material': None})
+        return filas
+
+    def _nodo_leido(self, gen, filas):
+        if gen != self._gen:
+            return
+        self.filas = filas or []
+        self._leido = gen
+        norm = self._normalizar
+        self._textos = [norm(" ".join(str(x) for x in (
+            d['nombre'], d['material'], d['cliente'],
+            etiqueta_origen(d['proyecto'] or "") if d['proyecto'] else "",
+            d['anio'], etiqueta_origen(d['origen'] or "") if d['origen'] else "") if x))
+            for d in self.filas]
+        self._pintar_cabecera()
+        self._construir_vista_actual()
+        self._filtrar(self.caja.text())
+        # Selección: la que había al irse de aquí, o la primera
+        sel = self.nodo().get('sel')
+        if not self._seleccionar_ruta(sel) and self.filas:
+            self._seleccionar_fila_vista(0)
+        elif not self.filas:
+            self._pintar_ficha(None)
+        rutas = [d['ruta'] for d in self.filas if d['ruta'] and d['ruta'] not in self._jpeg]
+        nodo = self.nodo()['ruta']
+        if nodo not in self._jpeg:
+            rutas.insert(0, nodo)
+        if rutas:
+            self._lanzar(MiniaturasLoteWorker(gen, self.db, rutas), None, lote=True)
+        self._pedir_iconos()        # las que ya estaban en caché, ya
+        self.cargado = True
+
+    def _lanzar(self, w, receptor, lote=False):
+        if lote:
+            w.lote.connect(self._miniaturas_llegan)
+        else:
+            w.hecho.connect(receptor)
+        w.finished.connect(lambda ww=w: self._tarea_terminada(ww))
+        self._tareas.append(w)
+        w.start()
+
+    def _tarea_terminada(self, w):
+        if w in self._tareas:
+            self._tareas.remove(w)
+        w.deleteLater()
+
+    def _parar_tareas(self, miniaturas=False, esperar=False):
+        for w in list(self._tareas):
+            if not miniaturas or isinstance(w, MiniaturasLoteWorker):
+                w.parar = True
+            if esperar:
+                w.wait(8000)
+
+    def done(self, r):
+        # No se puede cerrar con hilos vivos: Qt mataría el proceso.
+        self._timer_ficha.stop()
+        self._parar_tareas(esperar=True)
+        super().done(r)
+
+    def closeEvent(self, ev):
+        self._timer_ficha.stop()
+        self._parar_tareas(esperar=True)
+        super().closeEvent(ev)
+
+    # -------------------------------------------------------- miniaturas
+    def _badge(self, ext):
+        if ext not in self._badges:
+            self._badges[ext] = QIcon(pixmap_badge_extension(ext or '.sldprt', size=96))
+        return self._badges[ext]
+
+    def _icono_de(self, d):
+        """Icono con el que nace una fila: el distintivo de su extensión. La
+        miniatura de verdad se pone cuando la fila se ve (_iconos_visibles)."""
+        return self._badge(d['ext'])
+
+    def _pixmap_de(self, ruta, lado=None):
+        """Descomprime la miniatura guardada (JPEG) al lado pedido, o None."""
+        b = self._jpeg.get(ruta) if ruta else None
+        if not b:
+            return None
+        img = QImage.fromData(b)
+        if img.isNull():
+            return None
+        if lado and (img.width() > lado or img.height() > lado):
+            img = img.scaled(lado, lado, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        return QPixmap.fromImage(img)
+
+    def _icono_real(self, ruta):
+        clave = (ruta, self._icono)
+        icono = self._iconos.get(clave)
+        if icono is None:
+            pm = self._pixmap_de(ruta, self._icono)
+            if pm is None:
+                return None
+            if len(self._iconos) > 1500:
+                self._iconos.clear()
+            icono = QIcon(pm)
+            self._iconos[clave] = icono
+        return icono
+
+    def _pedir_iconos(self):
+        self._timer_iconos.start()
+
+    def _poner_icono_item(self, it):
+        ruta = it.data(Qt.UserRole)
+        if not ruta or it.data(ROL_ICONO) == self._icono or ruta not in self._jpeg:
+            return
+        icono = self._icono_real(ruta)
+        if icono is not None:
+            it.setIcon(icono)
+            it.setData(ROL_ICONO, self._icono)
+
+    def _iconos_visibles(self):
+        """Pone la miniatura a lo que se ve (y un poco más, para el scroll).
+        Lo que nunca se ve, nunca se descomprime."""
+        px = self._icono
+        if self._vista() == "galeria":
+            if self._construida['galeria'] != self._gen:
+                return
+            g = self.galeria
+            zona = g.viewport().rect().adjusted(0, -px, 0, 2 * px)
+            for k in range(g.count()):
+                it = g.item(k)
+                if not it.isHidden() and g.visualItemRect(it).intersects(zona):
+                    self._poner_icono_item(it)
+        else:
+            if self._construida['tabla'] != self._gen:
+                return
+            t = self.tabla
+            r0 = t.rowAt(0)
+            if r0 < 0:
+                return
+            r1 = t.rowAt(t.viewport().height() - 1)
+            if r1 < 0:
+                r1 = t.rowCount() - 1
+            for r in range(max(0, r0 - 2), min(t.rowCount(), r1 + 3)):
+                if not t.isRowHidden(r):
+                    it = t.item(r, 0)
+                    if it is not None:
+                        self._poner_icono_item(it)
+
+    def _miniaturas_llegan(self, gen, datos):
+        if len(self._jpeg) > 20000:          # ~10 KB cada una: tope de ~200 MB
+            self._jpeg.clear()
+            self._iconos.clear()
+        self._jpeg.update(datos)
+        if gen == self._gen:
+            self._pedir_iconos()
+        if self._sel_ruta in datos:
+            pm = self._pixmap_de(self._sel_ruta)
+            if pm is not None:
+                self.img_ficha.set_imagen(pm)
+        n = self.nodo()
+        if n and n['ruta'] in datos:
+            self._pintar_img_nodo()
+
+    # ------------------------------------------------------------- vistas
+    def _vista(self):
+        return "galeria" if self.stack.currentIndex() == 1 else "lista"
+
+    def _poner_vista(self, nombre, guardar=True):
+        self.stack.setCurrentIndex(1 if nombre == "galeria" else 0)
+        self.btn_lista.setChecked(nombre != "galeria")
+        self.btn_galeria.setChecked(nombre == "galeria")
+        sel = self._sel_ruta
+        self._construir_vista_actual()
+        self._filtrar(self.caja.text())
+        if sel:
+            self._seleccionar_ruta(sel)
+        self._pedir_iconos()
+        if guardar:
+            self._guardar("explorador/vista", nombre)
+
+    def _poner_icono(self, px, guardar=True, desde_slider=False):
+        px = max(self.ICONO_MIN, min(int(px), self.ICONO_MAX))
+        self._icono = px
+        if not desde_slider:
+            self.slider.blockSignals(True)
+            self.slider.setValue(px)
+            self.slider.blockSignals(False)
+        for b, p in self.btns_tam:
+            b.setChecked(p == px)
+        self.tabla.setIconSize(QSize(px, px))
+        self.tabla.verticalHeader().setDefaultSectionSize(max(30, px + 8))
+        self.tabla.setColumnWidth(0, px + 16)
+        self.galeria.setIconSize(QSize(px, px))
+        self.galeria.setGridSize(QSize(px + 64, px + int(px * 0.28) + 62))   # 4 líneas de texto
+        self.galeria.doItemsLayout()
+        self._pedir_iconos()        # a este lado: las ya puestas se rehacen al verse
+        if guardar:
+            self._guardar("explorador/icono", px)
+
+    def _guardar(self, clave, valor):
+        if os.environ.get("ALSI_SIN_PREFERENCIAS"):
+            return   # las pruebas no tocan las preferencias de nadie
+        try:
+            self.v.qsettings.setValue(clave, valor)
+        except Exception:
+            pass
+
+    def _construir_vista_actual(self):
+        if self._leido != self._gen or not self.nodo():
+            return      # aún no han llegado las filas de este nodo
+        cual = 'galeria' if self._vista() == "galeria" else 'tabla'
+        if self._construida[cual] == self._gen:
+            return
+        self._construida[cual] = self._gen
+        if cual == 'tabla':
+            self._construir_tabla()
+        else:
+            self._construir_galeria()
+        self._pintar_vacio()
+
+    def _meta(self, d):
+        """Segunda línea de la tarjeta. En un despiece el proyecto es el mismo
+        para casi todas: ahí interesa el material y el peso."""
+        partes = []
+        if self.nodo() and self.nodo()['modo'] == self.COMP:
+            if d['material']:
+                partes.append(d['material'])
+            if d['masa']:
+                partes.append(f"{_num_es(d['masa'], 2)} kg")
+        else:
+            if d['proyecto']:
+                partes.append(etiqueta_origen(d['proyecto']))
+            if d['anio']:
+                partes.append(str(d['anio']))
+        if not d['indexado']:
+            partes.append("no está en el índice")
+        return " · ".join(partes)
+
+    def _construir_tabla(self):
+        t = self.tabla
+        modo = self.nodo()['modo']
+        cols = self.COLS[modo]
+        t.setSortingEnabled(False)
+        t.setUpdatesEnabled(False)
+        t.blockSignals(True)
+        try:
+            t.clear()
+            t.setColumnCount(len(cols))
+            t.setHorizontalHeaderLabels(cols)
+            t.setRowCount(len(self.filas))
+            self._items_tabla = {}
+            gris = QColor("#888888")
+            for i, d in enumerate(self.filas):
+                it_v = QTableWidgetItem()
+                it_v.setData(Qt.UserRole, d['ruta'])
+                it_v.setData(ROL_FILA, i)
+                it_v.setIcon(self._icono_de(d))
+                it_n = QTableWidgetItem(d['nombre'])
+                it_n.setData(Qt.UserRole, d['ruta'])
+                it_n.setToolTip(d['ruta'] or "No está en el índice (referencia rota o carpeta excluida)")
+                f = QFont()
+                f.setBold(d['ext'] == '.sldasm')
+                it_n.setFont(f)
+                celdas = [it_v, it_n]
+                if modo == self.COMP:
+                    celdas.append(QTableWidgetItem(d['material'] or "—"))
+                    for valor, dec in ((d['masa'], 3), (d['area'], 4)):
+                        it = QTableWidgetItem()
+                        if valor:
+                            it.setData(Qt.DisplayRole, round(float(valor), dec))
+                        else:
+                            it.setText("—")
+                        it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                        celdas.append(it)
+                else:
+                    celdas.append(QTableWidgetItem(
+                        d['cliente'] or ("—" if d['indexado'] else "no indexado")))
+                celdas += [
+                    QTableWidgetItem(etiqueta_origen(d['proyecto']) if d['proyecto']
+                                     else ("—" if d['indexado'] else "no indexado")),
+                    QTableWidgetItem(str(d['anio']) if d['anio'] else "—"),
+                    QTableWidgetItem(etiqueta_origen(d['origen']) if d['origen'] else "—"),
+                ]
+                for j, it in enumerate(celdas):
+                    if j:
+                        it.setData(ROL_FILA, i)
+                    if not d['indexado'] and j >= 1:
+                        it.setForeground(gris)
+                    t.setItem(i, j, it)
+                if d['ruta']:
+                    self._items_tabla.setdefault(d['ruta'], []).append(it_v)
+            h = t.horizontalHeader()
+            h.setSectionResizeMode(0, QHeaderView.Fixed)
+            t.setColumnWidth(0, self._icono + 16)
+            h.setSectionResizeMode(1, QHeaderView.Stretch)
+            # El nombre es lo que se lee: el resto, a lo justo y con tope (el
+            # proyecto entero se comía media tabla y el nombre salía cortado)
+            topes = {"Proyecto": 190, "Material": 140, "Cliente": 130, "Origen": 110}
+            for j in range(2, len(cols)):
+                h.setSectionResizeMode(j, QHeaderView.Interactive)
+                if len(self.filas) <= 600:
+                    t.resizeColumnToContents(j)
+                else:
+                    t.setColumnWidth(j, 100)
+                tope = topes.get(cols[j])
+                if tope and t.columnWidth(j) > tope:
+                    t.setColumnWidth(j, tope)
+            t.setSortingEnabled(True)
+            col_anio = cols.index("Año")
+            t.sortByColumn(1 if modo == self.COMP else col_anio,
+                           Qt.AscendingOrder if modo == self.COMP else Qt.DescendingOrder)
+        finally:
+            t.blockSignals(False)
+            t.setUpdatesEnabled(True)
+
+    def _construir_galeria(self):
+        g = self.galeria
+        g.setUpdatesEnabled(False)
+        g.blockSignals(True)
+        try:
+            g.clear()
+            self._items_gal = {}
+            gris = QColor("#888888")
+            for i, d in enumerate(self.filas):
+                meta = self._meta(d)
+                it = QListWidgetItem(f"{d['nombre']}\n{meta}" if meta else d['nombre'])
+                it.setData(Qt.UserRole, d['ruta'])
+                it.setData(ROL_FILA, i)
+                it.setToolTip(f"{d['nombre']}\n{meta}\n{d['ruta']}".strip())
+                it.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
+                it.setIcon(self._icono_de(d))
+                if not d['indexado']:
+                    it.setForeground(gris)
+                g.addItem(it)
+                if d['ruta']:
+                    self._items_gal.setdefault(d['ruta'], []).append(it)
+        finally:
+            g.blockSignals(False)
+            g.setUpdatesEnabled(True)
+
+    def _pintar_vacio(self):
+        n = self.nodo()
+        vacio = self._leido == self._gen and not self.filas
+        self.stack.setVisible(not vacio)
+        self.lbl_vacio.setVisible(vacio)
+        if vacio and n:
+            if n['modo'] == self.COMP:
+                self.lbl_vacio.setText(
+                    "No hay componentes registrados para este conjunto.\n\n"
+                    "La lista de componentes se genera al indexar el NAS: si el conjunto "
+                    "es reciente, se completará con la próxima indexación.")
+            else:
+                self.lbl_vacio.setText(
+                    "No se ha encontrado ningún conjunto que la use.\n\n"
+                    "Puede que sea una pieza suelta, o que el conjunto que la usa "
+                    "aún no esté indexado.")
+
+    # ------------------------------------------------------------- filtro
+    def _normalizar(self, t):
+        try:
+            return self.db.normalizar_texto(t or "")
+        except Exception:
+            return (t or "").upper()
+
+    def _filtrar(self, texto):
+        palabras = [p for p in self._normalizar(texto).split() if p]
+        ok = [all(p in h for p in palabras) for h in self._textos]
+        visibles = sum(ok)
+        if self._construida['tabla'] == self._gen:
+            for r in range(self.tabla.rowCount()):
+                it = self.tabla.item(r, 0)
+                i = it.data(ROL_FILA) if it else None
+                self.tabla.setRowHidden(r, not (i is not None and i < len(ok) and ok[i]))
+        if self._construida['galeria'] == self._gen:
+            for r in range(self.galeria.count()):
+                it = self.galeria.item(r)
+                i = it.data(ROL_FILA)
+                it.setHidden(not (i is not None and i < len(ok) and ok[i]))
+        total = len(self.filas)
+        nombre = "componentes" if self.nodo() and self.nodo()['modo'] == self.COMP else "conjuntos"
+        if palabras:
+            self.lbl_cuenta.setText(f"{visibles} de {total} {nombre}")
+            self.caja.setStyleSheet("border: 1.5px solid #E66C32;" if visibles
+                                    else "border: 1.5px solid #8C2F2F;")
+        else:
+            self.lbl_cuenta.setText(f"{total} {nombre}")
+            self.caja.setStyleSheet("")
+        self._pedir_iconos()        # al filtrar suben filas que no se veían
+
+    # ---------------------------------------------------------- selección
+    def _fila_de_item(self, it):
+        i = it.data(ROL_FILA) if it is not None else None
+        return i if i is not None and 0 <= i < len(self.filas) else None
+
+    def _seleccion_cambiada(self):
+        if self._vista() == "galeria":
+            it = self.galeria.currentItem()
+            sel = self.galeria.selectedItems()
+            if sel and (it is None or not it.isSelected()):
+                it = sel[0]
+        else:
+            r = self.tabla.currentRow()
+            it = self.tabla.item(r, 0) if r >= 0 else None
+            filas_sel = sorted({x.row() for x in self.tabla.selectedItems()})
+            if filas_sel and (it is None or r not in filas_sel):
+                it = self.tabla.item(filas_sel[0], 0)
+        i = self._fila_de_item(it)
+        self._pintar_ficha(self.filas[i] if i is not None else None)
+
+    def _seleccionar_fila_vista(self, r):
+        if self._vista() == "galeria":
+            for k in range(self.galeria.count()):
+                if not self.galeria.item(k).isHidden():
+                    self.galeria.setCurrentRow(k)
+                    return
+        elif self.tabla.rowCount():
+            for k in range(self.tabla.rowCount()):
+                if not self.tabla.isRowHidden(k):
+                    self.tabla.selectRow(k)
+                    return
+
+    def _seleccionar_ruta(self, ruta):
+        if not ruta:
+            return False
+        if self._vista() == "galeria":
+            for it in self._items_gal.get(ruta, ()):
+                self.galeria.setCurrentItem(it)
+                self.galeria.scrollToItem(it)
+                return True
+        else:
+            for it in self._items_tabla.get(ruta, ()):
+                self.tabla.selectRow(it.row())
+                self.tabla.scrollToItem(it)
+                return True
+        return False
+
+    def _rutas_sel(self):
+        if self._vista() == "galeria":
+            rutas = [it.data(Qt.UserRole) for it in self.galeria.selectedItems()]
+        else:
+            rutas = self.tabla.rutas_seleccionadas()
+        vistas, out = set(), []
+        for r in rutas:
+            if r and r not in vistas:
+                vistas.add(r)
+                out.append(r)
+        return out
+
+    def _menu(self, widget, pos_global):
+        rutas = self._rutas_sel()
+        if rutas:
+            self.v._menu_archivos(widget, rutas, pos_global, navegar=self._navegar_menu)
+
+    # -------------------------------------------------------------- pintar
+    def _pintar_modo(self):
+        n = self.nodo()
+        if not n:
+            return
+        ext = os.path.splitext(n['ruta'])[1].lower()
+        self.btn_modo_comp.setEnabled(ext == '.sldasm')
+        self.btn_modo_donde.setEnabled(ext in ('.sldprt', '.sldasm'))
+        self.btn_modo_comp.setChecked(n['modo'] == self.COMP)
+        self.btn_modo_donde.setChecked(n['modo'] == self.DONDE)
+        self.btn_atras.setEnabled(self.pos > 0)
+        self.btn_adelante.setEnabled(self.pos < len(self.hist) - 1)
+
+    def _pintar_migas(self):
+        while self.lay_migas.count():
+            w = self.lay_migas.takeAt(0).widget()
+            if w:
+                w.hide()            # deleteLater tarda: sin esto se ven las viejas
+                w.deleteLater()
+        ini = max(0, self.pos - 3)
+        if ini > 0:
+            puntos = QLabel("…")
+            puntos.setStyleSheet("color: #777777; padding: 0 4px;")
+            self.lay_migas.addWidget(puntos)
+        for i in range(ini, self.pos + 1):
+            e = self.hist[i]
+            if i > ini or ini > 0:
+                sep = QLabel("›")
+                sep.setStyleSheet("color: #777777; font-size: 15px; padding: 0 3px;")
+                self.lay_migas.addWidget(sep)
+            nombre = os.path.splitext(os.path.basename(e['ruta']))[0]
+            if len(nombre) > 34:
+                nombre = nombre[:32] + "…"
+            b = QPushButton(nombre)
+            b.setIcon(svg_icon("ensamblaje-cubo" if e['modo'] == self.COMP else "proyectos-maletin",
+                               color="#E66C32" if i == self.pos else "#999999", size=13))
+            b.setToolTip(("Componentes de " if e['modo'] == self.COMP else "Dónde se usa ")
+                         + os.path.basename(e['ruta']))
+            b.setFlat(True)
+            b.setCursor(Qt.PointingHandCursor)
+            actual = i == self.pos
+            b.setStyleSheet(
+                "QPushButton { border: none; background: transparent; padding: 3px 6px; "
+                f"color: {'#F5F5F5' if actual else '#999999'}; font-size: 12px; "
+                f"font-weight: {'800' if actual else '600'}; }}"
+                "QPushButton:hover { color: #E66C32; }")
+            b.clicked.connect(lambda _c=False, k=i: self.ir_a_posicion(k))
+            self.lay_migas.addWidget(b)
+        self.lay_migas.addStretch(1)
+
+    def _pintar_img_nodo(self):
+        n = self.nodo()
+        pm = self._pixmap_de(n['ruta'], 60) if n else None
+        if pm is not None:
+            self.img_nodo.setPixmap(pm)
+        else:
+            ext = os.path.splitext(n['ruta'])[1].lower() if n else '.sldasm'
+            self.img_nodo.setPixmap(pixmap_badge_extension(ext, size=52))
+
+    def _pintar_cabecera(self, cargando=False):
+        n = self.nodo()
+        if not n:
+            return
+        nombre = os.path.basename(n['ruta'])
+        if n['modo'] == self.COMP:
+            self.lbl_titulo.setText(f'Componentes de <span style="color:#E66C32;">{nombre}</span>')
+        else:
+            self.lbl_titulo.setText(f'Conjuntos que usan <span style="color:#E66C32;">{nombre}</span>')
+        self._pintar_img_nodo()
+        if cargando:
+            self.lbl_sub.setText("Cargando…")
+            self.lbl_total.hide()
+            self.lbl_vacio.hide()
+            self.stack.show()
+            return
+        total = len(self.filas)
+        if n['modo'] == self.COMP:
+            subconj = sum(1 for d in self.filas if d['ext'] == '.sldasm')
+            sin = sum(1 for d in self.filas if not d['indexado'])
+            partes = [f"{total} componente(s)"]
+            if subconj:
+                partes.append(f"{subconj} subconjunto(s): doble clic para entrar")
+            if sin:
+                partes.append(f"{sin} sin indexar (referencia rota o carpeta excluida)")
+            self.lbl_sub.setText(" · ".join(partes))
+            masas = [float(d['masa']) for d in self.filas if d['masa']]
+            areas = [float(d['area']) for d in self.filas if d['area']]
+            if masas or areas:
+                trozos = []
+                if masas:
+                    trozos.append(f"<b>Peso total: {_num_es(sum(masas), 1)} kg</b>")
+                if areas:
+                    trozos.append(f"<b>Superficie total: {_num_es(sum(areas), 2)} m²</b>")
+                falta = total - len(masas)
+                aviso = (f'<span style="color:#E0A030;"> · ojo: {falta} de {total} componentes '
+                         f'sin datos, el total es parcial</span>') if falta else ""
+                self.lbl_total.setText("   ·   ".join(trozos) + aviso)
+            else:
+                self.lbl_total.setText("Sin datos de peso todavía: se calculan en el pase "
+                                       "nocturno. Si el conjunto es reciente, mañana estarán.")
+            self.lbl_total.setVisible(total > 0)
+        else:
+            proyectos = {d['proyecto'] for d in self.filas if d['proyecto']}
+            self.lbl_sub.setText(f"{total} conjunto(s) en {len(proyectos)} proyecto(s) · "
+                                 f"doble clic en uno para ver sus componentes")
+            self.lbl_total.hide()
+
+    def _pintar_ficha(self, d):
+        self._sel_fila = d
+        self._sel_ruta = d['ruta'] if d else None
+        self._ficha = {}
+        if not d:
+            self.img_ficha.set_imagen(None)
+            self.lbl_nombre.setText("")
+            self.lbl_datos.setText("")
+            for b in (self.btn_f_comp, self.btn_f_donde, self.btn_f_sw,
+                      self.btn_f_pdf, self.btn_f_carpeta):
+                b.setEnabled(False)
+            return
+        pm = self._pixmap_de(d['ruta'])
+        if pm is not None:
+            self.img_ficha.set_imagen(pm)
+        else:
+            self.img_ficha.set_imagen(pixmap_badge_extension(d['ext'] or '.sldprt', size=128))
+        self.lbl_nombre.setText(d['nombre'])
+        self._pintar_datos(d, {})
+        hay = bool(d['ruta'])
+        self.btn_f_comp.setEnabled(hay and d['ext'] == '.sldasm')
+        self.btn_f_comp.setText("Ver sus componentes")
+        self.btn_f_comp.setVisible(d['ext'] == '.sldasm')
+        self.btn_f_donde.setEnabled(hay and d['ext'] in ('.sldprt', '.sldasm'))
+        self.btn_f_donde.setText("¿En qué conjuntos se usa?")
+        self.btn_f_sw.setEnabled(hay)
+        self.btn_f_pdf.setEnabled(hay)
+        self.btn_f_carpeta.setEnabled(hay)
+        if hay:
+            self._timer_ficha.start()
+
+    def _pintar_datos(self, d, ficha):
+        def fila(k, v):
+            return (f'<tr><td style="color:#777777; padding:2px 10px 2px 0;">{k}</td>'
+                    f'<td style="color:#DFDFDF; font-weight:600;">{v}</td></tr>')
+        filas = []
+        if not d['indexado']:
+            filas.append(fila("Índice", '<span style="color:#E0A030;">no está en el índice '
+                                        '(referencia rota o carpeta excluida)</span>'))
+        if d['proyecto']:
+            filas.append(fila("Proyecto", etiqueta_origen(d['proyecto'])))
+        if d['cliente']:
+            filas.append(fila("Cliente", d['cliente']))
+        if d['anio']:
+            filas.append(fila("Año", d['anio']))
+        if d['origen']:
+            filas.append(fila("Origen", etiqueta_origen(d['origen'])))
+        material = ficha.get('material') or d['material']
+        if material:
+            filas.append(fila("Material", material))
+        if ficha.get('espesor'):
+            filas.append(fila("Espesor", ficha['espesor']))
+        if ficha.get('tratamiento'):
+            filas.append(fila("Tratamiento", ficha['tratamiento']))
+        masa = ficha.get('masa') or d['masa']
+        if masa:
+            filas.append(fila("Peso", f"{_num_es(masa, 3)} kg"))
+        area = ficha.get('area') or d['area']
+        if area:
+            filas.append(fila("Superficie", f"{_num_es(area, 4)} m²"))
+        self.lbl_datos.setText('<table cellspacing="0">' + "".join(filas) + "</table>")
+
+    def _pedir_ficha(self):
+        d = self._sel_fila
+        if not d or not d['ruta']:
+            return
+        self._gen_ficha += 1
+        ruta = d['ruta']
+        falta_img = ruta not in self._jpeg
+
+        def leer():
+            ficha = self.db.ficha_archivo(ruta) or {}
+            jpeg = self.db.obtener_miniatura(ruta) if falta_img else None
+            return ruta, ficha, jpeg
+        self._lanzar(TareaBD(self._gen_ficha, leer), self._ficha_leida)
+
+    def _ficha_leida(self, gen, res):
+        if gen != self._gen_ficha or not res:
+            return
+        ruta, ficha, jpeg = res
+        if ruta != self._sel_ruta or not self._sel_fila:
+            return
+        self._ficha = ficha
+        if jpeg:
+            self._jpeg[ruta] = bytes(jpeg)
+            pm = self._pixmap_de(ruta)
+            if pm is not None:
+                self.img_ficha.set_imagen(pm)
+        self._pintar_datos(self._sel_fila, ficha)
+        n_comp, n_donde = ficha.get('n_componentes', 0), ficha.get('n_donde', 0)
+        if self._sel_fila['ext'] == '.sldasm':
+            self.btn_f_comp.setText(f"Ver sus componentes ({n_comp})")
+            self.btn_f_comp.setEnabled(n_comp > 0)
+        self.btn_f_donde.setText(f"¿En qué conjuntos se usa? ({n_donde})")
+        self.btn_f_donde.setEnabled(n_donde > 0)
+
+    # ------------------------------------------------------------ exportar
+    def _exportar(self):
+        n = self.nodo()
+        if not n or not self.filas:
+            return
+        stem = os.path.splitext(os.path.basename(n['ruta']))[0]
+        if n['modo'] == self.COMP:
+            cab = ["Componente", "Material", "Peso (kg)", "Superficie (m2)", "Cliente",
+                   "Proyecto", "Año", "Origen", "Ruta"]
+            filas = [(d['nombre'], d['material'] or "",
+                      round(float(d['masa']), 3) if d['masa'] else "",
+                      round(float(d['area']), 4) if d['area'] else "",
+                      d['cliente'] or "", etiqueta_origen(d['proyecto']) if d['proyecto'] else "",
+                      d['anio'] or "", etiqueta_origen(d['origen']) if d['origen'] else "",
+                      d['ruta']) for d in self.filas]
+            nombre = f"Despiece_{stem}.csv"
+        else:
+            cab = ["Conjunto", "Cliente", "Proyecto", "Año", "Origen", "Ruta"]
+            filas = [(d['nombre'], d['cliente'] or "",
+                      etiqueta_origen(d['proyecto']) if d['proyecto'] else "",
+                      d['anio'] or "", etiqueta_origen(d['origen']) if d['origen'] else "",
+                      d['ruta']) for d in self.filas]
+            nombre = f"Donde_se_usa_{stem}.csv"
+        self.v._export_csv_generico(cab, filas, nombre)
+
+
 class BuscadorPiezas(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -6584,7 +7771,7 @@ class BuscadorPiezas(QMainWindow):
                 self, "Algunos archivos no se han abierto",
                 "No se ha podido abrir:\n\n" + "\n".join(faltan[:8]))
 
-    def _menu_archivos(self, widget, rutas, pos_global):
+    def _menu_archivos(self, widget, rutas, pos_global, navegar=None):
         """Menú contextual de los diálogos de resultados (V2.0.6).
 
         Ofrece LAS MISMAS acciones que la rejilla principal: los diálogos son
@@ -6624,11 +7811,13 @@ class BuscadorPiezas(QMainWindow):
             menu.addSeparator()
             menu.addAction(svg_icon("proyectos-maletin"),
                            "¿En qué ensamblajes se usa?").triggered.connect(
-                lambda _=False, r=principal: self.mostrar_donde_se_usa(r))
+                lambda _=False, r=principal: (navegar(r, 'donde') if navegar
+                                               else self.mostrar_donde_se_usa(r)))
         if ext == '.sldasm':
             menu.addAction(svg_icon("ensamblaje-cubo"),
                            "Ver componentes (despiece)").triggered.connect(
-                lambda _=False, r=principal: self.mostrar_despiece(r))
+                lambda _=False, r=principal: (navegar(r, 'componentes') if navegar
+                                               else self.mostrar_despiece(r)))
             menu.addAction(svg_icon("comparar-balanza"),
                            "Ensamblajes similares (piezas compartidas)").triggered.connect(
                 lambda _=False, r=principal: self.mostrar_ensamblajes_similares(r))
@@ -6839,123 +8028,11 @@ class BuscadorPiezas(QMainWindow):
             self.toast.show_message(f"✅ {aviso}:\n{texto if len(texto) < 60 else os.path.basename(texto)}")
 
     def mostrar_donde_se_usa(self, ruta_pieza):
-        """Diálogo: ensamblajes que contienen la pieza/subensamblaje (V2.0.2).
-        Consulta indexada e instantánea contra la tabla 'componentes'."""
+        """¿En qué conjuntos se usa? (V2.0.2). Desde el 18/11/2026 abre el
+        explorador de conjuntos en ese modo: se puede seguir navegando sin
+        abrir una ventana encima de otra."""
         try:
-            nombre = os.path.basename(ruta_pieza)
-            resultados = self.db.buscar_ensamblajes_de(ruta_pieza)
-
-            dlg = QDialog(self)
-            dlg.setWindowTitle("¿En qué ensamblajes se usa?")
-            dlg.resize(680, 460)
-            lay = QVBoxLayout(dlg)
-            lay.setContentsMargins(16, 14, 16, 14)
-            lay.setSpacing(10)
-
-            cab = QLabel(f'Ensamblajes que usan <span style="color:#E66C32;">{nombre}</span>')
-            cab.setTextFormat(Qt.RichText)
-            cab.setStyleSheet(
-                f'font-family: "{FUENTES["h2"]}"; font-size: 14px; font-weight: 800; '
-                f'color: #F5F5F5; background: transparent;')
-            cab.setWordWrap(True)
-            lay.addWidget(cab)
-
-            lbl_n = QLabel(f"{len(resultados)} ensamblaje(s) encontrados")
-            lbl_n.setObjectName("StatusDim")
-            lay.addWidget(lbl_n)
-
-            # V2.0.5: lista arrastrable — se pueden soltar los ensamblajes
-            # directamente sobre SolidWorks para insertarlos, igual que desde
-            # la rejilla principal
-            lista = ListaArrastrable()
-            lista.setAlternatingRowColors(False)
-            # V2.0.3: miniaturas a la izquierda (caché de BD, una consulta)
-            lista.setIconSize(QSize(48, 48))
-            minis = {}
-            try:
-                minis = self.db.obtener_miniaturas_lote([r[5] for r in resultados if r[5]])
-            except Exception as e:
-                logger.debug(f"Miniaturas de 'dónde se usa' fallaron: {e}")
-            for r in resultados:
-                nom, origen, anio, cliente, proyecto, ruta_ens = r
-                if nom:
-                    meta = " · ".join(str(x) for x in [cliente, etiqueta_origen(proyecto or ""), anio] if x)
-                    texto = f"{nom}\n   {meta}"
-                else:
-                    # El ensamblaje está en componentes pero no en archivos (raro)
-                    texto = os.path.basename(ruta_ens)
-                it = QListWidgetItem(texto)
-                it.setData(Qt.UserRole, ruta_ens)
-                icono_ok = False
-                data_img = minis.get(ruta_ens)
-                if data_img:
-                    img = QImage.fromData(data_img)
-                    if not img.isNull():
-                        it.setIcon(QIcon(QPixmap.fromImage(img)))
-                        icono_ok = True
-                if not icono_ok:
-                    it.setIcon(QIcon(pixmap_badge_extension('.sldasm', size=44)))
-                lista.addItem(it)
-            self._anadir_filtro_lista(lay, lista, 'ensamblajes')
-            lay.addWidget(lista, stretch=1)
-
-            if not resultados:
-                aviso = QLabel(
-                    "No se ha encontrado ningún ensamblaje que la contenga.\n\n"
-                    "Nota: la relación de componentes se genera al reindexar el NAS. "
-                    "Si esta función es nueva, ejecuta 'Reindexar NAS' para poblarla.")
-                aviso.setStyleSheet("color: #999999; font-style: italic; background: transparent;")
-                aviso.setWordWrap(True)
-                lay.addWidget(aviso)
-
-            def abrir_sel():
-                it = lista.currentItem()
-                if it:
-                    self._abrir_carpeta_de(it.data(Qt.UserRole))
-            lista.itemDoubleClicked.connect(lambda _: abrir_sel())
-
-            # V2.0.5: abrir en SolidWorks desde aquí (botón, menú del botón
-            # derecho y arrastre) sin volver a la rejilla principal
-            def abrir_sw():
-                rutas = lista.rutas_seleccionadas()
-                if not rutas and lista.currentItem():
-                    rutas = [lista.currentItem().data(Qt.UserRole)]
-                self._abrir_en_solidworks(rutas)
-            lista.setContextMenuPolicy(Qt.CustomContextMenu)
-            lista.customContextMenuRequested.connect(
-                lambda p: self._menu_lista_archivos(lista, p))
-            self._hover_lista(lista)   # V2.0.6: vista previa grande al pasar el ratón
-
-            ayuda = QLabel("Arrastra un ensamblaje sobre SolidWorks para insertarlo · "
-                           "botón derecho para más opciones")
-            ayuda.setObjectName("StatusDim")
-            ayuda.setWordWrap(True)
-            lay.addWidget(ayuda)
-
-            footer = QHBoxLayout()
-            footer.addStretch()
-            btn_sw = QPushButton("Abrir en SolidWorks")
-            btn_sw.setIcon(svg_icon("arrastrar-solidworks", size=15))
-            btn_sw.setCursor(Qt.PointingHandCursor)
-            btn_sw.clicked.connect(abrir_sw)
-            btn_abrir = QPushButton("Abrir carpeta")
-            btn_abrir.setIcon(svg_icon("carpeta", size=15))
-            btn_abrir.setCursor(Qt.PointingHandCursor)
-            btn_abrir.clicked.connect(abrir_sel)
-            btn_cerrar = QPushButton("Cerrar")
-            btn_cerrar.setCursor(Qt.PointingHandCursor)
-            btn_cerrar.clicked.connect(dlg.accept)
-            footer.addWidget(btn_sw)
-            footer.addWidget(btn_abrir)
-            footer.addWidget(btn_cerrar)
-            lay.addLayout(footer)
-
-            # Sin nada seleccionado los botones no hacen nada útil: se marca
-            # la primera fila para que "Abrir en SolidWorks" funcione al vuelo
-            if lista.count():
-                lista.setCurrentRow(0)
-
-            dlg.exec_()
+            ExploradorConjunto(self, ruta_pieza, ExploradorConjunto.DONDE).exec_()
         except Exception as e:
             logger.error(f"Error en 'dónde se usa' para {ruta_pieza}: {e}")
 
@@ -6991,190 +8068,11 @@ class BuscadorPiezas(QMainWindow):
             subprocess.Popen(f'explorer /select,"{rr}"')
 
     def mostrar_despiece(self, ruta_ens):
-        """Despiece (BOM) del ensamblaje: lista sus componentes desde la tabla
-        'componentes', cruzados con el índice para traer metadatos (V2.0.2)."""
+        """Despiece (BOM) del conjunto (V2.0.2). Desde el 18/11/2026 abre el
+        explorador de conjuntos: doble clic en un subconjunto para entrar,
+        atrás/adelante, lista o galería, y ficha con la vista previa grande."""
         try:
-            nombre = os.path.basename(ruta_ens)
-            filas = self.db.obtener_componentes_de(ruta_ens)
-
-            dlg = QDialog(self)
-            dlg.setWindowTitle("Componentes del ensamblaje")
-            dlg.resize(820, 540)
-            lay = QVBoxLayout(dlg)
-            lay.setContentsMargins(16, 14, 16, 14)
-            lay.setSpacing(10)
-
-            cab = QLabel(f'Componentes de <span style="color:#E66C32;">{nombre}</span>')
-            cab.setTextFormat(Qt.RichText)
-            cab.setStyleSheet(
-                f'font-family: "{FUENTES["h2"]}"; font-size: 14px; font-weight: 800; '
-                f'color: #F5F5F5; background: transparent;')
-            cab.setWordWrap(True)
-            lay.addWidget(cab)
-
-            sin_indexar = sum(1 for f in filas if not f[1])
-            texto_n = f"{len(filas)} componente(s)"
-            if sin_indexar:
-                texto_n += f" · {sin_indexar} sin indexar (referencia rota o carpeta excluida)"
-            lbl_n = QLabel(texto_n)
-            lbl_n.setObjectName("StatusDim")
-            lay.addWidget(lbl_n)
-
-            # V2.0.8: PESO TOTAL y SUPERFICIE A PINTAR del conjunto. Se suma lo
-            # que hay; si falta el dato de algún componente se dice cuántos,
-            # porque un total incompleto presentado como definitivo es peor que
-            # no dar ninguno (con esto se manda a pintura un nº de m²).
-            masas = [float(f[7]) for f in filas if f[7]]
-            areas = [float(f[8]) for f in filas if f[8]]
-            n_comp_reales = len(filas)
-            faltan_masa = n_comp_reales - len(masas)
-            if masas or areas:
-                partes = []
-                if masas:
-                    total_kg = sum(masas)
-                    partes.append(f'<b>Peso total: {total_kg:,.1f} kg</b>'
-                                  .replace(",", "."))
-                if areas:
-                    total_m2 = sum(areas)
-                    # Se dice "superficie total", no "a pintar": la app no sabe
-                    # si la pieza va pintada, y afirmarlo sería inventárselo
-                    partes.append(f'<b>Superficie total: {total_m2:,.2f} m²</b>'
-                                  .replace(",", "."))
-                aviso_falta = ""
-                if faltan_masa:
-                    aviso_falta = (f'<span style="color:#E0A030;"> · ojo: '
-                                   f'{faltan_masa} de {n_comp_reales} componentes '
-                                   f'sin datos, el total es parcial</span>')
-                lbl_tot = QLabel("   ·   ".join(partes) + aviso_falta)
-                lbl_tot.setTextFormat(Qt.RichText)
-                lbl_tot.setWordWrap(True)
-                lbl_tot.setStyleSheet(
-                    "background: #33291F; border: 1px solid #E66C32; "
-                    "border-radius: 8px; padding: 8px 12px; color: #F5F5F5; "
-                    "font-size: 13px;")
-                lay.addWidget(lbl_tot)
-            else:
-                lbl_tot = QLabel(
-                    "Sin datos de peso todavía: se calculan en el pase nocturno. "
-                    "Si el conjunto es reciente, mañana estarán.")
-                lbl_tot.setObjectName("StatusDim")
-                lbl_tot.setWordWrap(True)
-                lay.addWidget(lbl_tot)
-
-            # V2.0.6: arrastrable a SolidWorks + menú completo del botón derecho
-            tabla = TablaDialogoArrastrable()
-            tabla.setColumnCount(8)
-            tabla.setHorizontalHeaderLabels(
-                ["Vista", "Componente", "Peso (kg)", "Sup. (m²)",
-                 "Cliente", "Proyecto", "Año", "Origen"])
-            tabla.setRowCount(len(filas))
-            tabla.setEditTriggers(QTableWidget.NoEditTriggers)
-            tabla.setSelectionBehavior(QTableWidget.SelectRows)
-            tabla.setSelectionMode(QAbstractItemView.ExtendedSelection)
-            tabla.setContextMenuPolicy(Qt.CustomContextMenu)
-            tabla.customContextMenuRequested.connect(
-                lambda p: self._menu_tabla_archivos(tabla, p))
-            self._hover_tabla(tabla)   # V2.0.6: vista previa grande al pasar el ratón
-            tabla.verticalHeader().setVisible(False)
-            tabla.setIconSize(QSize(48, 48))
-            tabla.verticalHeader().setDefaultSectionSize(54)
-            # V2.0.3: miniaturas desde la caché de BD (un solo query para todos)
-            minis = self.db.obtener_miniaturas_lote([f[6] for f in filas if f[6]])
-            for i, (comp, nom_a, origen, anio, cliente, proyecto, ruta_c, masa_c, area_c) in enumerate(filas):
-                it_vista = QTableWidgetItem()
-                it_vista.setData(Qt.UserRole, ruta_c or "")
-                data_img = minis.get(ruta_c)
-                if data_img:
-                    img = QImage.fromData(data_img)
-                    if not img.isNull():
-                        it_vista.setIcon(QIcon(QPixmap.fromImage(img)))
-                else:
-                    ext = os.path.splitext(comp)[1].lower()
-                    it_vista.setIcon(QIcon(pixmap_badge_extension(ext, size=44)))
-                it1 = QTableWidgetItem(comp)
-                it1.setData(Qt.UserRole, ruta_c or "")
-                # V2.0.8: peso y superficie, ordenables como numeros (no texto)
-                it_masa = QTableWidgetItem()
-                if masa_c:
-                    it_masa.setData(Qt.DisplayRole, round(float(masa_c), 3))
-                else:
-                    it_masa.setText("—")
-                it_masa.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                it_area = QTableWidgetItem()
-                if area_c:
-                    it_area.setData(Qt.DisplayRole, round(float(area_c), 4))
-                else:
-                    it_area.setText("—")
-                it_area.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                celdas = [
-                    it_vista, it1, it_masa, it_area,
-                    QTableWidgetItem(cliente or ("—" if nom_a else "no indexado")),
-                    QTableWidgetItem(etiqueta_origen(proyecto or "") if proyecto else "—"),
-                    QTableWidgetItem(str(anio) if anio else "—"),
-                    QTableWidgetItem(etiqueta_origen(origen or "") if origen else "—"),
-                ]
-                for j, it in enumerate(celdas):
-                    if not nom_a and j >= 1:  # componente no encontrado en el índice
-                        it.setForeground(QColor("#888888"))
-                    tabla.setItem(i, j, it)
-            tabla.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-            tabla.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-            for j in (2, 3, 4, 5, 6, 7):
-                tabla.horizontalHeader().setSectionResizeMode(j, QHeaderView.ResizeToContents)
-            tabla.setSortingEnabled(True)
-            self._anadir_filtro_tabla(lay, tabla, 'componentes')
-            lay.addWidget(tabla, stretch=1)
-
-            if not filas:
-                aviso = QLabel(
-                    "No hay componentes registrados para este ensamblaje.\n\n"
-                    "Nota: la relación de componentes se genera al reindexar el NAS. "
-                    "Si el ensamblaje es reciente, se completará con la próxima indexación.")
-                aviso.setStyleSheet("color: #999999; font-style: italic; background: transparent;")
-                aviso.setWordWrap(True)
-                lay.addWidget(aviso)
-
-            def abrir_sel():
-                it = tabla.item(tabla.currentRow(), 0) if tabla.currentRow() >= 0 else None
-                if it:
-                    self._abrir_en_explorer(it.data(Qt.UserRole))
-            tabla.itemDoubleClicked.connect(lambda _: abrir_sel())
-
-            footer = QHBoxLayout()
-            btn_export = QPushButton("Exportar CSV")
-            btn_export.setIcon(svg_icon("exportar-descargar", size=15))
-            btn_export.setCursor(Qt.PointingHandCursor)
-            btn_export.clicked.connect(lambda: self._export_csv_generico(
-                ["Componente", "Peso (kg)", "Superficie (m2)", "Cliente",
-                 "Proyecto", "Año", "Origen", "Ruta"],
-                [(f[0], round(float(f[7]), 3) if f[7] else "",
-                  round(float(f[8]), 4) if f[8] else "",
-                  f[4] or "", etiqueta_origen(f[5] or "") if f[5] else "",
-                  f[3] or "", etiqueta_origen(f[2] or "") if f[2] else "", f[6] or "")
-                 for f in filas],
-                f"Despiece_{os.path.splitext(nombre)[0]}.csv"))
-            footer.addWidget(btn_export)
-            footer.addStretch()
-            btn_sw = QPushButton("Abrir en SolidWorks")
-            btn_sw.setIcon(svg_icon("arrastrar-solidworks", size=15))
-            btn_sw.setCursor(Qt.PointingHandCursor)
-            btn_sw.clicked.connect(
-                lambda: self._abrir_en_solidworks(tabla.rutas_seleccionadas()))
-            btn_abrir = QPushButton("Abrir carpeta")
-            btn_abrir.setIcon(svg_icon("carpeta", size=15))
-            btn_abrir.setCursor(Qt.PointingHandCursor)
-            btn_abrir.clicked.connect(abrir_sel)
-            btn_cerrar = QPushButton("Cerrar")
-            btn_cerrar.setCursor(Qt.PointingHandCursor)
-            btn_cerrar.clicked.connect(dlg.accept)
-            footer.addWidget(btn_sw)
-            footer.addWidget(btn_abrir)
-            footer.addWidget(btn_cerrar)
-            lay.addLayout(footer)
-            if tabla.rowCount():
-                tabla.selectRow(0)
-
-            dlg.exec_()
+            ExploradorConjunto(self, ruta_ens, ExploradorConjunto.COMP).exec_()
         except Exception as e:
             logger.error(f"Error en despiece de {ruta_ens}: {e}")
 

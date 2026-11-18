@@ -91,20 +91,25 @@ Los chips naranjas de arriba muestran qué filtros tienes puestos; **Limpiar** l
 *   **Buscar piezas idénticas (duplicados)** — misma geometría con otro nombre.
 *   **Comparar componentes de los 2 ensamblajes** — selecciona dos conjuntos y verás qué tiene cada uno y qué comparten.
 
-> Todo esto funciona igual **dentro** de los diálogos: desde el despiece puedes abrir el "dónde se usa" de un componente, y desde ahí su propio despiece.
+> «Ver componentes» y «¿En qué ensamblajes se usa?» abren el **explorador de conjuntos** (siguiente apartado), y por dentro se navega sin abrir una ventana encima de otra.
 
-## 7. El despiece: qué lleva un conjunto
+## 7. El explorador de conjuntos: qué lleva y dónde se usa
 
-Botón derecho sobre un ensamblaje → **Ver componentes (despiece)**.
+Botón derecho sobre un ensamblaje → **Ver componentes (despiece)**, o sobre una pieza → **¿En qué ensamblajes se usa?**. Se abre una sola ventana que se recorre como el Explorador de Windows:
 
-*   Lista completa de componentes con cliente, proyecto, año y origen.
-*   **Peso total** y **superficie total** del conjunto, para pedir material o decirle a pintura cuántos m² hay.
-*   Si a algún componente le falta el dato **lo dice**: *"3 de 12 componentes sin datos, el total es parcial"*.
-*   **Buscar dentro de la lista**: el cuadro de arriba filtra los componentes en vivo. Escribe varias palabras y deben aparecer todas. Funciona sin tildes y sin distinguir mayúsculas.
+*   **Doble clic en un subconjunto**: entras en él y ves sus componentes. **Doble clic en una pieza**: ves en qué conjuntos se usa. Desde ahí, doble clic en un conjunto para ver qué lleva… y así hasta donde quieras.
+*   **Volver**: flecha de arriba a la izquierda, **Alt + Izquierda** o el botón «atrás» del ratón. Arriba se ve el camino recorrido; pincha en cualquier paso para volver a él. Al volver, queda seleccionado lo que estabas mirando.
+*   Los botones **Componentes / Dónde se usa** de arriba a la derecha cambian de una cosa a otra sobre el mismo archivo.
+*   **Lista o galería** y el **tamaño de las miniaturas** (S, M, L, XL o el deslizador, hasta 256 px; en la galería también Ctrl + rueda). Se acuerda de lo que elegiste.
+*   **La ficha de la derecha**: vista previa grande, proyecto, cliente, año, material, espesor, tratamiento, peso y superficie del componente seleccionado. Sus botones dicen cuántos componentes tiene y en cuántos conjuntos se usa **antes** de pulsarlos, y desde ahí se abre en SolidWorks, su PDF o su carpeta.
+*   Los nombres salen **como están escritos** en el archivo (antes salían en mayúsculas). Los subconjuntos van en negrita.
+*   **Peso total** y **superficie total** del conjunto, para pedir material o decirle a pintura cuántos m² hay. Si a algún componente le falta el dato **lo dice**: *"3 de 12 componentes sin datos, el total es parcial"*.
+*   **Buscar dentro de la lista**: el cuadro de arriba filtra en vivo, en la lista y en la galería. Escribe varias palabras y deben aparecer todas. Funciona sin tildes y sin distinguir mayúsculas.
 *   Los componentes en gris no están indexados: son **referencias rotas** o piezas en carpetas excluidas.
-*   **Exportar CSV** para mandarlo a compras o a pintura.
+*   **Arrastra** lo seleccionado sobre SolidWorks para insertarlo, y **Exportar CSV** para mandarlo a compras o a pintura.
+*   Con piezas muy usadas (un rodamiento puede estar en más de 5.000 conjuntos) la ventana se abre al momento y las miniaturas van llegando mientras miras.
 
-Ese mismo cuadro de búsqueda está en el resto de listas: *dónde se usa*, *similares*, *duplicados* y *comparar*.
+El cuadro de búsqueda está también en el resto de listas: *similares*, *duplicados* y *comparar*.
 
 ## 8. Placas CE
 

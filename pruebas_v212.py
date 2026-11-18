@@ -115,6 +115,9 @@ def probar_filtro_despiece(win, mod, ens):
     if not dlg:
         comprobar("el despiece se abre", False)
         return
+    # 18/11/2026: el despiece es el explorador de conjuntos y carga en segundo
+    # plano (pruebas_explorador.py); aquí solo se espera a que lleguen las filas.
+    esperar(lambda: getattr(dlg, "cargado", True), 20)
     tabla = dlg.findChildren(mod.TablaDialogoArrastrable)[0]
     cajas = [w for w in dlg.findChildren(QLineEdit)]
     comprobar("el despiece trae un cuadro para buscar dentro", bool(cajas))
@@ -208,20 +211,23 @@ def probar_filtro_donde_se_usa(win, mod, pieza):
     if not dlg:
         comprobar("el dialogo se abre", False)
         return
-    lista = dlg.findChildren(mod.ListaArrastrable)[0]
+    # 18/11/2026: ahora es el explorador de conjuntos, con la misma tabla que
+    # el despiece (antes era una lista).
+    esperar(lambda: getattr(dlg, "cargado", True), 20)
+    tabla = dlg.findChildren(mod.TablaDialogoArrastrable)[0]
     cajas = dlg.findChildren(QLineEdit)
     comprobar("tambien trae cuadro de busqueda", bool(cajas))
     if not cajas:
         return
     caja = cajas[0]
-    total = lista.count()
+    total = tabla.rowCount()
     caja.setText("zzzz-no-existe")
     comprobar("filtra la lista de ensamblajes",
-              sum(1 for i in range(total) if not lista.item(i).isHidden()) == 0,
+              total > 0 and sum(1 for f in range(total) if not tabla.isRowHidden(f)) == 0,
               "%d ensamblajes" % total)
     caja.setText("")
     comprobar("y al limpiar vuelven todos",
-              sum(1 for i in range(total) if not lista.item(i).isHidden()) == total)
+              sum(1 for f in range(total) if not tabla.isRowHidden(f)) == total)
     dlg.close()
 
 
