@@ -1,6 +1,6 @@
 # Changelog - Buscador de Piezas ALSI
 
-## [Próxima versión] - sin publicar (Explorador de conjuntos)
+## [2.3.6] - 2026-11-18 (Explorador de conjuntos)
 
 - **«Ver componentes» y «¿En qué ensamblajes se usa?» son ahora una sola ventana que se navega.** Doble clic en un subconjunto para entrar, doble clic en una pieza para ver dónde se usa, y atrás/adelante (flechas, Alt + Izquierda o el botón del ratón) con el camino recorrido arriba. Antes, cada paso abría un diálogo encima del anterior.
 - **Los nombres salen como están escritos.** Se enseñaba la clave interna del cruce, que va en mayúsculas: `21050.800.P119 TRAMO RECTO TOBOGÁN A420.SLDPRT`. Ahora sale `21050.800.P119 Tramo recto tobogán A420.SLDPRT`.
