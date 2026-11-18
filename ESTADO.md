@@ -15,7 +15,7 @@ guardados en el NAS Synology, sin navegar por carpetas.
 - **Backend**: PostgreSQL en `192.168.1.10:5433`, base `ALSI`, esquema `buscador`.
 - **Distribución**: un `.exe` de ~82 MB (PyInstaller *onefile*) que cada compañero instala desde
   la carpeta de red con `INSTALAR_LOCAL.bat`. La app avisa sola cuando hay versión nueva.
-- **En producción: v2.3.5** (desplegada el 06/11 a las 15:47).
+- **En producción: v2.3.6** (desplegada el 18/11 a las 15:49).
 
 **Cifras reales del índice, medidas el 21/09/2026** (tras recuperar los 70.693 que faltaban):
 
@@ -55,8 +55,8 @@ Lo que la app hace hoy, en corto:
 | `.claude\worktrees\recursing-shamir-b9fab6\` | Worktree donde se desarrolla la línea 2.x | v2.3.3 |
 | `.claude\worktrees\nervous-ptolemy-89ad8f\` | Investigación de las miniaturas perdidas | v2.0.9, cerrada. Contenido absorbido en master |
 | `.claude\worktrees\plate-search-freezing-3491f2\` | Rama de julio | v2.0.2. Su feature de cascada ya está portada (§6.1); la rama se puede retirar |
-| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.5** (06/11) |
-| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **29 etiquetas** (v1.0.0 → v2.3.5) | Al día |
+| `\\192.168.1.10\Oficina Tecnica\ALSI DOCUMENTOS OT\APP BÚSQUEDA ARCHIVOS` | Despliegue para los compañeros | `version.txt` = **v2.3.6** (18/11) |
+| GitHub `franferrod/APP-BUSQUEDA-ARCHIVOS` | `master` + ramas + **30 etiquetas** (v1.0.0 → v2.3.6) | Al día |
 
 **Tareas programadas en OFITEC-4**: `ALSI_Reindexar_Diario` (15:45) y
 `ALSI_Poblar_Props_Miniaturas` (16:30), con la ruta corta 8.3 `BSQUED~1` porque el Programador de
@@ -97,7 +97,12 @@ Las dos formales están en `docs\ADR-001-SQLite.md` (superada) y `docs\ADR-002-P
 
 ## 4. Terminado
 
-Toda la línea 2.x hasta la **v2.3.5** está en producción. Lo más reciente:
+Toda la línea 2.x hasta la **v2.3.6** está en producción. Lo más reciente:
+
+**v2.3.6 — explorador de conjuntos** (desplegada el 18/11 a las 15:49; md5 `57d30abd`; copia de
+la v2.3.5 en `releases\_backup_red_v2.3.5_20261118\`): «Ver componentes» y «¿En qué ensamblajes
+se usa?» en una sola ventana navegable, nombres como están escritos, miniaturas de 40 a 256 px,
+ficha lateral y miniaturas solo de lo visible. Batería del ejecutable 32/32 a la primera.
 
 **v2.3.5 — «Reindexar NAS» ya no puede vaciar el índice** (desplegada el 06/11 a las 15:47; md5
 `89f1d923`; copia de la v2.3.4 en `releases\_backup_red_v2.3.4_20261106\`): sin borrado previo; lectura completa → actualizar → barrer lo que no
