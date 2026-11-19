@@ -409,6 +409,73 @@ def probar_entradas(win, mod, ens, pieza):
         d.done(0)
 
 
+def probar_otros_paneles(win, mod, ens):
+    """19/11: «Comparar componentes» y «Candidatas a biblioteca» seguían
+    enseñando la clave del cruce, en MAYÚSCULAS (7 de 7 en la captura del
+    usuario; 33 de 50 en el informe). Mismo criterio que el explorador: el
+    nombre del archivo que casa; la clave solo si no está indexado."""
+    from PyQt5.QtWidgets import QDialog
+    titulo("11. COMPARAR Y CANDIDATAS: EL NOMBRE COMO ESTÁ ESCRITO")
+
+    # -- Comparar: el conjunto de muestra contra uno de sus subconjuntos, así
+    # hay filas «Solo en A», «Solo en B» y nombres con minúsculas seguro.
+    filas_a = win.db.obtener_componentes_de(ens)
+    sub = next((f[6] for f in filas_a
+                if f[1] and f[6] and f[1].lower().endswith('.sldasm')), None)
+    comprobar("el conjunto de muestra tiene un subconjunto indexado", sub)
+    if sub:
+        filas_b = win.db.obtener_componentes_de(sub)
+        esperado = {f[1] or f[0] for f in filas_a} | {f[1] or f[0] for f in filas_b}
+        con_minusculas = {f[1] for f in filas_a + filas_b if f[1] and f[1] != f[1].upper()}
+        vistos = []
+        orig = QDialog.exec_
+        QDialog.exec_ = lambda self: (vistos.append(self), 0)[1]
+        try:
+            win.comparar_ensamblajes(ens, sub)
+        finally:
+            QDialog.exec_ = orig
+        tabla = vistos[0].findChild(mod.TablaDialogoArrastrable) if vistos else None
+        comprobar("«Comparar componentes» se abre con su tabla", tabla is not None)
+        if tabla is not None:
+            nombres = [tabla.item(r, 1).text() for r in range(tabla.rowCount())]
+            comprobar("compara todos los componentes de los dos",
+                      len(nombres) == len({f[0] for f in filas_a} | {f[0] for f in filas_b}),
+                      "%d filas" % len(nombres))
+            comprobar("cada fila enseña el nombre del archivo (o la clave si no está)",
+                      set(nombres) <= esperado,
+                      ", ".join(sorted(set(nombres) - esperado))[:120])
+            comprobar("los nombres con minúsculas salen con minúsculas",
+                      con_minusculas and con_minusculas <= set(nombres),
+                      "%d con minúsculas" % len(con_minusculas))
+            comprobar("ninguna fila indexada sale en la clave en mayúsculas",
+                      not any(n.upper() == n and n.upper() in {x.upper() for x in con_minusculas}
+                              for n in nombres))
+            # la ruta de cada fila sigue siendo la del archivo (abrir, arrastrar)
+            rutas = [tabla.item(r, 1).data(mod.Qt.UserRole) for r in range(tabla.rowCount())]
+            comprobar("y cada fila conserva su ruta",
+                      all(os.path.basename(ru) == n for ru, n in zip(rutas, nombres) if ru))
+        for d in vistos:
+            d.done(0)
+
+    # -- Candidatas a biblioteca
+    capturado = {}
+
+    def capturar(titulo_, cab, sub_, columnas, filas_datos, csv_):
+        capturado["filas"] = filas_datos
+    win._dialogo_tabla = capturar
+    try:
+        win.mostrar_reutilizadas()
+    finally:
+        del win._dialogo_tabla
+    filas = capturado.get("filas") or []
+    comprobar("«Candidatas a biblioteca» saca su lista", filas, "%d piezas" % len(filas))
+    comprobar("cada pieza se enseña con el nombre de su archivo de ejemplo",
+              all(n == os.path.basename(r) for n, _p, _e, r in filas if r))
+    comprobar("y hay nombres con minúsculas (no la clave)",
+              any(n != n.upper() for n, _p, _e, _r in filas),
+              "%d de %d" % (sum(1 for f in filas if f[0] != f[0].upper()), len(filas)))
+
+
 def resumen():
     print()
     print("=" * 76)
@@ -442,6 +509,7 @@ def main():
                 probar_navegacion(win, mod, dlg, ens)
                 probar_pieza_comun(win, mod, pieza)
                 probar_entradas(win, mod, ens, pieza)
+                probar_otros_paneles(win, mod, ens)
             win._detener_workers_de_fondo()
         except Exception:
             print("EXCEPCION:")

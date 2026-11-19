@@ -8130,9 +8130,12 @@ class BuscadorPiezas(QMainWindow):
             tabla.verticalHeader().setVisible(False)
             tabla.setIconSize(QSize(48, 48))
             tabla.verticalHeader().setDefaultSectionSize(54)
-            datos = ([(c, "Solo en A", COL_A, comp_a[c][6]) for c in solo_a] +
-                     [(c, "Solo en B", COL_B, comp_b[c][6]) for c in solo_b] +
-                     [(c, "En ambos", COL_COMUN, comp_a[c][6]) for c in comunes])
+            # La clave del cruce (f[0]) va en MAYÚSCULAS: se compara por ella,
+            # pero se enseña el nombre del archivo que casa (f[1]), como en el
+            # explorador. Solo si el componente no está indexado queda la clave.
+            datos = ([(comp_a[c][1] or c, "Solo en A", COL_A, comp_a[c][6]) for c in solo_a] +
+                     [(comp_b[c][1] or c, "Solo en B", COL_B, comp_b[c][6]) for c in solo_b] +
+                     [(comp_a[c][1] or c, "En ambos", COL_COMUN, comp_a[c][6]) for c in comunes])
             minis = {}
             try:
                 minis = self.db.obtener_miniaturas_lote([d[3] for d in datos if d[3]])
@@ -8420,7 +8423,10 @@ class BuscadorPiezas(QMainWindow):
                 filas = self.db.piezas_mas_reutilizadas(50)
             finally:
                 QApplication.restoreOverrideCursor()
-            datos = [(nom, n_proy, n_ens, ruta or "") for nom, n_proy, n_ens, ruta in filas]
+            # 'nom' es la clave del cruce, en MAYÚSCULAS: se enseña el nombre
+            # del archivo de ejemplo, que es el mismo escrito como está.
+            datos = [(os.path.basename(ruta) if ruta else nom, n_proy, n_ens, ruta or "")
+                     for nom, n_proy, n_ens, ruta in filas]
             self._dialogo_tabla(
                 "Candidatas a biblioteca",
                 'Piezas más reutilizadas <span style="color:#E66C32;">fuera de la biblioteca</span>',

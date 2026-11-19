@@ -97,13 +97,13 @@ python pruebas_preview.py         #  7 · panel de vista previa e icono genéric
 python pruebas_ejecutable.py      # 32 · sobre el .exe empaquetado
 python pruebas_reindexado.py      # 81 · pase nocturno: recuperación, rutas largas, clave, peso, viernes
 python pruebas_rutas_largas.py    # 35 · los lectores con rutas de 260+ (copia local); sin BD ni NAS
-python pruebas_explorador.py      # 55 · explorador de conjuntos: nombres, navegación, sin congelar
+python pruebas_explorador.py      # 65 · explorador de conjuntos y demás paneles: nombres, navegación, sin congelar
 python pruebas_normalizacion.py   # 30 · que Ø, º y ª se busquen como se escriben
 python pruebas_propiedades.py     # 51 · 'Material' es 'MATERIAL'; el relleno solo rellena huecos
 python pruebas_indexador.py       # 22 · «Reindexar NAS»: lee primero, quita solo lo que no está
 ```
 
-Total: **631**. Reglas del banco de pruebas:
+Total: **641**. Reglas del banco de pruebas:
 
 - `pruebas_ejecutable.py` **exige la app cerrada** (instancia única, candado). Pídeselo.
 - **Todas las baterías que abren la ventana salen por `arnes_pruebas.salir()` DESDE DENTRO
@@ -158,7 +158,9 @@ Total: **631**. Reglas del banco de pruebas:
   Cualquier `subprocess` a un exe del sistema va con entorno limpio y ruta absoluta.
 - **Windows devuelve el mismo icono genérico** para `.SLDASM` distintos; umbral de parecido 85 %.
 - **`componente_nombre` va en MAYÚSCULAS: es la clave del cruce, no se enseña.** Para mostrarlo,
-  `nombre_archivo` del archivo que casa (el despiece lo enseñó en mayúsculas hasta el 18/11).
+  `nombre_archivo` del archivo que casa (el despiece lo enseñó en mayúsculas hasta el 18/11, y
+  «Comparar componentes» y «Candidatas a biblioteca» hasta el 19/11). Cualquier panel nuevo que
+  liste componentes, a la batería 11 de `pruebas_explorador.py`.
 - **Una miniatura descomprimida ocupa 256 KB** (256×256×4); el JPEG de la base, ~10 KB. Una lista
   de miles (dónde se usa de un rodamiento: 5.221) no puede hacer `QIcon` de todas: 1,3 GB. El
   explorador guarda los JPEG y descomprime solo lo visible (`_iconos_visibles`).

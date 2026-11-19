@@ -1,5 +1,10 @@
 # Changelog - Buscador de Piezas ALSI
 
+## [Próxima versión] - sin publicar (Nombres como están escritos en todos los paneles)
+
+- **«Comparar componentes» y «Candidatas a biblioteca» enseñan los nombres como están escritos.** Seguían saliendo en mayúsculas (`26098.P087 CORTINA TOBOGÁN.SLDPRT`) porque enseñaban la clave interna del cruce; ahora sale `26098.P087 Cortina tobogán.SLDPRT`, como en el explorador. Medido: en la comparación de la captura, 7 de 7 nombres salían mal; en «Candidatas a biblioteca», 33 de 50. Revisados los demás paneles (similares, ensamblajes similares, piezas idénticas, conjuntos sin vista previa): ya sacaban el nombre del archivo.
+- **10 comprobaciones nuevas** en `pruebas_explorador.py` (65). Sin el arreglo, suspenden 6.
+
 ## [2.3.6] - 2026-11-18 (Explorador de conjuntos)
 
 - **«Ver componentes» y «¿En qué ensamblajes se usa?» son ahora una sola ventana que se navega.** Doble clic en un subconjunto para entrar, doble clic en una pieza para ver dónde se usa, y atrás/adelante (flechas, Alt + Izquierda o el botón del ratón) con el camino recorrido arriba. Antes, cada paso abría un diálogo encima del anterior.
