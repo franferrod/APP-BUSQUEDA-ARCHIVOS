@@ -1,6 +1,6 @@
 # Changelog - Buscador de Piezas ALSI
 
-## [Próxima versión] - sin publicar (Nombres como están escritos en todos los paneles)
+## [2.3.7] - 2026-11-19 (Nombres como están escritos en todos los paneles)
 
 - **«Comparar componentes» y «Candidatas a biblioteca» enseñan los nombres como están escritos.** Seguían saliendo en mayúsculas (`26098.P087 CORTINA TOBOGÁN.SLDPRT`) porque enseñaban la clave interna del cruce; ahora sale `26098.P087 Cortina tobogán.SLDPRT`, como en el explorador. Medido: en la comparación de la captura, 7 de 7 nombres salían mal; en «Candidatas a biblioteca», 33 de 50. Revisados los demás paneles (similares, ensamblajes similares, piezas idénticas, conjuntos sin vista previa): ya sacaban el nombre del archivo.
 - **10 comprobaciones nuevas** en `pruebas_explorador.py` (65). Sin el arreglo, suspenden 6.
